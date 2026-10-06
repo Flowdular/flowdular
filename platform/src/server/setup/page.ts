@@ -304,6 +304,39 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 const WORKSPACE_SLUG_INPUT_PATTERN =
 	'(?!.*--)[a-z0-9][a-z0-9\\-]{1,46}[a-z0-9]';
 
+/* What the address field keeps of typed or pasted text. A short value and a
+   trailing hyphen pass, because typing goes through both; the pattern and the
+   server refuse them on submit. Every step reads left to right, so filtering
+   the text up to the end of an edit tells what that edit may insert. The page
+   ships this source and tests evaluate the same source. */
+export const WORKSPACE_SLUG_TYPING_FILTER = String.raw`function(value){return value.toLowerCase().replace(/\s/g,'-').replace(/[^a-z0-9-]/g,'').replace(/-{2,}/g,'-').replace(/^-/,'').slice(0,48);}`;
+
+/* An insertion at the selection that the page may cancel is filtered before
+   the browser applies it and replayed as an editing command, so undo, redo,
+   the caret and maxlength only ever see filtered text; assigning the value
+   instead corrupts Chrome's undo history. A failed replay lets the raw edit
+   through for the pattern to refuse. Deletions pass untouched: they add no
+   character, and rewriting them would erase separators mid-edit. Composed
+   text is filtered once committed, in every engine. */
+const WORKSPACE_SLUG_TYPING = `
+(function(filter){var input=document.getElementById('setup-workspaceSlug');if(!input)return;
+function kept(start,end,text){var value=input.value,head=value.slice(0,start);
+var next=filter(head+text).slice(filter(head).length);
+return next.slice(-1)==='-'&&value.charAt(end)==='-'?next.slice(0,-1):next;}
+function insert(text){return document.execCommand(text?'insertText':'delete',false,text);}
+input.addEventListener('beforeinput',function(event){
+if(!event.cancelable||event.isComposing||!/^insert(Text|FromPaste|FromDrop)$/.test(event.inputType))return;
+var text=event.data!=null?event.data:event.dataTransfer?event.dataTransfer.getData('text/plain'):'';
+var next=kept(input.selectionStart,input.selectionEnd,text);
+if(next!==text&&(!next||insert(next)))event.preventDefault();});
+input.addEventListener('compositionend',function(event){
+var text=event.data||'',end=input.selectionStart,start=end-text.length;
+if(!text||start<0||input.value.slice(start,end)!==text)return;
+var next=kept(start,end,text);
+if(next!==text){input.setSelectionRange(start,end);insert(next);}});
+})(${WORKSPACE_SLUG_TYPING_FILTER});
+`;
+
 function workspaceField(
 	view: SetupPageView,
 	name: string,
@@ -459,6 +492,10 @@ export function renderSetupPage(view: SetupPageView, nonce: string): string {
 		view.step === 'Sign in' && view.autoRestart && view.csrfToken
 			? `<script nonce="${nonce}">fetch('/setup',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({step:'restart',setupCsrf:'${view.csrfToken}'}),keepalive:true}).catch(()=>{});</script>`
 			: '';
+	const slugScript =
+		view.step === 'Workspace'
+			? `<script nonce="${nonce}">${WORKSPACE_SLUG_TYPING}</script>`
+			: '';
 	const body =
 		view.step === 'Unlock'
 			? unlockStep(view)
@@ -492,6 +529,6 @@ function sync(){for(var i=0;i<f.length;i++){var s=document.querySelector('fields
 if(s)s.hidden=!f[i].checked;}}
 for(var i=0;i<f.length;i++)f[i].addEventListener('change',sync);sync();})();
 </script>
-${restartScript}
+${slugScript}${restartScript}
 </body></html>`;
 }

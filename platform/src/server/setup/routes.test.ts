@@ -6,6 +6,8 @@ import {
 	rmSync,
 	writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createContext, type ServerRoute } from '@octanejs/app-core';
@@ -17,6 +19,7 @@ import {
 } from '@flowdular/module-auth/server';
 import type { ModuleDatabaseRequirements } from '@flowdular/database';
 import { afterEach, describe, expect, it } from 'vitest';
+import { openInChrome } from '../../../../packages/ui/tests/chrome.ts';
 import {
 	createPlatformDatabaseProvider,
 	databaseProviderConfigFromEnvironment,
@@ -28,7 +31,11 @@ import {
 	POSTGRESQL_ADAPTER_ID,
 } from './adapters.ts';
 import { enabledDatabaseModules } from './modules.ts';
-import { renderSetupPage, type SetupPageView } from './page.ts';
+import {
+	renderSetupPage,
+	WORKSPACE_SLUG_TYPING_FILTER,
+	type SetupPageView,
+} from './page.ts';
 import { createSetupRoutes } from './routes.ts';
 
 const TOKEN = 'z'.repeat(43);
@@ -289,6 +296,117 @@ describe('first-run routes', () => {
 			expect(browser.test(slug), slug).toBe(accepts(slug));
 		}
 	});
+	it('ships the workspace address filter under the page nonce', async () => {
+		const app = harness(workspace(), undefined, [], {
+			databasePreconfigured: true,
+		});
+		await app.call('/setup', { step: 'unlock', token: TOKEN });
+		const response = await app.call('/setup');
+		const policy = response.headers.get('content-security-policy') ?? '';
+		const html = await response.text();
+		const filter = [
+			...html.matchAll(/<script nonce="([^"]+)">([\s\S]*?)<\/script>/g),
+		].find(([, , source]) => source!.includes(WORKSPACE_SLUG_TYPING_FILTER));
+		expect(policy.split('; ')).toContain(`script-src 'nonce-${filter?.[1]}'`);
+	});
+	it('refuses what a workspace address cannot hold while it is typed, in Chrome', async () => {
+		const app = harness(workspace(), undefined, [], {
+			databasePreconfigured: true,
+		});
+		await app.call('/setup', { step: 'unlock', token: TOKEN });
+		const response = await app.call('/setup');
+		const html = await response.text();
+		const server = createServer((request, reply) => {
+			if (request.url === '/setup') {
+				reply.writeHead(200, Object.fromEntries(response.headers)).end(html);
+			} else reply.writeHead(404).end();
+		});
+		await new Promise<void>((resolve) =>
+			server.listen(0, '127.0.0.1', resolve),
+		);
+		const { port } = server.address() as AddressInfo;
+		try {
+			await openInChrome(`http://127.0.0.1:${port}/setup`, async (page) => {
+				const field = "document.getElementById('setup-workspaceSlug')";
+				const read = () =>
+					page.evaluate<{ value: string; caret: number; valid: boolean }>(
+						`(({ value, selectionStart, validity }) => ({ value, caret: selectionStart, valid: validity.valid }))(${field})`,
+					);
+				await page.evaluate(`${field}.focus()`);
+				await page.type('Acme Corp_2026!');
+				expect(await read()).toEqual({
+					value: 'acme-corp2026',
+					caret: 13,
+					valid: true,
+				});
+				await page.evaluate("document.execCommand('undo')");
+				const undone = (await read()).value;
+				expect('acme-corp2026'.startsWith(undone)).toBe(true);
+				expect(undone).not.toBe('acme-corp2026');
+				await page.evaluate("document.execCommand('redo')");
+				expect((await read()).value).toBe('acme-corp2026');
+				await page.evaluate(`${field}.setSelectionRange(4, 4)`);
+				await page.type('_X');
+				expect(await read()).toEqual({
+					value: 'acmex-corp2026',
+					caret: 5,
+					valid: true,
+				});
+				await page.evaluate("document.execCommand('undo')");
+				expect((await read()).value).toBe('acme-corp2026');
+				await page.evaluate("document.execCommand('redo')");
+				expect((await read()).value).toBe('acmex-corp2026');
+				await page.evaluate(`${field}.select()`);
+				await page.insertText('!'.repeat(10) + 'x'.repeat(50));
+				expect((await read()).value).toBe('x'.repeat(48));
+				await page.evaluate(`${field}.select()`);
+				await page.insertText(' Zażółć  Gęślą Jaźń ');
+				expect(await read()).toEqual({
+					value: 'za-gl-ja-',
+					caret: 9,
+					valid: false,
+				});
+				await page.compose('Żb');
+				expect((await read()).value).toBe('za-gl-ja-Żb');
+				await page.insertText('Żb');
+				expect(await read()).toEqual({
+					value: 'za-gl-ja-b',
+					caret: 10,
+					valid: true,
+				});
+				await page.evaluate(`${field}.setSelectionRange(0, 2)`);
+				await page.evaluate("document.execCommand('delete')");
+				await page.type('b');
+				expect(await read()).toEqual({
+					value: 'b-gl-ja-b',
+					caret: 1,
+					valid: true,
+				});
+				await page.type('-');
+				expect(await read()).toEqual({
+					value: 'b-gl-ja-b',
+					caret: 1,
+					valid: true,
+				});
+				await page.evaluate(`${field}.setSelectionRange(0, 0)`);
+				await page.insertText('X'.repeat(50));
+				expect(await read()).toEqual({
+					value: 'x'.repeat(39) + 'b-gl-ja-b',
+					caret: 39,
+					valid: true,
+				});
+				/* An engine that cannot replay the filtered text keeps the raw
+				   edit, which the pattern refuses, rather than losing it. */
+				await page.evaluate(
+					`${field}.select(), (document.execCommand = () => false)`,
+				);
+				await page.type('Ab');
+				expect(await read()).toEqual({ value: 'Ab', caret: 2, valid: false });
+			});
+		} finally {
+			await new Promise((resolve) => server.close(resolve));
+		}
+	}, 60_000);
 	it('serves the unlock step and nothing else before the token is presented', async () => {
 		const app = harness(workspace());
 
