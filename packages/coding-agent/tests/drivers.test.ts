@@ -373,6 +373,35 @@ else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'res
 		).toEqual([{ type: 'assistant.message', text: 'Nothing to change.' }]);
 	});
 
+	it('takes the closing message from the result line when the stream carried only earlier text', async () => {
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
+		const command = await replayBinary([
+			{ type: 'system', subtype: 'init', session_id: 'session-6' },
+			{
+				type: 'assistant',
+				message: { content: [{ type: 'text', text: 'Reading the schema.' }] },
+			},
+			{
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'The draft is ready.',
+				session_id: 'session-6',
+				usage: {},
+			},
+		]);
+		const events = await collect(
+			createClaudeCodeDriver({ command }),
+			workspacePath,
+		);
+		expect(
+			events.filter((event) => event.type === 'assistant.message'),
+		).toEqual([
+			{ type: 'assistant.message', text: 'Reading the schema.' },
+			{ type: 'assistant.message', text: 'The draft is ready.' },
+		]);
+	});
+
 	it('surfaces a failed turn as an error event', async () => {
 		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await replayBinary([

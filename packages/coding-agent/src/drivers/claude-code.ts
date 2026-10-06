@@ -179,9 +179,9 @@ export function createClaudeCodeDriver(
 
 		let started = false;
 		let completed = false;
-		/* The result line repeats the closing text the assistant events already
-		   carried, so it speaks only for a stream that carried none. */
-		let spoke = false;
+		/* The result line repeats the closing text the last assistant event
+		   carried, so it speaks only when the stream did not carry that text. */
+		let lastText = '';
 		let currentResumeId = resumeId;
 		let lastActivityAt = -Infinity;
 		for await (const line of stream.lines) {
@@ -242,7 +242,7 @@ export function createClaudeCodeDriver(
 					.content;
 				for (const block of (content ?? []) as ContentBlock[]) {
 					if (block.type === 'text' && block.text?.trim()) {
-						spoke = true;
+						lastText = block.text;
 						yield { type: 'assistant.message', text: block.text };
 					}
 					if (block.type === 'thinking' && block.thinking?.trim()) {
@@ -298,9 +298,9 @@ export function createClaudeCodeDriver(
 						message: message.result.slice(0, 500),
 					};
 				} else if (
-					!spoke &&
 					typeof message.result === 'string' &&
-					message.result
+					message.result.trim() &&
+					message.result.trim() !== lastText.trim()
 				) {
 					yield { type: 'assistant.message', text: message.result };
 				}
