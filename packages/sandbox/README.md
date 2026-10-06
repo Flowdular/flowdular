@@ -775,6 +775,14 @@ output is cut, with the command and output folded under the details. An agent
 whose driver has a shell may run the same commands itself; the sandbox still
 runs them after the turn.
 
+Finished gates leave the session `failed` when one did not pass, otherwise
+`previewing` (or `planned` when nothing changed); nothing stays `validating`
+once its gates are done. **Check modules** settles the state from its results
+the same way, but only from `editing`, `validating`, `previewing` or `failed`
+and never while a turn runs, so an approval or answers the operator owes, a
+`planned` or `blocked` session and a delivered one keep their state. A check
+that cannot finish changes nothing. Open views hear the change like any other.
+
 ## Preview
 
 The preview renders the session's draft modules inside the real application

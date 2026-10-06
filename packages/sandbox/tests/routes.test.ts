@@ -23,7 +23,10 @@ import {
 } from '@flowdular/coding-agent';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import type { PreviewRuntime } from '../src/server/preview-runtime.ts';
-import { createSandboxRoutes } from '../src/server/routes.ts';
+import {
+	createSandboxRoutes,
+	type SandboxRouteOptions,
+} from '../src/server/routes.ts';
 import {
 	PlatformClient,
 	type PlatformAuthority,
@@ -174,10 +177,12 @@ function api(
 	options: {
 		readonly realInstall?: boolean;
 		readonly installDependencies?: () => Promise<InstallResult>;
+		readonly executeGates?: SandboxRouteOptions['executeGates'];
 	} = {},
 ) {
 	const routes = createSandboxRoutes(runtime, preview, {
 		port,
+		...(options.executeGates ? { executeGates: options.executeGates } : {}),
 		...(options.realInstall
 			? {}
 			: {
@@ -1727,5 +1732,185 @@ describe('following a session from another client', () => {
 		const reopened = await open();
 		expect(reopened.status).toBe(200);
 		await reopened.body!.cancel();
+	});
+});
+
+describe('session state after the gates', () => {
+	/* Only the gate processes are replaced; what the turn and the check do with
+	   the verdict is the production code. */
+	function gateVerdicts() {
+		const control = {
+			verdict: 'passed' as 'passed' | 'failed',
+			crash: false,
+		};
+		const executeGates: SandboxRouteOptions['executeGates'] = async ({
+			session,
+			gates,
+			modules,
+		}) => {
+			if (control.crash) throw new Error('The gate runner crashed.');
+			return gates.map((id) => ({
+				id,
+				module: (modules ?? session.modules)[0]!.directory,
+				status: control.verdict,
+				durationMs: 1,
+				command: `fake ${id}`,
+				output: control.verdict === 'failed' ? `${id} failed.` : '',
+			}));
+		};
+		return { control, executeGates };
+	}
+
+	type StateView = {
+		readonly running: boolean;
+		readonly session: { readonly state: string };
+	};
+
+	it('leaves a session in failed, not validating, when a repair chain stops', async () => {
+		const root = await workspace();
+		const { control, executeGates } = gateVerdicts();
+		control.verdict = 'failed';
+		const call = api(
+			fakeRuntime(
+				root,
+				fakeDriver({
+					handoff: 'HANDOFF: none - done',
+					file: 'modules/booking/src/index.ts',
+					delayMs: 5,
+				}),
+			),
+			4320,
+			{ executeGates },
+		);
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const spec =
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		await writeFile(join(paths.modulePath, 'spec', 'module.yaml'), spec);
+		await updateSession(root, session.id, {
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(spec),
+				specApprovedAt: Date.now(),
+			})),
+		});
+
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Add the endpoint.',
+					role: 'backend-engineer',
+					driver: 'fake',
+				},
+			}),
+		);
+
+		/* The repair waits for the operator as the next step, so no process is
+		   validating anything and the session must not say so. */
+		const view = (await (
+			await call('GET', `/sandbox/api/sessions/${session.id}`)
+		).json()) as StateView;
+		expect(view.running).toBe(false);
+		const chat = await readChat(root, session);
+		expect(chat.findLast((entry) => entry.handoff)?.handoff?.kind).toBe(
+			'continue',
+		);
+		expect(view.session.state).toBe('failed');
+	});
+
+	it('settles a stale validating state from a check and tells open views', async () => {
+		const root = await workspace();
+		const { control, executeGates } = gateVerdicts();
+		const call = api(
+			fakeRuntime(root, fakeDriver({ handoff: 'HANDOFF: none - done' })),
+			4320,
+			{ executeGates },
+		);
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await mkdir(join(paths.modulePath, 'src'), { recursive: true });
+		await writeFile(join(paths.modulePath, 'src', 'index.ts'), 'export {};\n');
+		/* What a stopped repair chain left behind before this fix. */
+		await updateSession(root, session.id, { state: 'validating' });
+		const check = () =>
+			call('POST', `/sandbox/api/sessions/${session.id}/gates`, { body: {} });
+		const state = async () =>
+			(
+				(await (
+					await call('GET', `/sandbox/api/sessions/${session.id}`)
+				).json()) as StateView
+			).session.state;
+		const tab = eventReader(
+			await call('GET', `/sandbox/api/sessions/${session.id}/events`),
+		);
+		expect((await tab.next()).event).toBe('ready');
+
+		expect((await check()).status).toBe(200);
+		expect(await state()).toBe('previewing');
+		expect(await tab.next()).toEqual({
+			event: 'changed',
+			data: { sessionId: session.id, running: false },
+		});
+
+		control.verdict = 'failed';
+		expect((await check()).status).toBe(200);
+		expect(await state()).toBe('failed');
+		expect((await tab.next()).event).toBe('changed');
+
+		/* A check that cannot finish says nothing new about the drafts. */
+		control.crash = true;
+		expect((await check()).status).toBe(500);
+		expect(await state()).toBe('failed');
+		await tab.close();
+	});
+
+	it('leaves lifecycle steps and a running turn to their owners', async () => {
+		const root = await workspace();
+		const { control, executeGates } = gateVerdicts();
+		control.verdict = 'failed';
+		let release = () => undefined as void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const base = fakeDriver({ handoff: 'HANDOFF: none - done', delayMs: 0 });
+		const driver: CodingAgentDriver = {
+			...base,
+			async *run(request: CodingAgentTurnRequest) {
+				await held;
+				yield* base.run(request);
+			},
+		};
+		const call = api(fakeRuntime(root, driver), 4320, { executeGates });
+		const session = await sessionFor(root);
+		const check = () =>
+			call('POST', `/sandbox/api/sessions/${session.id}/gates`, { body: {} });
+		const state = async () =>
+			(
+				(await (
+					await call('GET', `/sandbox/api/sessions/${session.id}`)
+				).json()) as StateView
+			).session.state;
+
+		for (const step of [
+			'awaiting-approval',
+			'awaiting-answers',
+			'planned',
+			'blocked',
+		] as const) {
+			await updateSession(root, session.id, { state: step });
+			expect((await check()).status).toBe(200);
+			expect(await state()).toBe(step);
+		}
+
+		await updateSession(root, session.id, { state: 'previewing' });
+		const turn = call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+			body: { role: 'business-manager', message: 'Draft it', driver: 'fake' },
+		});
+		await settledSession(async () => (await state()) !== 'editing');
+		expect((await check()).status).toBe(200);
+		expect(await state()).toBe('editing');
+		release();
+		await readSse(await turn);
 	});
 });

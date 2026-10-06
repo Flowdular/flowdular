@@ -38,7 +38,7 @@ import {
 	type PreviewComposition,
 	type PreviewRuntime,
 } from './preview-runtime.ts';
-import { formatSession } from './gates.ts';
+import { formatSession, type GateResult } from './gates.ts';
 import {
 	SPEC_OWNER_ROLE,
 	answeringRole,
@@ -50,6 +50,7 @@ import {
 	AGENT_TURN_TIMEOUT_MS,
 	collectDiffs,
 	forgetDiffs,
+	gateOutcomeState,
 	runSessionGates,
 	runTurn,
 	type TurnContext,
@@ -2387,6 +2388,40 @@ export function createSandboxRoutes(
 		},
 	});
 
+	/* A check runs no agent, so it settles only a state that describes the
+	   drafts' own work. Decisions the operator owes, lifecycle steps, and
+	   whatever a running turn is about to write are not the check's to
+	   change. */
+	const checkSettles: ReadonlySet<SandboxSession['state']> = new Set([
+		'editing',
+		'validating',
+		'previewing',
+		'failed',
+	]);
+	const settleCheckedState = async (
+		session: SandboxSession,
+		results: readonly GateResult[],
+		context: Context,
+	): Promise<void> => {
+		if (results.length === 0) return;
+		const state = gateOutcomeState(
+			results,
+			(await collectDiffs(runtime.workspaceRoot, session)).length > 0,
+		);
+		const settles = (current: SandboxSession) =>
+			current.state !== state &&
+			checkSettles.has(current.state) &&
+			!running.has(current.id);
+		/* Read first so an unchanged state costs no write and no change event. */
+		if (!settles(await readSession(runtime.workspaceRoot, session.id))) return;
+		const updated = await updateSession(
+			runtime.workspaceRoot,
+			session.id,
+			(current) => (settles(current) ? { state } : {}),
+		);
+		if (updated.state === state) await notifyPlatform(updated, state, context);
+	};
+
 	const gates = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/gates',
 		methods: ['POST'],
@@ -2413,6 +2448,7 @@ export function createSandboxRoutes(
 					session,
 					requested,
 				);
+				await settleCheckedState(session, results, context);
 				return json({ gates: results });
 			} catch (error) {
 				return failure(error);
