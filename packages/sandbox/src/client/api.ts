@@ -844,6 +844,24 @@ export function submitAnswers(
 	);
 }
 
+/* Follows one session for changes another tab or browser makes: a turn
+   started, an approval recorded, a turn finished. Events say only that
+   something changed, and the caller reloads through loadSession. EventSource
+   reconnects by itself, and every connection opens with an event, so a change
+   made while it was down is not missed. */
+export function watchSession(
+	sessionId: string,
+	onChanged: () => void,
+): () => void {
+	if (typeof EventSource === 'undefined') return () => undefined;
+	const source = new EventSource(
+		`/sandbox/api/sessions/${encodeURIComponent(sessionId)}/events`,
+	);
+	source.addEventListener('ready', onChanged);
+	source.addEventListener('changed', onChanged);
+	return () => source.close();
+}
+
 /* Attach to a turn that is already running, after a reload or from another
    tab. Resolves with false when nothing is running. */
 export function followTurn(

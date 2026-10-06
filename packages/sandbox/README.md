@@ -562,6 +562,13 @@ and closing it only unsubscribes; stopping is an explicit action. The session
 reports whether a turn is still running (`running` in the session view and
 `running` ids in the state), and a browser that reopens it attaches to the live
 stream (`GET /sandbox/api/sessions/:id/turn/stream`) until the chain ends.
+While no turn stream is attached, an open session view listens on
+`GET /sandbox/api/sessions/:id/events`, which sends `ready` on connect and
+`changed` whenever the session record or transcript changes or a turn starts
+or ends. The events carry the session id and whether a turn is running; the
+view reloads the rest through the session route, so another tab or browser
+starting a turn, approving or finishing shows up without a reload. At most 32
+views follow one session.
 
 A new turn on a session that already has one supersedes it, and waits for the
 old process to exit before it starts. Coding agents keep one writer per

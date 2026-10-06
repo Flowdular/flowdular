@@ -105,6 +105,7 @@ import {
 	type TurnChannel,
 	type TurnSubscriber as Subscriber,
 } from './turn-lifecycle.ts';
+import { notifySessionChanged, watchSession } from './session-events.ts';
 
 const SANDBOX_COOKIE = 'flowdular_sandbox';
 /* Every sandbox mutation carries this header. A cross-site form post cannot
@@ -121,6 +122,9 @@ const CHAIN_LIMIT = 4;
    cannot satisfy a gate could spend an unbounded amount of the operator's
    budget. Mirrors `maxRepairLoops` in .ai/policies/task-budgets.yaml. */
 const MAX_REPAIR_LOOPS = 2;
+/* An idle session event stream sends a comment this often, so a proxy keeps
+   it open and a client that vanished is found on the next write. */
+const SESSION_EVENTS_KEEPALIVE_MS = 25_000;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 /* Paths the preview bridge never forwards: the platform's own authentication
    and the sandbox's own records are not preview data. */
@@ -152,6 +156,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	ATTACHMENT_TOO_LARGE: 413,
 	ATTACHMENT_LIMIT_REACHED: 409,
 	SESSION_RUNNING: 409,
+	SESSION_WATCHERS_EXHAUSTED: 429,
 	SESSION_ARCHIVED: 409,
 	SESSION_DELIVERED: 409,
 	MODULE_NOT_FOUND: 404,
@@ -869,6 +874,7 @@ export function createSandboxRoutes(
 		/* Claimed before anything awaits, so two requests arriving together
 		   cannot both believe they are the only turn. */
 		running.set(sessionId, channel);
+		notifySessionChanged(sessionId);
 		previous?.controller.abort('superseded');
 		const timer = setTimeout(
 			() => controller.abort('timeout'),
@@ -947,6 +953,7 @@ export function createSandboxRoutes(
 				   Keep the chain owned until the actual writer has drained. */
 				if (previous) await previous.finished;
 				if (running.get(sessionId) === channel) running.delete(sessionId);
+				notifySessionChanged(sessionId);
 				publish(channel, 'ended', { sessionId });
 				channel.subscribers.clear();
 				release();
@@ -979,6 +986,58 @@ export function createSandboxRoutes(
 			},
 			cancel() {
 				if (subscriber) channel.subscribers.delete(subscriber);
+			},
+		});
+		return new Response(stream, {
+			headers: {
+				'content-type': 'text/event-stream; charset=utf-8',
+				'cache-control': 'no-store',
+				connection: 'keep-alive',
+			},
+		});
+	};
+
+	/* The change feed of one session: an open view learns that another tab or
+	   browser started a turn, recorded an approval or finished a turn. Events
+	   carry the session id and whether a turn runs; the view reloads the rest
+	   through the session route, which runs the same checks as this one. */
+	const sessionEventStream = (sessionId: string): Response => {
+		const encoder = new TextEncoder();
+		let deliver = (_event: string) => undefined as void;
+		const unwatch = watchSession(sessionId, () => deliver('changed'));
+		let keepalive: ReturnType<typeof setInterval> | undefined;
+		const stop = () => {
+			clearInterval(keepalive);
+			unwatch();
+		};
+		const stream = new ReadableStream<Uint8Array>({
+			start(streamController) {
+				let closed = false;
+				const write = (chunk: string) => {
+					if (closed) return;
+					try {
+						streamController.enqueue(encoder.encode(chunk));
+					} catch {
+						closed = true;
+						stop();
+					}
+				};
+				deliver = (event) =>
+					write(
+						`event: ${event}\ndata: ${JSON.stringify({
+							sessionId,
+							running: running.has(sessionId),
+						})}\n\n`,
+					);
+				keepalive = setInterval(
+					() => write(': keepalive\n\n'),
+					SESSION_EVENTS_KEEPALIVE_MS,
+				);
+				keepalive.unref?.();
+				deliver('ready');
+			},
+			cancel() {
+				stop();
 			},
 		});
 		return new Response(stream, {
@@ -2027,6 +2086,19 @@ export function createSandboxRoutes(
 		},
 	});
 
+	const sessionEvents = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/events',
+		methods: ['GET'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options);
+				return sessionEventStream(sessionIdParam(context));
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	/* Follow a turn another browser, or an earlier page load, started. */
 	const followTurn = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/turn/stream',
@@ -2732,6 +2804,7 @@ export function createSandboxRoutes(
 		turn,
 		answerQuestions,
 		followTurn,
+		sessionEvents,
 		stop,
 		settings,
 		approve,

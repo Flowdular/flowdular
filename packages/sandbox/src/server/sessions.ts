@@ -22,6 +22,7 @@ import {
 } from './config.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
+import { notifySessionChanged } from './session-events.ts';
 import { hashSpec } from './spec.ts';
 import { forgetDiffs } from './turns.ts';
 import {
@@ -611,6 +612,7 @@ export async function writeSession(
 		{ encoding: 'utf8', mode: 0o600 },
 	);
 	await rename(staging, paths.record);
+	notifySessionChanged(session.id);
 	return session;
 }
 
@@ -965,6 +967,7 @@ export async function appendChatEntry(
 		encoding: 'utf8',
 		mode: 0o600,
 	});
+	notifySessionChanged(session.id);
 	return record;
 }
 
