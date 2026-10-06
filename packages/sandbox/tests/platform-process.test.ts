@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
@@ -949,6 +949,12 @@ it.each([
 		launcher.kill(signal);
 		await waitUntil(async () => launcher.signalCode !== null);
 		expect(launcher.signalCode).toBe(signal);
+		/* SIGKILL leaves the workspace lock for the next start to take over. */
+		expect(
+			(await readdir(join(workspace.root, '.flowdular', 'sandbox'))).includes(
+				'workspace.lock',
+			),
+		).toBe(signal === 'SIGKILL');
 		/* The guard escalates to SIGKILL after PLATFORM_STOP_ESCALATION_MS;
 		   seven more seconds bound that on a loaded machine. */
 		expect(
@@ -984,6 +990,9 @@ it('stops the platform tree when a second Ctrl+C ends the launcher during shutdo
 	expect(
 		await survivorsAfter(recorded, PLATFORM_STOP_ESCALATION_MS + 7_000),
 	).toEqual([]);
+	expect(
+		await readdir(join(workspace.root, '.flowdular', 'sandbox')),
+	).not.toContain('workspace.lock');
 }, 60_000);
 
 it('leaves no process behind when a launcher test fails or times out', async () => {

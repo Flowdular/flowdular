@@ -410,13 +410,37 @@ describe('research search chain', () => {
 		expect((await repository.adapterHealth(TENANT))[0]?.openUntil).toBe(3_600);
 	});
 
+	it('RESEARCH-CIRCUIT gives the half open probe to only one of two claims in the database', async () => {
+		const repository = shared.repository;
+		await repository.recordAdapterFailure(
+			TENANT,
+			'searxng',
+			'X_FAILED',
+			1_000,
+			1,
+			500,
+		);
+		const claims = await Promise.all([
+			repository.claimAdapterProbe(TENANT, 'searxng', 2_000, 2_500),
+			repository.claimAdapterProbe(TENANT, 'searxng', 2_000, 2_500),
+		]);
+		expect(claims.sort()).toEqual([false, true]);
+		expect((await repository.adapterHealth(TENANT))[0]?.openUntil).toBe(2_500);
+	});
+
 	it('RESEARCH-CIRCUIT opens after the threshold, lets one probe through after the cooldown and stays per workspace', async () => {
 		let clock = Date.parse('2026-09-16T10:00:00Z');
 		const stub = stubConnectors();
 		await configure(stub, TENANT, 'searxng');
 		await configure(stub, OTHER, 'searxng');
 		let searxngWorks = false;
-		stub.answer(() => (searxngWorks ? succeeded(SEARXNG_RESULT) : failed(401)));
+		let held: Promise<void> | null = null;
+		stub.answer(async () => {
+			const waiting = held;
+			held = null;
+			await waiting;
+			return searxngWorks ? succeeded(SEARXNG_RESULT) : failed(401);
+		});
 		const service = researchService({
 			repository: shared.repository,
 			now: () => clock,
@@ -460,7 +484,18 @@ describe('research search chain', () => {
 
 		clock += 60_000;
 		searxngWorks = true;
-		const probes = await Promise.all([search(TENANT), search(TENANT)]);
+		/* The probe's answer waits until the other query has settled, so that
+		   query decides while the circuit is half open. Unheld, it can start
+		   after the probe has closed the circuit (PostgreSQL runs the two on
+		   separate connections) and then rightly asks searxng. */
+		let answerProbe!: () => void;
+		held = new Promise((resolve) => {
+			answerProbe = resolve;
+		});
+		const racing = [search(TENANT), search(TENANT)];
+		await Promise.race(racing);
+		answerProbe();
+		const probes = await Promise.all(racing);
 		expect(stub.requests).toHaveLength(4);
 		expect(probes.map((answer) => answer.adapter).sort()).toEqual([
 			'recorded',
