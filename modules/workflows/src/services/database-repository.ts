@@ -617,9 +617,9 @@ const SQL = Object.freeze({
 		  OR (status = 'cancel-requested' AND (lease_expires_at IS NULL OR lease_expires_at <= $4))
 		 )
 		 ORDER BY queued_at, id LIMIT $5`,
-	/* $9 is the status the claim read. A cancellation clears the lease, so the
-		   lease predicate alone still matches a run cancelled since that read and
-		   writes the stale status back over the request. */
+	/* $9 is the status the claim read. A run parked on a wait holds no lease,
+		   so the lease predicate alone still matches a run cancelled since that
+		   read and writes the stale status back over the request. */
 	claimRun: `UPDATE workflow_runs SET status = $1, lease_owner = $2, lease_expires_at = $3,
 		 started_at = coalesce(started_at, $4)
 		 WHERE tenant_id = $5 AND id = $6
@@ -713,8 +713,11 @@ const SQL = Object.freeze({
 		 WHERE tenant_id = $7 AND id = $8 AND status = $9`,
 	expireRunPayloads: `UPDATE workflow_payloads SET expires_at = $1
 		 WHERE tenant_id = $2 AND run_id = $3 AND kind = 'execution'`,
+	/* The lease stays with a worker inside the run, which finds the request at
+		   its next step. Clearing it would let a second worker take the run while
+		   the first still writes to it. */
 	requestCancellation: `UPDATE workflow_runs SET status = 'cancel-requested',
-		 cancellation_requested_at = $1, lease_owner = NULL, lease_expires_at = NULL
+		 cancellation_requested_at = $1
 		 WHERE tenant_id = $2 AND id = $3
 		 AND status NOT IN ('cancel-requested', 'succeeded', 'failed', 'refused', 'cancelled')`,
 	readExecutionPayload: `SELECT ciphertext FROM workflow_payloads

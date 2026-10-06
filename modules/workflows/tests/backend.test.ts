@@ -4607,6 +4607,34 @@ async function cancellationRace(
 			});
 			return detail!;
 		},
+		/** Starts a second worker over the same store and reports its first claim. */
+		async otherWorker() {
+			let report!: (claimed: unknown) => void;
+			const firstClaim = new Promise<unknown>((resolve) => (report = resolve));
+			const observed = new Proxy(database.repository, {
+				get(target, property) {
+					const value = Reflect.get(target, property, target) as unknown;
+					if (typeof value !== 'function') return value;
+					return async (...args: unknown[]) => {
+						const returned = await (value.apply(
+							target,
+							args,
+						) as Promise<unknown>);
+						if (property === 'claimNext') report(returned);
+						return returned;
+					};
+				},
+			});
+			const other = createWorkflowsRuntime({
+				databases: gate.provider,
+				repository: observed,
+				capabilities: registry,
+				cursorKey: Buffer.alloc(32, 76),
+				worker: { pollMs: 250, leaseMs: 1_000 },
+			});
+			await other.start();
+			return { runtime: other, firstClaim };
+		},
 		async dispose() {
 			await runtime.dispose();
 			await database.dispose();
@@ -4884,6 +4912,44 @@ describe('workflow worker transitions after a cancellation', () => {
 			expect(race.enqueues()).toBe(1);
 			expect(cancelRequests(detail)).toBe(1);
 		} finally {
+			await race.dispose();
+		}
+	});
+
+	it('leaves a run to its owner when a cancellation lands inside a node', async () => {
+		const race = await cancellationRace(agentGraph());
+		let other: Awaited<ReturnType<typeof race.otherWorker>> | undefined;
+		try {
+			let runId = '';
+			let otherClaim: unknown = 'not reached';
+			race.wrapNext('markChildWaiting', async (call) => {
+				await race.service.cancel('tenant-a', runId, actor);
+				other = await race.otherWorker();
+				otherClaim = await other.firstClaim;
+				/* A worker that took the run anyway finishes its cancellation first. */
+				if (otherClaim) {
+					await waitFor(
+						async () =>
+							(await race.service.getRun('tenant-a', runId))?.status ===
+							'cancelled',
+					);
+				}
+				return call();
+			});
+			await race.runtime.start();
+			runId = await race.enqueue();
+			await waitFor(async () =>
+				(await race.service.getRunDetail('tenant-a', runId)).events.some(
+					(event) => event.type === 'node.cancel.acknowledged',
+				),
+			);
+			race.result.current = { name: 'must not be routed' };
+			const detail = await race.settled(runId);
+			expect(otherClaim).toBeNull();
+			expect(detail.run.status).toBe('cancelled');
+			expect(lateIgnoredChildren(detail)).toEqual(['child-run-1']);
+		} finally {
+			await other?.runtime.dispose();
 			await race.dispose();
 		}
 	});
