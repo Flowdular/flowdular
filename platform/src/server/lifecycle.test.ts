@@ -258,6 +258,15 @@ describe('platform runtime lifecycle', () => {
 		expect(response.status).toBe(200);
 		expect(response.headers.get('content-type')).toMatch(/^text\/event-stream/);
 		expect(await response.text()).toBe('retry: 1000\n\n');
+		const read = await lifecycle.middleware(
+			{
+				request: new Request('https://test/api/runs', {
+					headers: { accept: 'application/json' },
+				}),
+			} as never,
+			next,
+		);
+		expect(read.status).toBe(503);
 		expect(next).not.toHaveBeenCalled();
 	});
 
