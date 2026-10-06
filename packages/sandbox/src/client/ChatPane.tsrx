@@ -24,6 +24,7 @@ import {
 	type PendingQuestions,
 } from '../server/questions.ts';
 import { GateCard } from './GateCard.tsrx';
+import { Markdown } from './Markdown.tsrx';
 import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
 import { transcriptRows, type TranscriptRow } from './transcript.ts';
@@ -585,7 +586,11 @@ export function ChatPane(props: ChatPaneProps) @{
 								</span>
 								{moduleLabel(block.entry!)}
 							</header>
-							<p class="chat__text">{block.speech}</p>
+							@if (block.entry!.kind === 'agent') {
+								<Markdown text={block.speech} />
+							} @else {
+								<p class="chat__text">{block.speech}</p>
+							}
 							@if (block.questions.length > 0) {
 								<ul>
 									@for (const question of block.questions; key question.id) {

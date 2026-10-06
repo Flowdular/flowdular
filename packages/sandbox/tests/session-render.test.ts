@@ -405,4 +405,44 @@ describe('transcript entries', () => {
 		expect(html).toMatch(/<details>[\s\S]*protocolVersion[\s\S]*<\/details>/);
 	});
 
+	it('formats an agent message without letting its markup through', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const html = transcript([
+			{
+				sequence: 1,
+				at: 1,
+				kind: 'user',
+				role: 'business-manager',
+				text: 'Keep **this** as typed.',
+			},
+			{
+				sequence: 2,
+				at: 2,
+				kind: 'agent',
+				role: 'business-manager',
+				text: [
+					'**Files written**',
+					'- `modules/equipment/spec/module.yaml`: the draft',
+					'',
+					'<img src=x onerror=alert(1)> [run](javascript:alert(1)) [docs](https://example.com/docs)',
+					'',
+					'HANDOFF: none - done',
+				].join('\n'),
+			},
+		]);
+
+		expect(html).toContain('Keep **this** as typed.');
+		expect(html).toContain('<strong>Files written</strong>');
+		expect(html).toContain(
+			'<li><p><code>modules/equipment/spec/module.yaml</code>: the draft</p></li>',
+		);
+		expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+		expect(html).not.toContain('<img');
+		expect(html).not.toContain('javascript:');
+		expect(html).toContain(
+			'<a href="https://example.com/docs" target="_blank" rel="noopener noreferrer nofollow">docs</a>',
+		);
+		expect(html).not.toContain('HANDOFF');
+	});
 });

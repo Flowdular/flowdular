@@ -143,6 +143,10 @@ Every request to the sandbox API is checked before it does anything:
 - Session views expose workspace-relative paths only. The preview loads draft
   sources through `/preview-module/<session>/<module>/...`, which the sandbox
   maps onto the session workspace itself.
+- Agent messages render a Markdown subset (headings, lists, tables, code,
+  quotes, emphasis, links) built as elements from a parsed tree, never as
+  markup: HTML in a message shows as text, and only `http`, `https` and
+  `mailto` addresses become links, opened in a new tab without an opener.
 
 ## Modes
 
