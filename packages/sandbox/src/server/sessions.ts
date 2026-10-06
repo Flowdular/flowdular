@@ -22,6 +22,7 @@ import {
 } from './config.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
+import { notifySessionChanged } from './session-events.ts';
 import { hashSpec } from './spec.ts';
 import { forgetDiffs } from './turns.ts';
 import {
@@ -54,9 +55,13 @@ export interface HandoffPlan {
 	readonly roleName: string;
 	readonly reason: string;
 	readonly prompt: string;
-	/* Set when this turn exists only to fix a failed gate. The chain counts
-	   these so a module that cannot satisfy a gate cannot spin forever. */
+	/* Set when this turn exists only to fix a failed gate or a refused
+	   questions block. The chain counts these so a module that cannot satisfy
+	   a gate cannot spin forever. */
 	readonly repair?: boolean;
+	/* Set when the repair is a questions block to send again. One runs in a
+	   row: a second refusal stops for the operator. */
+	readonly resendQuestions?: boolean;
 	/* The draft module directory the next turn works in. Absent on handoffs
 	   written before a session could target one module of several. */
 	readonly module?: string;
@@ -150,6 +155,9 @@ export interface SessionOwner {
 
 export interface ChatEntry {
 	readonly decision?: 'approved' | 'changes-requested';
+	/* On an approval: SHA-256 of the exact text the operator reviewed, before
+	   the approval moved its status line to approved. */
+	readonly reviewedHash?: string;
 	readonly sequence: number;
 	readonly at: number;
 	readonly kind: 'user' | 'agent' | 'event' | 'system';
@@ -604,6 +612,7 @@ export async function writeSession(
 		{ encoding: 'utf8', mode: 0o600 },
 	);
 	await rename(staging, paths.record);
+	notifySessionChanged(session.id);
 	return session;
 }
 
@@ -836,10 +845,14 @@ export async function deleteSession(
    The hash of the approved text is recorded on the module, which is what makes
    the approval belong to this version of the specification and not to the file
    name: an edit after it re-opens the gate. */
+/* With `reviewedHash`, the approval holds only for the text the operator
+   reviewed: a document whose current hash differs is refused before anything
+   is written. */
 export async function approveSpecification(
 	workspaceRoot: string,
 	session: SandboxSession,
 	module: SessionModule = session.modules[0]!,
+	reviewedHash?: string,
 ): Promise<{
 	readonly session: SandboxSession;
 	readonly status: string;
@@ -858,6 +871,23 @@ export async function approveSpecification(
 		throw new SandboxSetupError(
 			'SPEC_NOT_FOUND',
 			`${module.id} has no specification to approve yet.`,
+		);
+	}
+	const pending = session.pendingQuestions;
+	if (
+		pending &&
+		pending.questions.length > 0 &&
+		(pending.module === undefined || pending.module === module.directory)
+	) {
+		throw new SandboxSetupError(
+			'QUESTIONS_PENDING',
+			`${module.id} still has ${pending.questions.length} open question(s). Answer them before approving the specification.`,
+		);
+	}
+	if (reviewedHash !== undefined && hashSpec(spec) !== reviewedHash) {
+		throw new SandboxSetupError(
+			'SPEC_CHANGED',
+			`The specification of ${module.id} changed after you reviewed it. Review the current text and approve again.`,
 		);
 	}
 	const status = /^status:[ \t]*(\S+)[ \t]*$/m.exec(spec);
@@ -937,6 +967,7 @@ export async function appendChatEntry(
 		encoding: 'utf8',
 		mode: 0o600,
 	});
+	notifySessionChanged(session.id);
 	return record;
 }
 

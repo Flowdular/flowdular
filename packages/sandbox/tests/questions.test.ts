@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +13,10 @@ import {
 } from '@flowdular/coding-agent';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import {
+	MAX_BLOCK_LENGTH,
+	MAX_OPTION_LENGTH,
 	MAX_OPTIONS,
+	MAX_QUESTION_LENGTH,
 	MAX_QUESTIONS,
 	formatDecisions,
 	parseQuestionsBlock,
@@ -30,7 +34,11 @@ import {
 	updateSession,
 	type SandboxSession,
 } from '../src/server/sessions.ts';
-import { runTurn, type TurnContext } from '../src/server/turns.ts';
+import {
+	runTurn,
+	type TurnContext,
+	type TurnOutcome,
+} from '../src/server/turns.ts';
 import { PendingQuestionsCard } from '../src/client/PendingQuestionsCard.tsrx';
 import { answersErrorFor } from '../src/client/state.ts';
 import {
@@ -515,7 +523,7 @@ async function drive(
 	context: TurnContext,
 	sessionId: string,
 	message: string,
-): Promise<void> {
+): Promise<TurnOutcome> {
 	const iterator = runTurn(context, {
 		sessionId,
 		message,
@@ -524,7 +532,65 @@ async function drive(
 	});
 	let step = await iterator.next();
 	while (!step.done) step = await iterator.next();
+	return step.value;
 }
+
+const DRAFT_SPEC = `schemaVersion: 1
+id: booking.core
+specVersion: 0.1.0
+status: draft
+name: Booking
+description: Pending operator answer on who may cancel.
+`;
+
+/* The business manager of the reported session: it writes the draft, then
+   asks. Each call takes the next closing, so a repair turn can answer
+   differently from the turn it repairs. */
+function specWriterThatSays(
+	closings: readonly string[],
+	seen: CodingAgentTurnRequest[] = [],
+): CodingAgentDriver {
+	const base = driverThatSays('');
+	return {
+		...base,
+		async *run(request: CodingAgentTurnRequest) {
+			seen.push(request);
+			const target = join(
+				request.workspacePath,
+				'modules',
+				'booking',
+				'spec',
+				'module.yaml',
+			);
+			await mkdir(join(target, '..'), { recursive: true });
+			await writeFile(target, DRAFT_SPEC, 'utf8');
+			yield {
+				type: 'turn.started' as const,
+				driver: 'fake',
+				role: request.role,
+				resumeId: null,
+			};
+			yield {
+				type: 'file.changed' as const,
+				path: 'spec/module.yaml',
+				change: 'modified' as const,
+			};
+			yield {
+				type: 'assistant.message' as const,
+				text: closings[Math.min(seen.length, closings.length) - 1]!,
+			};
+			yield {
+				type: 'turn.completed' as const,
+				resumeId: null,
+				usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+				costUsd: null,
+				finishReason: 'stop' as const,
+			};
+		},
+	};
+}
+
+const LONG_OPTION = `Any team member of the booking team, including temporary staff and contractors who were invited to the workspace by an owner.`;
 
 describe('a turn that asks for decisions', () => {
 	it('stores the questions on the session with the turn that asked', async () => {
@@ -547,7 +613,7 @@ describe('a turn that asks for decisions', () => {
 		expect(stored.pendingQuestions!.sequence).toBeGreaterThan(0);
 	});
 
-	it('reports a malformed block as a warning and stores nothing', async () => {
+	it('reports a malformed block on the transcript and stores nothing', async () => {
 		const root = await workspace();
 		const session = await newSession(root);
 		const context = turnContext(
@@ -563,7 +629,84 @@ describe('a turn that asks for decisions', () => {
 			join(root, '.flowdular', 'sandbox', 'sessions', session.id, 'chat.jsonl'),
 			'utf8',
 		);
-		expect(transcript).toContain('questions block in this reply was ignored');
+		expect(transcript).toContain('questions block in this reply was refused');
+	});
+
+	it('returns a block with an over-long option to the specialist instead of dropping it', async () => {
+		expect(LONG_OPTION.length).toBeGreaterThan(MAX_OPTION_LENGTH);
+		const root = await workspace();
+		const session = await newSession(root);
+		const refused = block(
+			{
+				questions: [{ ...QUESTION, options: ['Only the owner', LONG_OPTION] }],
+			},
+			'\nHANDOFF: none - waiting for the decisions',
+		);
+
+		const outcome = await drive(
+			turnContext(root, specWriterThatSays([refused])),
+			session.id,
+			'Write the specification.',
+		);
+
+		/* The specialist that asked gets the reason and the limits for one
+		   repair turn; the session does not move on to approval. */
+		expect(outcome.handoff.kind).toBe('continue');
+		expect(outcome.handoff.role).toBe('business-manager');
+		expect(outcome.handoff.module).toBe('booking');
+		expect(outcome.handoff.prompt).toContain(
+			`Every option of Q-1 must be 1 to ${MAX_OPTION_LENGTH} characters.`,
+		);
+		expect(outcome.handoff.prompt).toContain(
+			`each 1 to ${MAX_OPTION_LENGTH} characters`,
+		);
+		expect(outcome.session.state).not.toBe('awaiting-approval');
+		const transcript = await readFile(
+			join(root, '.flowdular', 'sandbox', 'sessions', session.id, 'chat.jsonl'),
+			'utf8',
+		);
+		expect(transcript).toContain(
+			'The questions block in this reply was refused',
+		);
+	});
+
+	it('stops for the operator, never for approval, when the repaired block is refused again', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const refused = block(
+			{
+				questions: [{ ...QUESTION, options: ['Only the owner', LONG_OPTION] }],
+			},
+			'\nHANDOFF: none - waiting for the decisions',
+		);
+		const context = turnContext(root, specWriterThatSays([refused]));
+
+		const first = await drive(context, session.id, 'Write the specification.');
+		const second = await drive(context, session.id, first.handoff.prompt);
+
+		expect(second.handoff.kind).toBe('question');
+		expect(second.handoff.role).toBe('business-manager');
+		expect(second.handoff.reason).toContain(
+			`Every option of Q-1 must be 1 to ${MAX_OPTION_LENGTH} characters.`,
+		);
+	});
+
+	it('waits for the answers instead of offering approval of a draft that asked', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const asked = block(
+			{ questions: [QUESTION] },
+			'\nHANDOFF: none - waiting for the decisions',
+		);
+
+		const outcome = await drive(
+			turnContext(root, specWriterThatSays([asked])),
+			session.id,
+			'Write the specification.',
+		);
+
+		expect(outcome.handoff.kind).toBe('question');
+		expect(outcome.session.pendingQuestions?.questions).toHaveLength(1);
 	});
 
 	it('clears a stored question set on the next turn that asks nothing', async () => {
@@ -702,6 +845,108 @@ async function sessionAwaitingAnswers(
 		pendingQuestions: { ...PENDING, module: 'booking', ...overrides },
 	});
 }
+
+describe('the instruction that asks for questions', () => {
+	/* The parser refuses a block outside these bounds, so the specialist asked
+	   to write one has to read the same numbers up front. */
+	it('states the limits the parser enforces', () => {
+		const instruction = DEFAULT_AGENT_ROLES.find(
+			(role) => role.id === 'business-manager',
+		)!.instruction;
+		expect(instruction).toContain(
+			`at most ${MAX_QUESTIONS} questions, each 1 to ${MAX_QUESTION_LENGTH} characters`,
+		);
+		expect(instruction).toContain(
+			`at most ${MAX_OPTIONS} options per question, each 1 to ${MAX_OPTION_LENGTH} characters`,
+		);
+		expect(instruction).toContain(`at most ${MAX_BLOCK_LENGTH} characters`);
+	});
+});
+
+describe('a refused questions block in a running chain', () => {
+	it('repairs the block in one automatic turn and then waits for the answers', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const seen: CodingAgentTurnRequest[] = [];
+		const closings = [
+			block({
+				questions: [{ ...QUESTION, options: ['Only the owner', LONG_OPTION] }],
+			}),
+			block({ questions: [QUESTION] }),
+		];
+		let turn = 0;
+		const base = driverThatSays('');
+		const driver: CodingAgentDriver = {
+			...base,
+			async *run(request: CodingAgentTurnRequest) {
+				seen.push(request);
+				const closing = closings[Math.min(turn, closings.length - 1)]!;
+				turn += 1;
+				yield* driverThatSays(closing).run(request);
+			},
+		};
+		const call = api(fakeRuntime(root, driver));
+
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Write the specification.',
+					role: 'business-manager',
+					driver: 'fake',
+				},
+			}),
+		);
+
+		expect(seen).toHaveLength(2);
+		expect(seen[1]!.role).toBe('business-manager');
+		expect(seen[1]!.prompt).toContain('Your questions block was refused');
+		const stored = await readSession(root, session.id);
+		expect(stored.pendingQuestions?.questions.map((entry) => entry.id)).toEqual(
+			['Q-1'],
+		);
+	});
+});
+
+describe('approving while decisions are open', () => {
+	it('refuses the approval until the open questions are answered', async () => {
+		const root = await workspace();
+		const session = await sessionAwaitingAnswers(root);
+		const specPath = join(
+			root,
+			'.flowdular',
+			'sandbox',
+			'sessions',
+			session.id,
+			'workspace',
+			'modules',
+			'booking',
+			'spec',
+			'module.yaml',
+		);
+		await mkdir(join(specPath, '..'), { recursive: true });
+		await writeFile(specPath, DRAFT_SPEC, 'utf8');
+		const call = api(fakeRuntime(root, driverThatSays('x')));
+
+		const response = await call(
+			'POST',
+			`/sandbox/api/sessions/${session.id}/approve`,
+			{
+				body: {
+					module: 'booking',
+					specHash: createHash('sha256').update(DRAFT_SPEC).digest('hex'),
+				},
+			},
+		);
+
+		expect(response.status).toBe(409);
+		expect(
+			((await response.json()) as { error: { code: string } }).error.code,
+		).toBe('QUESTIONS_PENDING');
+		expect(
+			(await readSession(root, session.id)).modules[0]!.specHash,
+		).toBeUndefined();
+	});
+});
 
 describe('the answers route', () => {
 	it('starts a turn whose request text leads with the decisions', async () => {

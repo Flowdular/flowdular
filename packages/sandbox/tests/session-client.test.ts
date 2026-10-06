@@ -3,6 +3,7 @@ import {
 	streamTurn,
 	followTurn,
 	streamEject,
+	watchSession,
 	type TurnHandlers,
 } from '../src/client/api.ts';
 
@@ -114,5 +115,45 @@ describe('session turn transport', () => {
 		expect(await followTurn('session', events).attached).toBe(true);
 		await vi.waitFor(() => expect(events.onEnded).toHaveBeenCalledOnce());
 		expect(events.onFailed).toHaveBeenCalledWith('Disconnected');
+	});
+});
+
+describe('session change feed', () => {
+	/* The browser's EventSource, reduced to what the feed uses. */
+	class FakeEventSource {
+		static opened: FakeEventSource[] = [];
+		readonly listeners = new Map<string, (() => void)[]>();
+		closed = false;
+		constructor(readonly url: string) {
+			FakeEventSource.opened.push(this);
+		}
+		addEventListener(type: string, listener: () => void) {
+			this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+		}
+		close() {
+			this.closed = true;
+		}
+		emit(type: string) {
+			for (const listener of this.listeners.get(type) ?? []) listener();
+		}
+	}
+
+	it('reports the opening and every change, and closes with the view', () => {
+		FakeEventSource.opened = [];
+		vi.stubGlobal('EventSource', FakeEventSource);
+		const onChanged = vi.fn();
+
+		const stop = watchSession('session 1', onChanged);
+		const source = FakeEventSource.opened[0]!;
+		expect(source.url).toBe('/sandbox/api/sessions/session%201/events');
+		/* The opening counts: a change made before the feed connected, or while
+		   it was reconnecting, must still reload the view. */
+		source.emit('ready');
+		source.emit('changed');
+		source.emit('changed');
+		expect(onChanged).toHaveBeenCalledTimes(3);
+
+		stop();
+		expect(source.closed).toBe(true);
 	});
 });

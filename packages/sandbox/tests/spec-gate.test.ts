@@ -1,5 +1,6 @@
 import { REVIEW_RESPONSE, fixtureGates } from './support/auto-review.ts';
 import { runGates } from '../src/server/gates.ts';
+import { createHash } from 'node:crypto';
 import { inspectAutoReview } from '../src/server/auto-review.ts';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -327,6 +328,13 @@ function draftSpecPath(root: string, session: SandboxSession): string {
 	);
 }
 
+/* The hash the approval card shows: SHA-256 over the exact text on disk. */
+async function reviewedHash(specPath: string): Promise<string> {
+	return createHash('sha256')
+		.update(await readFile(specPath))
+		.digest('hex');
+}
+
 function refusal(chat: readonly ChatEntry[]): ChatEntry | undefined {
 	return chat.find(
 		(entry) =>
@@ -504,7 +512,12 @@ describe('approving the specification of a change', () => {
 		const approved = await call(
 			'POST',
 			`/sandbox/api/sessions/${session.id}/approve`,
-			{ body: { module: 'parties' } },
+			{
+				body: {
+					module: 'parties',
+					specHash: await reviewedHash(draftSpecPath(root, session)),
+				},
+			},
 		);
 		expect(approved.status).toBe(200);
 		const record = await readSession(root, session.id);
@@ -529,7 +542,10 @@ describe('approving the specification of a change', () => {
 		const specPath = draftSpecPath(root, session);
 		await writeFile(specPath, CHANGED_SPEC, 'utf8');
 		await call('POST', `/sandbox/api/sessions/${session.id}/approve`, {
-			body: { module: 'parties' },
+			body: {
+				module: 'parties',
+				specHash: await reviewedHash(draftSpecPath(root, session)),
+			},
 		});
 
 		await writeFile(
@@ -567,6 +583,87 @@ describe('approving the specification of a change', () => {
 				(change) => change.field === 'specVersion' && change.after === '0.3.0',
 			),
 		).toBe(true);
+	});
+
+	it('shows the hash of the reviewed text and records it with the approval', async () => {
+		const root = await workspace();
+		const call = api(
+			fakeRuntime(root, recordingDriver({ prompt: '', role: '' })),
+		);
+		const session = await editSession(root);
+		await writeFile(draftSpecPath(root, session), CHANGED_SPEC, 'utf8');
+		const reviewed = await reviewedHash(draftSpecPath(root, session));
+
+		const view = (await (
+			await call('GET', `/sandbox/api/sessions/${session.id}`)
+		).json()) as { specs: readonly ModuleSpecReview[] };
+		expect(view.specs[0]!.hash).toBe(reviewed);
+
+		const approved = await call(
+			'POST',
+			`/sandbox/api/sessions/${session.id}/approve`,
+			{ body: { module: 'parties', specHash: reviewed } },
+		);
+		expect(approved.status).toBe(200);
+		const record = await readSession(root, session.id);
+		expect(record.modules[0]!.specHash).toBe(
+			await reviewedHash(draftSpecPath(root, session)),
+		);
+		const chat = await readChat(root, record);
+		const decision = chat.find((entry) => entry.decision === 'approved');
+		expect(decision?.reviewedHash).toBe(reviewed);
+		expect(decision?.text).toContain(reviewed.slice(0, 12));
+	});
+
+	it('refuses an approval when the specification changed after the review, and records nothing', async () => {
+		const root = await workspace();
+		const call = api(
+			fakeRuntime(root, recordingDriver({ prompt: '', role: '' })),
+		);
+		const session = await editSession(root);
+		await writeFile(draftSpecPath(root, session), CHANGED_SPEC, 'utf8');
+		const reviewed = await reviewedHash(draftSpecPath(root, session));
+		/* The edit lands between the review and the click. */
+		const edited = CHANGED_SPEC.replace(
+			'Create and update parties in the active tenant.',
+			'Create, update and delete parties in any tenant.',
+		);
+		await writeFile(draftSpecPath(root, session), edited, 'utf8');
+
+		const refused = await call(
+			'POST',
+			`/sandbox/api/sessions/${session.id}/approve`,
+			{ body: { module: 'parties', specHash: reviewed } },
+		);
+		expect(refused.status).toBe(409);
+		expect(
+			((await refused.json()) as { error: { code: string } }).error.code,
+		).toBe('SPEC_CHANGED');
+		const record = await readSession(root, session.id);
+		expect(record.modules[0]!.specHash).toBeUndefined();
+		expect(record.modules[0]!.specApprovedAt).toBeUndefined();
+		expect(await readFile(draftSpecPath(root, session), 'utf8')).toBe(edited);
+		const chat = await readChat(root, record);
+		expect(chat.some((entry) => entry.decision === 'approved')).toBe(false);
+	});
+
+	it('refuses an approval that names no reviewed hash', async () => {
+		const root = await workspace();
+		const call = api(
+			fakeRuntime(root, recordingDriver({ prompt: '', role: '' })),
+		);
+		const session = await editSession(root);
+		await writeFile(draftSpecPath(root, session), CHANGED_SPEC, 'utf8');
+
+		const refused = await call(
+			'POST',
+			`/sandbox/api/sessions/${session.id}/approve`,
+			{ body: { module: 'parties' } },
+		);
+		expect(refused.status).toBe(400);
+		expect(
+			(await readSession(root, session.id)).modules[0]!.specHash,
+		).toBeUndefined();
 	});
 });
 
@@ -626,7 +723,10 @@ describe('the three answers to a review', () => {
 		const session = await editSession(root);
 		await writeFile(draftSpecPath(root, session), CHANGED_SPEC, 'utf8');
 		await call('POST', `/sandbox/api/sessions/${session.id}/approve`, {
-			body: { module: 'parties' },
+			body: {
+				module: 'parties',
+				specHash: await reviewedHash(draftSpecPath(root, session)),
+			},
 		});
 
 		const read = (await (
@@ -745,9 +845,6 @@ describe('a new module session', () => {
 		expect(sink.role).toBe('business-manager');
 		expect(first.handoff.kind).toBe('approval');
 
-		await call('POST', `/sandbox/api/sessions/${session.id}/approve`, {
-			body: {},
-		});
 		const specPath = join(
 			sessionPaths(root, session.id, session.moduleSuffix).workspace,
 			'modules',
@@ -755,6 +852,9 @@ describe('a new module session', () => {
 			'spec',
 			'module.yaml',
 		);
+		await call('POST', `/sandbox/api/sessions/${session.id}/approve`, {
+			body: { specHash: await reviewedHash(specPath) },
+		});
 		expect(await readFile(specPath, 'utf8')).toContain('status: approved');
 
 		sink.role = '';

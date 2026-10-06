@@ -349,9 +349,12 @@ of 1 to 120 characters, and a recommendation that must be one of those options.
 `allowFreeText` defaults to false, and a question with neither an option nor
 free text cannot be answered, so it is refused. The block has to be the last
 thing in the reply apart from the mandatory handoff line, and a reply carries at
-most one. A block the sandbox cannot read is a warning on that turn, never a
-failed turn: the words of the reply still stand and the transcript says why the
-block was ignored.
+most one. A block the sandbox cannot read is never a failed turn and never
+dropped in silence: the transcript says why it was refused, and the specialist
+gets the reason and these limits for one repair turn. A second refusal in a row
+stops for the operator, who answers in words. A turn that asks stops for the
+answers, never for approval, and the approval route refuses a module with open
+questions (`409 QUESTIONS_PENDING`).
 
 A readable block is stored on the session as `pendingQuestions`, with the
 transcript sequence of the message that asked, the role that asked and the

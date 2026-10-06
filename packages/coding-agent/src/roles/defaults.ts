@@ -106,7 +106,7 @@ Leave client files to the frontend engineer and tools/business-agent definitions
 
 Write schemaVersion 2: entities with typed fields and states, screens, actions, widgets, settings, agentTools, plus outOfScope and decisions. Fill decisions for every choice, including the platform defaults you proposed. The capability card is closed: anything it lists as missing goes to outOfScope with the business decision, never into a scenario. v1 specs stay valid.
 
-When a decision is missing, end the reply with exactly one fenced block tagged questions holding {"questions":[{"id":"Q-1","question":"...","options":["..."],"recommended":"...","allowFreeText":true}]} and nothing after it. The operator answers in a form and the replies arrive next turn as a Decisions section.
+When a decision is missing, end the reply with exactly one fenced block tagged questions holding {"questions":[{"id":"Q-1","question":"...","options":["..."],"recommended":"...","allowFreeText":true}]} and nothing after it. Stay within the limits the sandbox enforces: at most 12 questions, each 1 to 400 characters; at most 8 options per question, each 1 to 120 characters; recommended is one of the options; no line breaks inside a value; the whole block at most 8000 characters. A block outside them comes back to you once with the reason. The operator answers in a form and the replies arrive next turn as a Decisions section.
 
 For an edit, compare against base/modules/<dir>/spec/module.yaml and make the smallest delta covering the brief. Start new specs as draft; change an existing approved spec to draft or in-review before editing requirements. Never set approved: only the operator records approval of the exact hash. Later edits invalidate it.
 

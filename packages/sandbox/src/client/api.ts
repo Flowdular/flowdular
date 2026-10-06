@@ -381,10 +381,13 @@ export function setAutoContinue(
 	});
 }
 
-/* The three answers to a specification review, one module at a time. */
+/* The three answers to a specification review, one module at a time. The
+   approval names the hash of the text the operator reviewed; the sandbox
+   refuses it when the document changed since. */
 export function approveSpecification(
 	id: string,
-	module?: string,
+	module: string | undefined,
+	specHash: string,
 ): Promise<{
 	readonly session: SandboxSession;
 	readonly status: string;
@@ -392,6 +395,7 @@ export function approveSpecification(
 }> {
 	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/approve`, {
 		...(module ? { module } : {}),
+		specHash,
 	});
 }
 
@@ -838,6 +842,24 @@ export function submitAnswers(
 		{ answers, ...(message ? { message } : {}) },
 		handlers,
 	);
+}
+
+/* Follows one session for changes another tab or browser makes: a turn
+   started, an approval recorded, a turn finished. Events say only that
+   something changed, and the caller reloads through loadSession. EventSource
+   reconnects by itself, and every connection opens with an event, so a change
+   made while it was down is not missed. */
+export function watchSession(
+	sessionId: string,
+	onChanged: () => void,
+): () => void {
+	if (typeof EventSource === 'undefined') return () => undefined;
+	const source = new EventSource(
+		`/sandbox/api/sessions/${encodeURIComponent(sessionId)}/events`,
+	);
+	source.addEventListener('ready', onChanged);
+	source.addEventListener('changed', onChanged);
+	return () => source.close();
 }
 
 /* Attach to a turn that is already running, after a reload or from another
