@@ -4,6 +4,7 @@ import { createContext } from '@octanejs/app-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlatformRuntimeLifecycle } from './lifecycle.ts';
 import {
+	closeWorkerTickerOnRetirement,
 	createWorkerTickEndpoint,
 	createWorkerTicker,
 	WORKER_TICK_PATH,
@@ -230,9 +231,8 @@ describe('worker tick retirement', () => {
 			secret: SECRET,
 			windowMs: 50_000,
 		});
-		/* The wiring octane.config.ts gives the ticker. */
 		const lifecycle = createPlatformRuntimeLifecycle();
-		lifecycle.addInterrupt(() => ticker.close());
+		closeWorkerTickerOnRetirement(lifecycle, ticker);
 		const tick = createContext(
 			new Request(`http://localhost${WORKER_TICK_PATH}`, {
 				headers: { authorization: `Bearer ${SECRET}` },
