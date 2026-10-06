@@ -7,6 +7,7 @@ import {
 	loadSandboxConfiguration,
 	saveSandboxConfiguration,
 	sealSecret,
+	secretFingerprint,
 } from './config.ts';
 
 export class ProvisionError extends Error {
@@ -176,6 +177,38 @@ async function readCredential(path: string): Promise<ProvisionedCredential> {
 	};
 }
 
+/* The dashboard banner, the connection state and the preview bridge all read
+   the platform address from the configuration, so the launcher records the
+   address it resolved before any of them starts instead of after the platform
+   answers, which on a first run is long after the banner.
+
+   A credential the launcher collected belongs to this workspace's platform,
+   so it follows the platform the launcher starts to its port. A credential
+   the operator connected, or a platform the launcher only connects to, keeps
+   the connection as configured. */
+export async function recordPlatformAddress(options: {
+	readonly workspaceRoot: string;
+	readonly platformUrl: string;
+	readonly startedByLauncher: boolean;
+}): Promise<void> {
+	const configuration = await loadSandboxConfiguration(options.workspaceRoot);
+	if (configuration.platformUrl === options.platformUrl) return;
+	if (
+		configuration.platformToken !== null &&
+		!(
+			options.startedByLauncher &&
+			secretFingerprint(configuration.platformToken) ===
+				configuration.launcherTokenFingerprint
+		)
+	)
+		return;
+	await saveSandboxConfiguration(options.workspaceRoot, {
+		...configuration,
+		platformUrl: options.platformUrl,
+		version: 1,
+	});
+}
+
 /* The embedded database is single-process, so a second process cannot open it
    while the platform is serving. Provisioning therefore happens inside the
    platform's own boot, where it already holds the database and its leases, and
@@ -224,6 +257,7 @@ export async function collectProvisionedCredential(options: {
 		...configuration,
 		platformUrl: options.platformUrl,
 		platformToken,
+		launcherTokenFingerprint: secretFingerprint(platformToken),
 		version: 1,
 	});
 	await rm(path, { force: true });
