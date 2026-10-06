@@ -15,7 +15,6 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"flowdular": "flowdular",
-		"cl": "flowdular",
 		"doctor": "flowdular doctor",
 		"verify": "pnpm rules:check && pnpm typecheck && pnpm test && flowdular spec validate --all && flowdular module validate && pnpm format:check",
 		"rules:generate": "rulesync generate",

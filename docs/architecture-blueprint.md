@@ -796,7 +796,7 @@ The CLI is the only supported automation boundary for platform operations. Human
 
 The CLI takes the tool-layer role commonly served by MCP: discovery, typed input and output schemas, and controlled execution. It runs as a normal local process that can be governed by operating system policy, CI, and audit. A future MCP adapter may wrap the capability registry without creating a second platform implementation.
 
-Binary: `flowdular`, with optional short alias `cl`.
+Binary: `flowdular`, with the short alias `fd`.
 
 ### 13.1. Capability definition
 

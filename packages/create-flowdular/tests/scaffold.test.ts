@@ -168,6 +168,9 @@ describe('scaffold', () => {
 			),
 		).toContain("from '@flowdular/sdk/server'");
 		expect(manifest.scripts.dev).toContain('platform/scripts/dev.mjs');
+		/* `pnpm fd` reaches the CLI's `fd` bin, so `flowdular` is the only CLI script. */
+		expect(manifest.scripts.flowdular).toBe('flowdular');
+		expect(manifest.scripts).not.toHaveProperty('cl');
 		expect(
 			await readFile(join(result.directory, 'platform/index.html'), 'utf8'),
 		).toBe(
