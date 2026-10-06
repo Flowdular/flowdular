@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, readdir, rename, rm } from 'node:fs/promises';
+import { link, lstat, open, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { processAlive } from './disk-lock.ts';
 
 export interface LocalFileTestHooks {
-	/* The new bytes are flushed to the temporary file and not yet renamed over
-	   the target. Throwing here stands in for the process dying at that point. */
+	/* The new bytes are flushed to the temporary file and not yet renamed or
+	   linked to the target. Throwing here stands in for the process dying at
+	   that point; an error with an errno code stands in for the link failing
+	   with it. */
 	readonly beforeRename?: (target: string) => Promise<void>;
 	/* A withLocalFileLock caller is waiting for an earlier one on the target. */
 	readonly queued?: (target: string) => void;
@@ -70,6 +72,58 @@ export async function replaceLocalFile(
 	path: string,
 	value: string,
 ): Promise<void> {
+	await moveIntoPlace(await writeTemporaryFile(path, value), path);
+}
+
+/* What link reports where the filesystem makes no hard links: ENOTSUP on FAT
+   and exFAT under macOS, EPERM on Linux. */
+const NO_HARD_LINKS = new Set(['EPERM', 'ENOTSUP', 'ENOSYS']);
+
+/* Creates path with value unless it already exists, and says which happened.
+   The file appears complete or not at all, and when two processes publish at
+   once exactly one link lands, so both can read back the same value. Without
+   hard links the file is renamed into place instead: still whole, but a
+   second process publishing at the same moment can replace it. */
+export async function publishLocalFile(
+	path: string,
+	value: string,
+): Promise<boolean> {
+	const temporary = await writeTemporaryFile(path, value);
+	try {
+		await testHooks?.beforeRename?.(path);
+		await link(temporary, path);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code ?? '';
+		if (NO_HARD_LINKS.has(code)) {
+			await moveIntoPlace(temporary, path);
+			return true;
+		}
+		await rm(temporary, { force: true }).catch(() => undefined);
+		if (code === 'EEXIST') return false;
+		throw error;
+	}
+	await rm(temporary, { force: true }).catch(() => undefined);
+	await syncDirectory(dirname(path));
+	return true;
+}
+
+async function moveIntoPlace(temporary: string, path: string): Promise<void> {
+	try {
+		await testHooks?.beforeRename?.(path);
+		await rename(temporary, path);
+	} catch (error) {
+		/* The write's own failure is what the caller needs; a leftover that
+		   cannot be removed is owner-only and never read. */
+		await rm(temporary, { force: true }).catch(() => undefined);
+		throw error;
+	}
+	await syncDirectory(dirname(path));
+}
+
+async function writeTemporaryFile(
+	path: string,
+	value: string,
+): Promise<string> {
 	const temporary = `${path}.${process.pid}.${randomUUID().slice(0, 8)}`;
 	const handle = await open(
 		temporary,
@@ -86,15 +140,11 @@ export async function replaceLocalFile(
 		} finally {
 			await handle.close();
 		}
-		await testHooks?.beforeRename?.(path);
-		await rename(temporary, path);
 	} catch (error) {
-		/* The write's own failure is what the caller needs; a leftover that
-		   cannot be removed is owner-only and never read. */
 		await rm(temporary, { force: true }).catch(() => undefined);
 		throw error;
 	}
-	await syncDirectory(dirname(path));
+	return temporary;
 }
 
 const TEMPORARY_FILE = /^.+\.(\d+)\.[0-9a-f]{8}$/;

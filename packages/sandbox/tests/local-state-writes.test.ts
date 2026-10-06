@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
 	chmod,
 	lstat,
@@ -557,6 +558,49 @@ describe('sandbox configuration writes', () => {
 
 		expect(await openSecret(root, firstSealed)).toBe('first-secret');
 		expect(await openSecret(root, secondSealed)).toBe('second-secret');
+	});
+
+	it('uses the local key another process published while this one made its own', async () => {
+		const root = await workspace();
+		const theirs = randomBytes(32).toString('base64');
+		const keyFile = join(stateDirectory(root), 'secret.key');
+		setLocalFileTestHooks({
+			beforeRename: async (target) => {
+				if (basename(target) !== 'secret.key') return;
+				/* The other process's queue is not this one's, so nothing here
+				   waits for it. */
+				await writeFile(keyFile, theirs, { mode: 0o600, flag: 'wx' });
+			},
+		});
+
+		const sealed = await sealSecret(root, 'mine');
+
+		setLocalFileTestHooks(null);
+		expect(await readFile(keyFile, 'utf8')).toBe(theirs);
+		expect(await openSecret(root, sealed)).toBe('mine');
+		expect(await readdir(stateDirectory(root))).toEqual(['secret.key']);
+	});
+
+	it('creates the local key on a filesystem that makes no hard links', async () => {
+		const root = await workspace();
+		let refused = false;
+		setLocalFileTestHooks({
+			beforeRename: async (target) => {
+				if (basename(target) !== 'secret.key' || refused) return;
+				refused = true;
+				/* What link reports on a FAT or exFAT volume under macOS. */
+				throw Object.assign(new Error('operation not supported'), {
+					code: 'ENOTSUP',
+				});
+			},
+		});
+
+		const sealed = await sealSecret(root, 'mine');
+
+		setLocalFileTestHooks(null);
+		expect(refused).toBe(true);
+		expect(await openSecret(root, sealed)).toBe('mine');
+		expect(await readdir(stateDirectory(root))).toEqual(['secret.key']);
 	});
 });
 
