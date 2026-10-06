@@ -191,6 +191,7 @@ function page(
 				`style-src 'nonce-${nonce}'`,
 				`script-src 'nonce-${nonce}'`,
 				"img-src 'self' data:",
+				"connect-src 'self'",
 				"form-action 'self'",
 				"base-uri 'none'",
 				"frame-ancestors 'none'",

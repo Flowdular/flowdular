@@ -131,6 +131,18 @@ async function csrfOf(response: Response): Promise<string> {
 	return /name="setupCsrf" value="([^"]+)"/.exec(html)?.[1] ?? '';
 }
 
+/* The completed page requests its restart with fetch, which a browser checks
+   against connect-src, or default-src when the policy has no connect-src. */
+function fetchSources(response: Response): readonly string[] {
+	const directives = new Map(
+		(response.headers.get('content-security-policy') ?? '')
+			.split(';')
+			.map((directive) => directive.trim().split(/\s+/))
+			.map(([name, ...sources]) => [name, sources] as const),
+	);
+	return directives.get('connect-src') ?? directives.get('default-src') ?? [];
+}
+
 describe('first-run routes', () => {
 	it('rejects a backoffice prefix claimed by a public module before provisioning', async () => {
 		const root = workspace();
@@ -453,6 +465,7 @@ describe('first-run routes', () => {
 			expect(doneHtml).not.toContain(OWNER.ownerPassword);
 			expect(existsSync(join(root, '.env'))).toBe(false);
 			expect(doneHtml).toContain("step:'restart'");
+			expect(fetchSources(done)).toEqual(["'self'"]);
 			expect(restarts).toBe(0);
 			const restart = await app.call('/setup', {
 				step: 'restart',
