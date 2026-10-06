@@ -410,6 +410,24 @@ describe('research search chain', () => {
 		expect((await repository.adapterHealth(TENANT))[0]?.openUntil).toBe(3_600);
 	});
 
+	it('RESEARCH-CIRCUIT gives the half open probe to only one of two claims in the database', async () => {
+		const repository = shared.repository;
+		await repository.recordAdapterFailure(
+			TENANT,
+			'searxng',
+			'X_FAILED',
+			1_000,
+			1,
+			500,
+		);
+		const claims = await Promise.all([
+			repository.claimAdapterProbe(TENANT, 'searxng', 2_000, 2_500),
+			repository.claimAdapterProbe(TENANT, 'searxng', 2_000, 2_500),
+		]);
+		expect(claims.sort()).toEqual([false, true]);
+		expect((await repository.adapterHealth(TENANT))[0]?.openUntil).toBe(2_500);
+	});
+
 	it('RESEARCH-CIRCUIT opens after the threshold, lets one probe through after the cooldown and stays per workspace', async () => {
 		let clock = Date.parse('2026-09-16T10:00:00Z');
 		const stub = stubConnectors();
