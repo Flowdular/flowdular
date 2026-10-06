@@ -148,6 +148,14 @@ describe('recorded adapters in a session spec', () => {
 				`^${LIVE_ADAPTER_REFUSED}: .*\\n- modules/underwriting/spec/module.yaml research.adapter: model-native`,
 			),
 		);
+		/* The transcript shows the refusal as the gate's first error, not as
+		   the output of a validation that otherwise passed. */
+		expect(refused!.issues?.[0]).toEqual({
+			code: LIVE_ADAPTER_REFUSED,
+			message: expect.stringMatching(
+				/^a sandbox session may declare only recorded adapters\.[\s\S]*research\.adapter: model-native/,
+			),
+		});
 
 		const recorded = await sessionWithSpec(researchSpec('recorded'));
 		const [checked] = await runGates({

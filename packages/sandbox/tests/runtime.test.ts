@@ -470,6 +470,23 @@ describe('sandbox sessions', () => {
 			role: 'business-manager',
 			text: leaked,
 		});
+		/* A gate result carries the validator's own messages beside the text. */
+		await appendChatEntry(root, session, {
+			kind: 'system',
+			role: 'business-manager',
+			text: 'Gate spec-schema failed.',
+			gate: {
+				id: 'spec-schema',
+				status: 'failed',
+				issues: [
+					{
+						code: 'SPEC_DATABASE_URL',
+						message:
+							'Database postgres://app:hunter2@db.internal:5432/app is not allowed.',
+					},
+				],
+			},
+		});
 		const stored = await readFile(
 			join(sessionPaths(root, session.id, session.moduleSuffix).chatLog),
 			'utf8',
@@ -1376,6 +1393,57 @@ describe('handoff planning', () => {
 		});
 		expect(plan.role).toBe('frontend-engineer');
 		expect(plan.module).toBe('booking');
+	});
+
+	it('routes and quotes the errors a validator reported although its output was cut', () => {
+		/* Reference reports fill the start of the envelope and the cut removes
+		   the end, so the output alone neither parses nor names the error. */
+		const reference = {
+			file: 'reference/example-module/module.json',
+			valid: true,
+			issues: [{ severity: 'warning', code: 'NOTE', message: 'x'.repeat(200) }],
+		};
+		const envelope = JSON.stringify({
+			error: { details: { reports: Array(40).fill(reference) } },
+		});
+		const plan = planHandoff({
+			...base,
+			routing: {
+				...routing,
+				session: {
+					...SESSION,
+					modules: [
+						...SESSION.modules,
+						{ id: 'booking.core', directory: 'booking', kind: 'edit' },
+					],
+				},
+			},
+			role: 'backend-engineer',
+			gates: [
+				{
+					id: 'module-schema',
+					status: 'failed',
+					command: 'check',
+					durationMs: 1,
+					output: `${envelope.slice(0, 6_000)}\n\n[4000 characters omitted]\n\n${envelope.slice(-2_000)}`,
+					issues: [
+						{
+							file: 'modules/booking/module.json',
+							code: 'TRANSLATION_KEY_MISSING',
+							path: 'src/client/View.tsrx',
+							message: 'Key booking.title has no translation.',
+						},
+					],
+					moreIssues: 2,
+				},
+			],
+		});
+		expect(plan.role).toBe('frontend-engineer');
+		expect(plan.module).toBe('booking');
+		expect(plan.prompt).toContain(
+			'- TRANSLATION_KEY_MISSING modules/booking/module.json src/client/View.tsrx: Key booking.title has no translation.',
+		);
+		expect(plan.prompt).toContain('(the first 1 of 3)');
 	});
 
 	it.each([

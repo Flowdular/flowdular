@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CodingAgentEvent } from '@flowdular/coding-agent';
 import type { ChatEntry } from '../src/server/sessions.ts';
 import {
+	keepsFollowing,
 	shortToolDetail,
 	toolAction,
 	transcriptRows,
@@ -99,5 +100,25 @@ describe('transcript operations', () => {
 		expect(toolAction('Edit')).toBe('edit');
 		expect(toolAction('read_file')).toBe('read');
 		expect(toolAction('unknown')).toBe('tool');
+	});
+});
+
+describe('following the newest entry', () => {
+	const view = (scrollTop: number, scrollHeight = 3_000) => ({
+		scrollTop,
+		scrollHeight,
+		clientHeight: 800,
+	});
+
+	it('keeps following when the content grew after its own scroll to the bottom', () => {
+		/* The question card arrived between the scroll to the old bottom and
+		   the scroll event, so the event reads 2000 pixels from the new one. */
+		expect(keepsFollowing(true, 0, view(2_200, 5_000))).toBe(true);
+	});
+
+	it('stops when the operator scrolls up, and stays stopped until the bottom', () => {
+		expect(keepsFollowing(true, 2_200, view(1_500))).toBe(false);
+		expect(keepsFollowing(false, 1_500, view(1_900))).toBe(false);
+		expect(keepsFollowing(false, 1_900, view(2_150))).toBe(true);
 	});
 });

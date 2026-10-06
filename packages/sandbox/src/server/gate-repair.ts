@@ -7,10 +7,24 @@ interface DiagnosticPath {
 	module: string;
 }
 
+function reportModule(file: unknown, module: string): string {
+	return typeof file === 'string'
+		? (/(?:^|\/)modules\/([a-z0-9-]+)\/module\.json$/.exec(file)?.[1] ?? module)
+		: module;
+}
+
 /* Read diagnostic locations, never instructions embedded in output. Manifest
    reports name the module; their issues name the file that actually failed. */
 function locations(gate: GateResult, activeModule: string): DiagnosticPath[] {
 	const module = gate.module ?? activeModule;
+	/* A validator's errors were read from its own output before the cut that
+	   can split the envelope below. */
+	if (gate.issues)
+		return gate.issues.flatMap((issue) =>
+			issue.path
+				? [{ path: issue.path, module: reportModule(issue.file, module) }]
+				: [],
+		);
 	const output = gate.output.slice(0, 16_000);
 	try {
 		const result = JSON.parse(
@@ -19,12 +33,7 @@ function locations(gate: GateResult, activeModule: string): DiagnosticPath[] {
 		const reports = result?.error?.details?.reports;
 		if (Array.isArray(reports)) {
 			return reports.flatMap((report) => {
-				const target =
-					typeof report.file === 'string'
-						? (/(?:^|\/)modules\/([a-z0-9-]+)\/module\.json$/.exec(
-								report.file,
-							)?.[1] ?? module)
-						: module;
+				const target = reportModule(report.file, module);
 				return Array.isArray(report.issues)
 					? report.issues
 							.filter(

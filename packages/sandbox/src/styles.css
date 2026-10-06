@@ -337,6 +337,89 @@
 	overflow-wrap: anywhere;
 }
 
+/* An agent message rendered from its Markdown. The blocks are spaced by the
+   container, so a one-line message reads as the plain text it replaced. */
+.chat__markdown {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+	font-size: var(--text-md);
+	line-height: 1.55;
+	overflow-wrap: anywhere;
+}
+
+.chat__markdown :is(p, h4, h5, ul, ol, blockquote, pre, hr) {
+	margin: 0;
+}
+
+.chat__markdown :is(p, li, td, th) {
+	white-space: pre-line;
+}
+
+.chat__markdown :is(h4, h5) {
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.chat__markdown h4 {
+	font-size: var(--text-lg);
+}
+
+.chat__markdown :is(ul, ol) {
+	display: grid;
+	gap: 4px;
+	padding-left: 20px;
+}
+
+.chat__markdown li > * + * {
+	margin-top: 4px;
+}
+
+.chat__markdown blockquote {
+	display: grid;
+	gap: 8px;
+	padding-left: 12px;
+	color: var(--ink-2);
+	border-left: 3px solid var(--line);
+}
+
+.chat__markdown hr {
+	border: 0;
+	border-top: 1px solid var(--line);
+}
+
+.chat__markdown :not(pre) > code {
+	padding: 1px 4px;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	background: var(--surface-2);
+	border-radius: var(--r-sm);
+}
+
+.chat__markdown a {
+	color: var(--primary);
+	text-decoration: underline;
+}
+
+.chat__markdown table {
+	border-collapse: collapse;
+	font-size: var(--text-sm);
+}
+
+.chat__markdown :is(th, td) {
+	padding: 6px 10px;
+	text-align: left;
+	vertical-align: top;
+	overflow-wrap: normal;
+	border: 1px solid var(--line);
+}
+
+.chat__markdown th {
+	font-weight: 600;
+	background: var(--surface-2);
+}
+
 .chat__events {
 	display: grid;
 	gap: 4px;
@@ -452,6 +535,54 @@
 
 .chat__handoff .ui-form__actions {
 	margin-left: 0;
+}
+
+/* A gate result is the orchestrator reporting a check. A failed validator
+   lists the errors of its failing reports; the raw output stays collapsed. */
+.chat__gate {
+	display: grid;
+	gap: 8px;
+	padding: 12px 14px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--line-2);
+	border-radius: var(--r-md);
+	min-width: 0;
+}
+
+.chat__gate--passed {
+	border-left-color: var(--success);
+}
+
+.chat__gate--failed {
+	border-left-color: var(--danger);
+}
+
+.gate-issues {
+	display: grid;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.gate-issues > li {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+
+.gate-issues__message {
+	margin: 0;
+	font-size: var(--text-md);
+	line-height: 1.55;
+	white-space: pre-line;
+	overflow-wrap: anywhere;
+}
+
+.gate-issues__where {
+	color: var(--ink-3);
+	overflow-wrap: anywhere;
 }
 
 /* The specification the operator approves, and what the session changed in it.

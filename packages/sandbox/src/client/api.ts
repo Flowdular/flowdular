@@ -658,6 +658,7 @@ export function streamEject(
 				}
 				if (event === 'gate.completed') {
 					const gate = payload as unknown as GateResult;
+					const first = gate.issues?.[0];
 					handlers.onStep({
 						id: `gate:${gate.id}`,
 						label: gateLabel(gate.id),
@@ -665,9 +666,12 @@ export function streamEject(
 						...(gate.module ? { module: gate.module } : {}),
 						status: gate.status === 'skipped' ? 'note' : gate.status,
 						detail:
-							gate.status === 'failed'
-								? gate.output.slice(0, 300)
-								: gate.status,
+							gate.status !== 'failed'
+								? gate.status
+								: (first
+										? `${first.code}: ${first.message}`
+										: gate.output
+									).slice(0, 300),
 					});
 					return;
 				}

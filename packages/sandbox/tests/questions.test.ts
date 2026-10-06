@@ -30,6 +30,7 @@ import type { SandboxRuntime } from '../src/server/runtime.ts';
 import {
 	approveSpecification,
 	createSession,
+	readChat,
 	readSession,
 	updateSession,
 	type SandboxSession,
@@ -710,6 +711,104 @@ describe('a turn that asks for decisions', () => {
 		expect(outcome.session.pendingQuestions?.questions).toHaveLength(1);
 		/* Approval is the only state that says approval. */
 		expect(outcome.session.state).toBe('awaiting-answers');
+	});
+
+	it('shows a failed gate as its errors and says the questions wait on it too', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const asked = block(
+			{ questions: [QUESTION] },
+			'\nHANDOFF: none - waiting for the decisions',
+		);
+		const reserved = {
+			message:
+				'Field "booking.createdAt" collides with the id, tenantId or createdAt column every tenant table owns.',
+		};
+		/* What the gate runner returns for the reported spec-schema failure:
+		   the full envelope as output, its failing errors as issues. */
+		const context: TurnContext = {
+			...turnContext(root, specWriterThatSays([asked])),
+			executeGates: async ({ gates }) =>
+				gates.map((id) => ({
+					id,
+					status: 'failed' as const,
+					durationMs: 0,
+					command: 'pnpm flowdular spec validate --all --json',
+					output: JSON.stringify({
+						protocolVersion: 1,
+						ok: false,
+						error: { code: 'SPEC_VALIDATION_FAILED' },
+					}),
+					issues: [
+						{
+							file: 'modules/booking/spec/module.yaml',
+							code: 'SPEC_FIELD_RESERVED',
+							path: '/entities/0/fields/3/id',
+							message: reserved.message,
+						},
+					],
+				})),
+		};
+
+		const outcome = await drive(
+			context,
+			session.id,
+			'Write the specification.',
+		);
+
+		/* The decisions still come first: the gates run again after the answers,
+		   and a failure that remains then goes back to the specialist. */
+		expect(outcome.handoff.kind).toBe('question');
+		expect(outcome.session.state).toBe('awaiting-answers');
+		expect(outcome.handoff.reason).toContain(
+			'spec-schema gate did not pass either',
+		);
+		const gate = (await readChat(root, outcome.session)).find(
+			(entry) => entry.gate?.id === 'spec-schema',
+		);
+		expect(gate?.gate).toEqual({
+			id: 'spec-schema',
+			status: 'failed',
+			issues: [
+				{
+					file: 'modules/booking/spec/module.yaml',
+					code: 'SPEC_FIELD_RESERVED',
+					path: '/entities/0/fields/3/id',
+					message: reserved.message,
+				},
+			],
+		});
+	});
+
+	it('names a gate that was skipped in a turn that asks', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const asked = block(
+			{ questions: [QUESTION] },
+			'\nHANDOFF: none - waiting for the decisions',
+		);
+		const context: TurnContext = {
+			...turnContext(root, specWriterThatSays([asked])),
+			executeGates: async ({ gates }) =>
+				gates.map((id) => ({
+					id,
+					status: 'skipped' as const,
+					durationMs: 0,
+					command: '',
+					output: 'This gate does not apply to the session.',
+				})),
+		};
+
+		const outcome = await drive(
+			context,
+			session.id,
+			'Write the specification.',
+		);
+
+		expect(outcome.handoff.kind).toBe('question');
+		expect(outcome.handoff.reason).toContain(
+			'spec-schema gate did not pass either',
+		);
 	});
 
 	it('clears a stored question set on the next turn that asks nothing', async () => {

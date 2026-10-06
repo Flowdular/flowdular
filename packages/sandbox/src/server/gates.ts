@@ -5,6 +5,7 @@ import { inspectAutoReview } from './auto-review.ts';
 import { checkDeclaredDependencies } from './dependencies.ts';
 import { checkModuleRules } from './module-rules.ts';
 import {
+	LIVE_ADAPTER_REFUSED,
 	liveAdapterRefusal,
 	readSessionAdapters,
 } from './recorded-adapters.ts';
@@ -34,7 +35,34 @@ export interface GateResult {
 	readonly durationMs: number;
 	readonly command: string;
 	readonly output: string;
+	/* The errors a failed validator reported, read from its own standard
+	   output before the output bound cut it. Absent for a gate that is not a
+	   validator (a test run, a typecheck) and for one whose standard output
+	   held no envelope. */
+	readonly issues?: readonly GateIssue[];
+	/* Errors past MAX_GATE_ISSUES, counted rather than dropped in silence. */
+	readonly moreIssues?: number;
 }
+
+/* One error a validator reported, in the words of the CLI envelope. A failure
+   the envelope does not tie to a file, such as an enabled module without a
+   manifest, has no file. */
+export interface GateIssue {
+	readonly file?: string;
+	readonly code: string;
+	readonly path?: string;
+	readonly message: string;
+}
+
+/* What the transcript keeps of a gate result to show it as a result. The
+   entry text still carries the command and the full output the next turn
+   reads; this is the part a reader needs first. */
+export type GateSummary = Pick<
+	GateResult,
+	'id' | 'module' | 'status' | 'issues' | 'moreIssues'
+>;
+
+export const MAX_GATE_ISSUES = 20;
 
 interface GateDefinition {
 	readonly id: GateId;
@@ -52,7 +80,13 @@ interface GateDefinition {
 		readonly output: string;
 	}>;
 	/* A sandbox rule checked beside the command; a refusal fails the gate. */
-	refuse?(context: GateContext): Promise<string | null>;
+	refuse?(context: GateContext): Promise<{
+		readonly code: string;
+		readonly message: string;
+	} | null>;
+	/* The command prints the CLI envelope on standard output, so a failure
+	   is read as the errors it reports. */
+	readonly envelope?: true;
 }
 
 interface GateContext {
@@ -68,6 +102,10 @@ interface GateContext {
    list, the first compiler errors), the tail carries the summary. */
 const HEAD_LIMIT = 10_000;
 const TAIL_LIMIT = 6_000;
+/* An envelope holds a report for every specification or manifest in the
+   workspace and outgrows the output bound long before this one. Standard
+   output past it is not read as an envelope at all. */
+const ENVELOPE_LIMIT = 4_000_000;
 const GATE_TIMEOUT_MS = 5 * 60 * 1000;
 
 /* The only commands the sandbox may run. Agents never execute anything: they
@@ -100,8 +138,9 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			],
 			cwd: context.workspaceRoot,
 		}),
-		refuse: async (context) =>
-			liveAdapterRefusal(
+		envelope: true,
+		refuse: async (context) => {
+			const refusal = liveAdapterRefusal(
 				(
 					await readSessionAdapters(
 						context.session.modules.map((module) => ({
@@ -110,7 +149,14 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 						})),
 					)
 				).live,
-			),
+			);
+			return refusal
+				? {
+						code: LIVE_ADAPTER_REFUSED,
+						message: refusal.slice(`${LIVE_ADAPTER_REFUSED}: `.length),
+					}
+				: null;
+		},
 	},
 	{
 		id: 'module-schema',
@@ -135,6 +181,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			],
 			cwd: context.workspaceRoot,
 		}),
+		envelope: true,
 	},
 	{
 		id: 'dependencies',
@@ -260,15 +307,113 @@ export function isGateId(value: string): value is GateId {
 	return (GATE_IDS as readonly string[]).includes(value);
 }
 
+export function summarizeGate(gate: GateResult): GateSummary {
+	return {
+		id: gate.id,
+		...(gate.module ? { module: gate.module } : {}),
+		status: gate.status,
+		...(gate.issues ? { issues: gate.issues } : {}),
+		...(gate.moreIssues ? { moreIssues: gate.moreIssues } : {}),
+	};
+}
+
+type Fields = Readonly<Record<string, unknown>>;
+
+function fields(value: unknown): Fields | null {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Fields)
+		: null;
+}
+
+function bounded(value: unknown, limit: number): string | undefined {
+	return typeof value === 'string' && value ? value.slice(0, limit) : undefined;
+}
+
+/* The first JSON object that starts a line. Run through the workspace's own
+   package scripts, the CLI's standard output can carry the package manager's
+   lines around the envelope (a failed nested run reports itself after it). */
+function envelopeIn(stdout: string): Fields | null {
+	const start = stdout.search(/^\{/m);
+	if (start < 0) return null;
+	let depth = 0;
+	let quoted = false;
+	for (let index = start; index < stdout.length; index += 1) {
+		const ch = stdout[index];
+		if (quoted) {
+			if (ch === '\\') index += 1;
+			else if (ch === '"') quoted = false;
+		} else if (ch === '"') quoted = true;
+		else if (ch === '{') depth += 1;
+		else if (ch === '}' && --depth === 0) {
+			try {
+				return fields(JSON.parse(stdout.slice(start, index + 1)));
+			} catch {
+				return null;
+			}
+		}
+	}
+	return null;
+}
+
+/* A failed validator prints the CLI envelope with a report for every
+   specification or manifest the workspace holds, the read-only reference
+   copies included, most of them valid with warnings. What failed is the
+   error issues of the reports marked invalid; an envelope whose reports all
+   passed failed as a whole, and its own error says why. */
+export function validatorIssues(
+	stdout: string,
+): Pick<GateResult, 'issues' | 'moreIssues'> | null {
+	const envelope = envelopeIn(stdout);
+	const error = fields(envelope?.error);
+	if (envelope?.ok !== false || !error) return null;
+	const reports = fields(error.details)?.reports;
+	const issues: GateIssue[] = [];
+	let more = 0;
+	for (const report of Array.isArray(reports) ? reports : []) {
+		const entry = fields(report);
+		if (entry?.valid !== false || !Array.isArray(entry.issues)) continue;
+		const file = bounded(entry.file, 300);
+		for (const candidate of entry.issues) {
+			const issue = fields(candidate);
+			const code = bounded(issue?.code, 80);
+			const message = bounded(issue?.message, 500);
+			if (issue?.severity !== 'error' || !code || !message) continue;
+			if (issues.length >= MAX_GATE_ISSUES) {
+				more += 1;
+				continue;
+			}
+			const path = bounded(issue.path, 300);
+			issues.push({
+				...(file ? { file } : {}),
+				code,
+				...(path ? { path } : {}),
+				message,
+			});
+		}
+	}
+	if (issues.length > 0)
+		return { issues, ...(more > 0 ? { moreIssues: more } : {}) };
+	const code = bounded(error.code, 80);
+	const message = bounded(error.message, 500);
+	return code && message ? { issues: [{ code, message }] } : null;
+}
+
+/* Standard output up to `stdoutLimit` characters is also kept apart from
+   the bounded, interleaved output; past the limit it is dropped as a whole. */
 function runProcess(
 	command: string,
 	args: readonly string[],
 	cwd: string,
 	signal?: AbortSignal | undefined,
-): Promise<{ code: number | null; output: string }> {
+	stdoutLimit = 0,
+): Promise<{ code: number | null; output: string; stdout: string | null }> {
 	return new Promise((resolvePromise) => {
 		if (signal?.aborted) {
-			resolvePromise({ code: null, output: 'The gate was stopped.' });
+			resolvePromise({
+				code: null,
+				output: 'The gate was stopped.',
+				stdout: null,
+			});
 			return;
 		}
 		const child = spawn(command, [...args], {
@@ -294,9 +439,15 @@ function runProcess(
 			omitted > 0
 				? `${head}\n[... ${omitted} characters omitted ...]\n${tail}`
 				: head + tail;
+		let stdout: string | null = stdoutLimit > 0 ? '' : null;
 		child.stdout.setEncoding('utf8');
 		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', append);
+		child.stdout.on('data', (chunk: string) => {
+			append(chunk);
+			if (stdout !== null)
+				stdout =
+					stdout.length + chunk.length > stdoutLimit ? null : stdout + chunk;
+		});
 		child.stderr.on('data', append);
 		const timer = setTimeout(() => {
 			append('\nThe gate exceeded its time budget and was stopped.');
@@ -308,16 +459,20 @@ function runProcess(
 			child.kill('SIGKILL');
 		};
 		signal?.addEventListener('abort', stop, { once: true });
-		const settle = (value: { code: number | null; output: string }) => {
+		const settle = (value: {
+			code: number | null;
+			output: string;
+			stdout: string | null;
+		}) => {
 			clearTimeout(timer);
 			signal?.removeEventListener('abort', stop);
 			resolvePromise(value);
 		};
 		child.on('error', (error) => {
-			settle({ code: null, output: `${output()}\n${error.message}` });
+			settle({ code: null, output: `${output()}\n${error.message}`, stdout });
 		});
 		child.on('close', (code) => {
-			settle({ code, output: output() });
+			settle({ code, output: output(), stdout });
 		});
 	});
 }
@@ -372,7 +527,12 @@ async function runGate(
 		invocation.args,
 		invocation.cwd,
 		context.signal,
+		definition.envelope ? ENVELOPE_LIMIT : 0,
 	);
+	const reported =
+		result.code !== 0 && result.stdout !== null
+			? validatorIssues(result.stdout)
+			: null;
 	return {
 		id,
 		...module,
@@ -380,6 +540,7 @@ async function runGate(
 		durationMs: Date.now() - startedAt,
 		command: printable,
 		output: result.output.trim(),
+		...reported,
 	};
 }
 
@@ -426,7 +587,16 @@ export async function runGates(
 					? {
 							...result,
 							status: 'failed',
-							output: [refusal, result.output].filter(Boolean).join('\n\n'),
+							output: [`${refusal.code}: ${refusal.message}`, result.output]
+								.filter(Boolean)
+								.join('\n\n'),
+							issues: [
+								{
+									code: refusal.code,
+									message: refusal.message.slice(0, 2_000),
+								},
+								...(result.issues ?? []),
+							],
 						}
 					: result,
 			);

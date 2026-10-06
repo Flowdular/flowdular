@@ -32,6 +32,46 @@ describe('session turn transport', () => {
 			),
 		);
 	});
+	it('names the first error of a failed gate as the delivery step detail', async () => {
+		const gate = {
+			id: 'spec-schema',
+			status: 'failed',
+			command: 'pnpm --silent flowdular spec validate --all --json',
+			output:
+				'$ tsx src/index.ts spec validate --all --json\n{\n  "protocolVersion": 1,',
+			durationMs: 1,
+			issues: [
+				{
+					file: 'modules/booking/spec/module.yaml',
+					code: 'SPEC_FIELD_RESERVED',
+					path: '/entities/0/fields/1/id',
+					message: 'Field "booking.createdAt" collides with a column.',
+				},
+			],
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(
+					new Response(
+						`event: gate.completed\ndata: ${JSON.stringify(gate)}\n\n`,
+					),
+				),
+		);
+		const onStep = vi.fn();
+		streamEject('session', { onStep, onDone: vi.fn(), onFailed: vi.fn() });
+		await vi.waitFor(() =>
+			expect(onStep).toHaveBeenCalledWith(
+				expect.objectContaining({
+					id: 'gate:spec-schema',
+					status: 'failed',
+					detail:
+						'SPEC_FIELD_RESERVED: Field "booking.createdAt" collides with a column.',
+				}),
+			),
+		);
+	});
 	const input = { message: 'Create a booking', role: 'auto', driver: 'fake' };
 	function handlers() {
 		return {

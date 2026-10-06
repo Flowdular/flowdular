@@ -143,6 +143,10 @@ Every request to the sandbox API is checked before it does anything:
 - Session views expose workspace-relative paths only. The preview loads draft
   sources through `/preview-module/<session>/<module>/...`, which the sandbox
   maps onto the session workspace itself.
+- Agent messages render a Markdown subset (headings, lists, tables, code,
+  quotes, emphasis, links) built as elements from a parsed tree, never as
+  markup: HTML in a message shows as text, and only `http`, `https` and
+  `mailto` addresses become links, opened in a new tab without an opener.
 
 ## Modes
 
@@ -523,7 +527,10 @@ next step:
 A failed gate is its own handoff: the specialist that caused it fixes it before
 anyone else works, so a broken change never travels down the chain. The fix
 prompt carries the gate command and the first 4000 characters of its output;
-the transcript keeps the whole output (head and tail of a long one).
+the transcript keeps the whole output (head and tail of a long one). When the
+same turn also asks questions, the questions come first and the handoff names
+the failed gate: the gates run again after the answering turn, and a failure
+that remains then gets its repair turn.
 
 ### Active questions
 
@@ -757,9 +764,13 @@ After a turn the module gates run for the modules that hold changes, not for
 every module of the session, and every result names the module it ran in. The
 `dependencies` gate runs after every turn that changed files, whatever the role
 lists. A failing gate is written back into the conversation, with its
-command and output, so the next turn can fix it. An agent whose driver has a
-shell may run the same commands itself; the sandbox still runs them after the
-turn.
+command and output, so the next turn can fix it. The transcript shows each
+result as a gate card, and **Check modules** shows the same list: a failed
+validator lists the errors of its failing reports (code, file, path and
+message, the first 20 and a count of the rest), read from its JSON before the
+output is cut, with the command and output folded under the details. An agent
+whose driver has a shell may run the same commands itself; the sandbox still
+runs them after the turn.
 
 ## Preview
 

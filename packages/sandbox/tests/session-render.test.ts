@@ -70,6 +70,41 @@ describe('session approval rendering', () => {
 		expect(rendered.html).toContain('rooms');
 		expect(rendered.html).toContain('Overlapping reservation');
 	});
+	it('lists the validator errors above the folded raw output', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const rendered = renderToString(GateResults, {
+			results: [
+				{
+					id: 'spec-schema',
+					status: 'failed',
+					durationMs: 1,
+					command: 'pnpm --silent flowdular spec validate --all --json',
+					output: '{ "protocolVersion": 1, "ok": false }',
+					issues: [
+						{
+							file: 'modules/booking/spec/module.yaml',
+							code: 'SPEC_FIELD_RESERVED',
+							path: '/entities/0/fields/1/id',
+							message: 'Field "booking.createdAt" collides with a column.',
+						},
+					],
+					moreIssues: 2,
+				},
+			],
+			running: false,
+			error: '',
+			onClose: () => {},
+		});
+		const html = rendered.html;
+		expect(html).toContain('SPEC_FIELD_RESERVED');
+		expect(html).toContain('/entities/0/fields/1/id');
+		expect(html).toContain('2 more errors are not shown.');
+		expect(html.indexOf('SPEC_FIELD_RESERVED')).toBeLessThan(
+			html.indexOf('protocolVersion'),
+		);
+		expect(html).not.toMatch(/<details[^>]*\sopen/);
+	});
 	it('renders an approval action in the latest pending handoff', () => {
 		registerSandboxTranslations();
 		setActiveLocale('pl');
@@ -295,5 +330,154 @@ describe('session state pill', () => {
 		setActiveLocale('pl');
 		expect(pill('awaiting-answers')).toContain('oczekuje na odpowiedzi');
 		expect(pill('awaiting-answers')).not.toContain('zatwierdz');
+	});
+});
+
+describe('transcript entries', () => {
+	function transcript(entries: ChatPaneProps['entries']): string {
+		const noop = () => {};
+		const html = renderToString(ChatPane, {
+			entries,
+			delivered: false,
+			archived: false,
+			roles: [],
+			drivers: [],
+			modules: [],
+			specs: [],
+			role: 'auto',
+			module: '',
+			driver: '',
+			message: '',
+			running: false,
+			selection: null,
+			autoContinue: false,
+			pendingQuestions: null,
+			answersError: '',
+			pendingBrief: '',
+			onStart: noop,
+			onContinue: noop,
+			onApprove: noop,
+			onRequestChanges: noop,
+			onEditSpec: noop,
+			onAutoContinue: noop,
+			onRole: noop,
+			onModule: noop,
+			onDriver: noop,
+			onMessage: noop,
+			onSend: noop,
+			onAnswers: noop,
+			onStop: noop,
+			onClearSelection: noop,
+		}).html;
+		return html.replace(/<!--[\s\S]*?-->/g, '');
+	}
+
+	it('shows a failed gate as the errors of its failing reports, the raw output folded away', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const message =
+			'Field "equipment-item.createdAt" collides with the id, tenantId or createdAt column every tenant table owns.';
+		const output = JSON.stringify({
+			protocolVersion: 1,
+			ok: false,
+			error: {
+				code: 'SPEC_VALIDATION_FAILED',
+				message: 'One or more specifications are invalid.',
+				details: {
+					reports: [
+						{
+							file: 'reference/example-module/spec/module.yaml',
+							valid: true,
+							issues: [],
+						},
+						{
+							file: 'modules/equipment/spec/module.yaml',
+							valid: false,
+							issues: [
+								{
+									code: 'SPEC_FIELD_RESERVED',
+									message,
+									path: '/entities/0/fields/7/id',
+									severity: 'error',
+								},
+							],
+						},
+					],
+				},
+			},
+		});
+		const html = transcript([
+			{
+				sequence: 63,
+				at: 1,
+				kind: 'system',
+				role: 'business-manager',
+				text: `Gate spec-schema failed.\nCommand: pnpm flowdular spec validate --all --json\n\n${output}`,
+				gate: {
+					id: 'spec-schema',
+					status: 'failed',
+					issues: [
+						{
+							file: 'modules/equipment/spec/module.yaml',
+							code: 'SPEC_FIELD_RESERVED',
+							path: '/entities/0/fields/7/id',
+							message,
+						},
+					],
+				},
+			},
+		]);
+		const visible = html.replace(/<details[\s\S]*?<\/details>/g, '');
+
+		expect(visible).toContain('Requirements document');
+		expect(visible).toContain('Needs a fix');
+		expect(visible).toContain(message);
+		expect(visible).toContain('SPEC_FIELD_RESERVED');
+		expect(visible).toContain('/entities/0/fields/7/id');
+		expect(visible).not.toContain('reference/example-module');
+		expect(visible).not.toContain('protocolVersion');
+		/* The specialist's view of the same result is still there, folded. */
+		expect(html).toMatch(/<details>[\s\S]*protocolVersion[\s\S]*<\/details>/);
+	});
+
+	it('formats an agent message without letting its markup through', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const html = transcript([
+			{
+				sequence: 1,
+				at: 1,
+				kind: 'user',
+				role: 'business-manager',
+				text: 'Keep **this** as typed.',
+			},
+			{
+				sequence: 2,
+				at: 2,
+				kind: 'agent',
+				role: 'business-manager',
+				text: [
+					'**Files written**',
+					'- `modules/equipment/spec/module.yaml`: the draft',
+					'',
+					'<img src=x onerror=alert(1)> [run](javascript:alert(1)) [docs](https://example.com/docs)',
+					'',
+					'HANDOFF: none - done',
+				].join('\n'),
+			},
+		]);
+
+		expect(html).toContain('Keep **this** as typed.');
+		expect(html).toContain('<strong>Files written</strong>');
+		expect(html).toContain(
+			'<li><p><code>modules/equipment/spec/module.yaml</code>: the draft</p></li>',
+		);
+		expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+		expect(html).not.toContain('<img');
+		expect(html).not.toContain('javascript:');
+		expect(html).toContain(
+			'<a href="https://example.com/docs" target="_blank" rel="noopener noreferrer nofollow">docs</a>',
+		);
+		expect(html).not.toContain('HANDOFF');
 	});
 });

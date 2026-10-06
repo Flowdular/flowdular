@@ -23,9 +23,15 @@ import {
 	type PendingQuestion,
 	type PendingQuestions,
 } from '../server/questions.ts';
+import { GateCard } from './GateCard.tsrx';
+import { Markdown } from './Markdown.tsrx';
 import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
-import { transcriptRows, type TranscriptRow } from './transcript.ts';
+import {
+	keepsFollowing,
+	transcriptRows,
+	type TranscriptRow,
+} from './transcript.ts';
 import { TurnActivity } from './TurnActivity.tsrx';
 import { ComposerSettings } from './ComposerSettings.tsrx';
 import { ApprovalHandoff } from './ApprovalHandoff.tsrx';
@@ -223,7 +229,9 @@ export function ChatPane(props: ChatPaneProps) @{
 	const open =
 		props.entries.filter((entry) => entry.handoff).at(-1)?.sequence ?? -1;
 	const scroller = useRef<HTMLDivElement | null>(null);
+	const column = useRef<HTMLDivElement | null>(null);
 	const followLatest = useRef(true);
+	const lastTop = useRef(0);
 	const attachInput = useRef<HTMLInputElement | null>(null);
 	/* The composer manages its own attachments: App owns the transcript, but the
    session id from the URL is enough to upload, list and remove them here. */
@@ -255,11 +263,25 @@ export function ChatPane(props: ChatPaneProps) @{
 	/* Follow new events only while the operator is already at the bottom. */
 	useEffect(() => {
 		followLatest.current = true;
+		lastTop.current = 0;
 	}, [sessionId]);
 	useEffect(() => {
 		const node = scroller.current;
 		if (node && followLatest.current) node.scrollTop = node.scrollHeight;
 	}, [props.entries.length, props.running, sessionId]);
+	/* A card can grow after the entry that added it, when what it shows loads
+   later (the open questions, the restore points), so the column's size is
+   what the follow listens to. */
+	useEffect(() => {
+		const node = scroller.current;
+		const content = column.current;
+		if (!node || !content) return;
+		const observer = new ResizeObserver(() => {
+			if (followLatest.current) node.scrollTop = node.scrollHeight;
+		});
+		observer.observe(content);
+		return () => observer.disconnect();
+	}, []);
 
 	/* Seed the strip from the open session, and reset it when the session
    changes so one session's attachments never show under another. */
@@ -445,12 +467,15 @@ export function ChatPane(props: ChatPaneProps) @{
 			ref={scroller}
 			onScroll={(event) => {
 				const node = event.currentTarget;
-				followLatest.current = node.scrollHeight - node.scrollTop -
-					node.clientHeight <
-				64;
+				followLatest.current = keepsFollowing(
+					followLatest.current,
+					lastTop.current,
+					node,
+				);
+				lastTop.current = node.scrollTop;
 			}}
 		>
-			<div class="chat sandbox__column">
+			<div class="chat sandbox__column" ref={column}>
 				@for (const block of stream; key blockKey(block)) {
 					@if (block.events) {
 						<ul class="chat__events">
@@ -561,6 +586,14 @@ export function ChatPane(props: ChatPaneProps) @{
 							}
 							{restoreRow(block.key)}
 						</article>
+					} @else if (block.entry!.gate) {
+						<GateCard
+							gate={block.entry!.gate!}
+							output={block.entry!.text ?? ''}
+							module={props.modules.length > 1
+								? block.entry!.module ?? null
+								: null}
+						/>
 					} @else {
 						<article
 							class={[
@@ -576,7 +609,11 @@ export function ChatPane(props: ChatPaneProps) @{
 								</span>
 								{moduleLabel(block.entry!)}
 							</header>
-							<p class="chat__text">{block.speech}</p>
+							@if (block.entry!.kind === 'agent') {
+								<Markdown text={block.speech} />
+							} @else {
+								<p class="chat__text">{block.speech}</p>
+							}
 							@if (block.questions.length > 0) {
 								<ul>
 									@for (const question of block.questions; key question.id) {
