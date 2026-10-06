@@ -58,8 +58,11 @@ import {
 	DuplicateTenantSlugError,
 	type AccountCredential,
 	type AuditActorEvent,
+	type AuditRecord,
 	type AuthRepository,
 	type ExternalIdentityPage,
+	type OperatorAssignment,
+	type OperatorSource,
 	type TenantMember,
 	type TenantMemberKeyset,
 	type TenantMemberPage,
@@ -378,6 +381,8 @@ export const AUDIT_ACTIONS = Object.freeze({
 	mfaReset: 'auth.mfa.reset',
 	tenantRenamed: 'auth.tenant.renamed',
 	workspaceProvisioned: 'auth.workspace.provisioned',
+	operatorAssigned: 'auth.operator.assigned',
+	operatorReleased: 'auth.operator.released',
 	memberCreated: 'users.member.created',
 	memberUpdated: 'users.member.updated',
 	memberStatus: 'users.member.status',
@@ -438,6 +443,106 @@ function providerActor(provider: string): ServiceAuditActor {
 		label: `oidc:${provider}`,
 		configuredBy: null,
 	};
+}
+
+/**
+ * For one workspace: it is the recorded operator, another workspace is, or no
+ * workspace is recorded. The other workspace is never named.
+ */
+export type OperatorStanding = 'own' | 'other' | 'none';
+
+/** The operator record as the operator command reads it. */
+export interface OperatorWorkspace {
+	readonly workspace: TenantSummary;
+	readonly source: OperatorSource;
+	readonly recordedAt: number;
+}
+
+export interface OperatorChangePlan {
+	/** The workspace recorded now; null while none is. */
+	readonly from: TenantSummary | null;
+	readonly to: TenantSummary;
+	/** False when `to` is already the operator; nothing is written then. */
+	readonly changed: boolean;
+	readonly operator: string;
+}
+
+/* The rule that records an upgraded deployment's only workspace runs without a
+   person at a shell, so the trail names the rule itself. */
+const SINGLE_WORKSPACE_RULE: ServiceAuditActor = {
+	kind: 'service',
+	id: 'auth.core:single-workspace',
+	label: 'auth.core:single-workspace',
+	configuredBy: null,
+};
+
+/* An operator event lands in the trail of the workspace it concerns and names
+   no other workspace, so no trail discloses another one. */
+function operatorEvent(
+	tenantId: string,
+	actor: AuditActor,
+	action: string,
+	source: OperatorSource,
+	occurredAt: number,
+): AuditRecord {
+	return {
+		tenantId,
+		actorAccountId: actor.kind === 'user' ? actor.id : null,
+		actorLabel: actor.label,
+		actorKind: actor.kind,
+		actorRunId: actor.kind === 'agent' ? actor.runId : null,
+		configuredBy: actor.kind === 'service' ? actor.configuredBy : null,
+		action,
+		subjectType: 'tenant',
+		subjectId: tenantId,
+		metadata: { source },
+		occurredAt,
+	};
+}
+
+/** The record and event that make the first workspace of an empty database its operator. */
+export function firstWorkspaceOperator(
+	tenantId: string,
+	operator: string,
+	recordedAt: number,
+): OperatorAssignment {
+	return {
+		record: { tenantId, source: 'first-workspace', recordedAt },
+		event: operatorEvent(
+			tenantId,
+			operatorActor(operator),
+			AUDIT_ACTIONS.operatorAssigned,
+			'first-workspace',
+			recordedAt,
+		),
+	};
+}
+
+/**
+ * The single-workspace rule, run when auth.core opens the database after its
+ * migrations. A deployment that completed setup before the record existed and
+ * holds exactly one workspace records it; with none, with two or more, or with
+ * a record already present it writes nothing. Concurrent openers land one row
+ * and one event, and auth.core deletes no workspace, so it fires at most once.
+ */
+export async function recordSingleWorkspaceOperator(
+	repository: AuthRepository,
+	now: () => number = Date.now,
+): Promise<boolean> {
+	if ((await repository.findOperatorTenantId()) !== null) return false;
+	const tenantId = await repository.findOnlyTenantId();
+	if (tenantId === null) return false;
+	const recordedAt = now();
+	return repository.assignOperator({
+		record: { tenantId, source: 'single-workspace', recordedAt },
+		event: operatorEvent(
+			tenantId,
+			SINGLE_WORKSPACE_RULE,
+			AUDIT_ACTIONS.operatorAssigned,
+			'single-workspace',
+			recordedAt,
+		),
+	});
 }
 
 function member(account: AccountCredential, createdAt: number): TenantMember {
@@ -2179,21 +2284,31 @@ export class AuthService {
 			this.#passwordHash,
 		);
 		const tenantId = randomUUID();
+		/* The first workspace of an empty database is its operator, recorded in
+		   the transaction that creates it. Emptiness is read just before that
+		   transaction, so two first provisionings racing each offer a record and
+		   the one-row index keeps exactly one. */
+		const first = !(await this.#repository.hasAnyTenant());
 		let owner: AccountCredential;
 		try {
-			owner = await this.#repository.createAccountWithTenant({
-				accountId: randomUUID(),
-				tenantId,
-				email: plan.owner.email,
-				normalizedEmail: plan.owner.email,
-				passwordHash,
-				displayName: plan.owner.displayName,
-				organizationName: plan.workspace.name,
-				organizationSlug: plan.workspace.slug,
-				role: 'owner',
-				scopes: OWNER_SCOPES,
-				createdAt: this.#now(),
-			});
+			owner = await this.#repository.createAccountWithTenant(
+				{
+					accountId: randomUUID(),
+					tenantId,
+					email: plan.owner.email,
+					normalizedEmail: plan.owner.email,
+					passwordHash,
+					displayName: plan.owner.displayName,
+					organizationName: plan.workspace.name,
+					organizationSlug: plan.workspace.slug,
+					role: 'owner',
+					scopes: OWNER_SCOPES,
+					createdAt: this.#now(),
+				},
+				first
+					? firstWorkspaceOperator(tenantId, plan.operator, this.#now())
+					: undefined,
+			);
 		} catch (error) {
 			if (error instanceof DuplicateAccountError) {
 				throw new AuthServiceError('ACCOUNT_EXISTS', error.message, 409);
@@ -2386,6 +2501,96 @@ export class AuthService {
 			},
 			operator: plan.operator,
 		};
+	}
+
+	/* Whether this workspace may change platform-scoped settings, as far as the
+	   record says; system.core applies FD_OPERATOR_TENANT ahead of it. The own
+	   check runs in the workspace's transaction, and only outside the operator
+	   does the background read learn whether another workspace is recorded. */
+	async operatorStanding(tenantId: string): Promise<OperatorStanding> {
+		if (await this.#repository.findOperatorRecord(tenantId)) return 'own';
+		return (await this.#repository.findOperatorTenantId()) === null
+			? 'none'
+			: 'other';
+	}
+
+	/** The record for the operator's read command; null while none is recorded. */
+	async operatorWorkspace(): Promise<OperatorWorkspace | null> {
+		const tenantId = await this.#repository.findOperatorTenantId();
+		if (tenantId === null) return null;
+		const record = await this.#repository.findOperatorRecord(tenantId);
+		const workspace = await this.#repository.findTenant(tenantId);
+		/* Two reads on two handles; a change between them reads as no record,
+		   which is what the deployment saw at some instant in between. */
+		if (!record || !workspace) return null;
+		return { workspace, source: record.source, recordedAt: record.recordedAt };
+	}
+
+	async planOperatorChange(
+		reference: string,
+		operator: string,
+	): Promise<OperatorChangePlan> {
+		const label = this.#identifier(operator, 'operator');
+		const to = await this.findTenant(reference);
+		if (!to) {
+			throw new AuthServiceError(
+				'WORKSPACE_NOT_FOUND',
+				`No workspace matches "${reference}".`,
+				404,
+			);
+		}
+		const current = await this.#repository.findOperatorTenantId();
+		return {
+			from:
+				current === null ? null : await this.#repository.findTenant(current),
+			to,
+			changed: current !== to.tenantId,
+			operator: label,
+		};
+	}
+
+	/* Release, then assign, in two transactions each bound to its own workspace,
+	   because one transaction is bound to one tenant. Between them no workspace
+	   is the operator, so a failure leaves platform settings locked rather than
+	   two operators, and the same command run again completes the change. */
+	async setOperator(
+		reference: string,
+		operator: string,
+	): Promise<OperatorChangePlan> {
+		const plan = await this.planOperatorChange(reference, operator);
+		if (!plan.changed) return plan;
+		const actor = operatorActor(plan.operator);
+		if (plan.from) {
+			await this.#repository.releaseOperator(
+				plan.from.tenantId,
+				operatorEvent(
+					plan.from.tenantId,
+					actor,
+					AUDIT_ACTIONS.operatorReleased,
+					'command',
+					this.#now(),
+				),
+			);
+		}
+		const recordedAt = this.#now();
+		const assigned = await this.#repository.assignOperator({
+			record: { tenantId: plan.to.tenantId, source: 'command', recordedAt },
+			event: operatorEvent(
+				plan.to.tenantId,
+				actor,
+				AUDIT_ACTIONS.operatorAssigned,
+				'command',
+				recordedAt,
+			),
+		});
+		if (!assigned) {
+			throw new AuthServiceError(
+				'OPERATOR_CHANGED',
+				'Another process recorded an operator workspace during this change. Read it with auth operator, then run the command again.',
+				409,
+			);
+		}
+		return plan;
 	}
 
 	/* Built on first use, so a deployment that configures no MFA key still

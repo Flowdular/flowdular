@@ -5,6 +5,7 @@ import { defineCliExtension } from '@flowdular/cli-protocol';
 import { AUTH_SCOPES, OWNER_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
 import { localDatabaseProvider } from './database.ts';
 import { runGreenfield } from './greenfield.ts';
+import { readOperator, setOperator } from './operator.ts';
 import {
 	addWorkspaceMember,
 	createWorkspace,
@@ -170,6 +171,32 @@ export const cliExtension = defineCliExtension({
 				supportsDryRun: true,
 			},
 			execute: addWorkspaceMember,
+		},
+		{
+			path: ['auth', 'operator'],
+			capability: {
+				id: 'auth.operator.read',
+				version: 1,
+				summary:
+					"Show the workspace recorded as this deployment's operator, and whether FD_OPERATOR_TENANT overrides it.",
+				risk: 'read',
+				requiresApprovedSpec: false,
+				supportsDryRun: false,
+			},
+			execute: readOperator,
+		},
+		{
+			path: ['auth', 'operator-set'],
+			capability: {
+				id: 'auth.operator.set',
+				version: 1,
+				summary:
+					"Record a workspace, by id or slug, as this deployment's operator, the one that changes platform settings.",
+				risk: 'process' as const,
+				requiresApprovedSpec: false,
+				supportsDryRun: true,
+			},
+			execute: setOperator,
 		},
 		{
 			path: ['auth', 'secrets-rotate'],

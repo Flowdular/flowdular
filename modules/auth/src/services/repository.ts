@@ -292,6 +292,23 @@ export interface AuditActorEvent extends AuditEvent {
 	readonly configuredBy: UserActor | null;
 }
 
+/** How the deployment's operator record came to name its workspace. */
+export type OperatorSource = 'first-workspace' | 'single-workspace' | 'command';
+
+/** The deployment's one record of the workspace that changes platform-scoped settings. */
+export interface OperatorRecord {
+	readonly tenantId: string;
+	readonly source: OperatorSource;
+	readonly recordedAt: number;
+}
+
+/* The record never changes without its event, so a write carries the event its
+   own transaction appends to the named workspace's trail. */
+export interface OperatorAssignment {
+	readonly record: OperatorRecord;
+	readonly event: AuditRecord;
+}
+
 /**
  * auth.core speaks to one PostgreSQL namespace through two handles: a
  * tenant-scoped runtime handle for everything a workspace owns, and a
@@ -302,8 +319,25 @@ export interface AuthRepository {
 	isTenantSlugTaken(slug: string): Promise<boolean>;
 	findTenant(reference: string): Promise<TenantSummary | null>;
 	hasAnyTenant(): Promise<boolean>;
+	/** The id of the deployment's only workspace; null with none or with two or more. */
+	findOnlyTenantId(): Promise<string | null>;
 	listTenants(): Promise<readonly TenantSummary[]>;
 	renameTenant(tenantId: string, name: string): Promise<TenantSummary | null>;
+	/** Which workspace the operator record names, read on the background handle. */
+	findOperatorTenantId(): Promise<string | null>;
+	/** The record as a transaction bound to `tenantId` sees it: present only when it names that workspace. */
+	findOperatorRecord(tenantId: string): Promise<OperatorRecord | null>;
+	/**
+	 * Inserts the record and its event in one transaction bound to the workspace
+	 * it names. False, and no event, when a record already exists.
+	 */
+	assignOperator(assignment: OperatorAssignment): Promise<boolean>;
+	/**
+	 * Deletes the record naming `tenantId` and appends `event` in one
+	 * transaction bound to that workspace. False, and no event, when the record
+	 * names another workspace or none.
+	 */
+	releaseOperator(tenantId: string, event: AuditRecord): Promise<boolean>;
 	listOwnerMemberships(): Promise<
 		readonly {
 			readonly accountId: string;
@@ -397,8 +431,13 @@ export interface AuthRepository {
 		limit: number,
 	): Promise<readonly TenantMember[]>;
 	listTenantScopes(tenantId: string): Promise<readonly string[]>;
+	/**
+	 * With `operator`, the new workspace is also recorded as the operator in the
+	 * transaction that creates it, unless a record already exists.
+	 */
 	createAccountWithTenant(
 		record: CreateAccountRecord,
+		operator?: OperatorAssignment,
 	): Promise<AccountCredential>;
 	createAccountInTenant(
 		record: CreateAccountInTenantRecord,
