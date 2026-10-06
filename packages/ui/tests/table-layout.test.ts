@@ -77,6 +77,7 @@ describe('table steps', () => {
 			expect(file).toContain(`.ui-table .ui-table__hide-${step} {`);
 			expect(file).toContain(`.ui-table .ui-table__reveal-${step} {`);
 			expect(file).toContain(`.ui-table--fold-${step} {`);
+			expect(file).toContain(`.ui-table--unpin-${step} {`);
 		}
 	});
 });
@@ -185,6 +186,28 @@ describe('tableLayout', () => {
 			undefined,
 			tableStep(FLEXIBLE_READING + 160 + ACTIONS_FOLDED_WIDTH),
 		]);
+	});
+
+	it('unpins a single action below three times its column, where two would fold', () => {
+		const input = {
+			columns: [
+				{ width: 'auto', priority: 1 },
+				{ width: '140px', priority: 1 },
+			],
+			selection: false,
+			actionsWidth: '200px',
+		} as const;
+		const one = tableLayout({ ...input, fold: 'never' });
+		expect(stepOf(one.classes, 'unpin')).toBe(tableStep(3 * 200));
+		expect(stepOf(one.classes, 'fold')).toBeUndefined();
+		expect(one.actionsWidth).toBe(200);
+		for (const fold of ['narrow', 'always'] as const)
+			expect(
+				stepOf(tableLayout({ ...input, fold }).classes, 'unpin'),
+			).toBeUndefined();
+		expect(
+			tableLayout({ ...input, actionsWidth: undefined, fold: 'never' }).classes,
+		).toEqual([]);
 	});
 
 	it('folds only when a row has two actions or more', () => {

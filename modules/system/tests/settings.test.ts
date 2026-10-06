@@ -201,6 +201,7 @@ describe('settings API', () => {
 			auth: runtime,
 			settings: runtime.moduleSettings,
 			activation: memoryActivationRuntime(),
+			operatorTenantId: owner.tenantId,
 		});
 	});
 

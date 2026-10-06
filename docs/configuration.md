@@ -18,6 +18,17 @@ deployments must set the secret keys.
 | `FD_LOG_LEVEL`       | `info`                            | `debug`, `info`, `warn` or `error`                                         |
 | `FD_METRICS`         | `false`                           | Expose `GET /api/metrics`; see [operations.md](operations.md)              |
 | `FD_METRICS_TOKEN`   | none                              | Bearer token a metrics scrape must present                                 |
+| `FD_OPERATOR_TENANT` | none                              | Tenant id of the workspace that changes platform settings                  |
+
+A platform-scoped module setting has one value for every workspace: the
+branding, sign-up and session policy, the mail relay and the platform settings
+of other modules. Only the operator workspace changes them. Set
+`FD_OPERATOR_TENANT` to its tenant id (`pnpm flowdular auth workspaces` lists
+them) and a principal there holding `system.settings.manage` edits them in
+Administration as before. Every other workspace sees them read-only, and a
+write from it is refused with 403 `PLATFORM_SETTING_OPERATOR_ONLY`. Unset, no
+workspace can change them and the stored values keep applying, so a deployment
+upgrading from an earlier release sets it to keep editing them.
 
 A `web` process serves HTTP only: it never starts a module worker and never
 claims queued work from a request, so a deployment of `web` processes also needs
@@ -33,7 +44,8 @@ A Vercel deployment works this way; see
 
 The name, the document title, the description, the link preview image, the
 browser icon, the theme colour and the logo are not environment variables: they
-are `system.core` settings an owner with `system.settings.manage` changes under
+are platform-scoped `system.core` settings a principal with
+`system.settings.manage` in the operator workspace changes under
 Administration, Branding, and every change is audited. One value serves the
 whole deployment, so the sign-in screen and a shared link carry it too, and a
 setting nobody changed renders the product's own.
@@ -622,9 +634,10 @@ deployment on the old names keeps working and the server logs one
 replacement. The platform name wins when both are set, and every refusal names
 the variable the deployment actually set.
 
-The relay is also five platform-scoped `auth.core` settings, edited under
-Administration, Modules: `mailTransport` (`environment`, `none` or `smtp`),
-`mailSmtpUrl` (secret, write only), `mailFrom`, `mailRequireTls` and
+The relay is also five platform-scoped `auth.core` settings, edited from the
+operator workspace under Administration, Modules: `mailTransport`
+(`environment`, `none` or `smtp`), `mailSmtpUrl` (secret, write only),
+`mailFrom`, `mailRequireTls` and
 `mailRejectUnauthorized`. `mailTransport` decides which source wins. It is
 `environment` by default, and while it stays there the `FD_MAIL_*`
 configuration above is in effect exactly as described, deprecation warnings

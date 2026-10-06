@@ -309,6 +309,7 @@ describe('scaffold', () => {
 			'FD_AUTH_MAIL_TRANSPORT',
 			'FD_AUTH_SMTP_URL',
 			'FD_AUTH_MAIL_FROM',
+			'FD_OPERATOR_TENANT',
 			/* Read by a self-hosted sandbox, never by the application itself. */
 			'ANTHROPIC_API_KEY',
 		]) {

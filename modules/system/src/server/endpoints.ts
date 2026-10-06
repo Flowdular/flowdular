@@ -41,6 +41,11 @@ export interface SystemRouteOptions {
 	readonly settings: ModuleSettingsRuntime;
 	/** Per-workspace activation of the composed modules. */
 	readonly activation: SystemRuntime;
+	/**
+	 * Tenant id of the operator workspace, the only one whose settings managers
+	 * change platform-scoped settings. Unset, no workspace can.
+	 */
+	readonly operatorTenantId?: string;
 }
 
 /** A catalog row with its activation in the asking principal's workspace. */
@@ -85,6 +90,16 @@ const MAIL_TRANSPORT_REQUIRED =
 
 const MFA_KEY_REQUIRED =
 	'Required multi-factor authentication needs a deployment MFA encryption key; none is configured.';
+
+const PLATFORM_SETTING_OPERATOR_ONLY =
+	"This setting applies to every workspace; only the deployment operator's workspace can change it.";
+
+/* A platform-scoped value is one for every workspace, so outside the operator
+   workspace its row is locked and its write is refused. */
+const PLATFORM_OPERATOR_LOCK = {
+	locked: PLATFORM_SETTING_OPERATOR_ONLY,
+	lockedKey: 'system.settings.platformOperatorOnly',
+} as const;
 
 export interface SettingsEntryPayload {
 	readonly key: string;
@@ -149,9 +164,12 @@ function lockReason(
 function entryPayload(
 	entry: ModuleSettingEntry,
 	deployment: SettingsDeployment,
+	platformLock: typeof PLATFORM_OPERATOR_LOCK | undefined,
 ): SettingsEntryPayload {
 	const definition = entry.definition;
-	const lock = lockReason(entry, deployment);
+	const lock =
+		(definition.scope === 'platform' ? platformLock : undefined) ??
+		lockReason(entry, deployment);
 	return {
 		key: entry.key,
 		type: definition.type,
@@ -401,6 +419,11 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 		return names.get(moduleId) ?? { name: moduleId, description: '' };
 	};
 
+	const platformLock = (tenantId: string) =>
+		options.operatorTenantId && tenantId === options.operatorTenantId
+			? undefined
+			: PLATFORM_OPERATOR_LOCK;
+
 	const overview = defineEndpoint({
 		id: 'system.overview.read',
 		path: '/api/system/overview',
@@ -446,10 +469,11 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 		handler: ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
+				const locked = platformLock(principal.tenantId);
 				const grouped = new Map<string, SettingsEntryPayload[]>();
 				for (const entry of options.settings.list(principal.tenantId)) {
 					const group = grouped.get(entry.moduleId) ?? [];
-					group.push(entryPayload(entry, options.auth));
+					group.push(entryPayload(entry, options.auth, locked));
 					grouped.set(entry.moduleId, group);
 				}
 				const payload: SettingsModulePayload[] = [...grouped].map(
@@ -483,6 +507,17 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 				const body = await readJsonObject(octane.request);
 				const moduleId = requiredString(body, 'moduleId', { max: 128 });
 				const key = requiredString(body, 'key', { max: 128 });
+				const locked = platformLock(principal.tenantId);
+				const declared = options.settings
+					.declarations()
+					.find((declaration) => declaration.moduleId === moduleId);
+				if (locked && declared?.settings[key]?.scope === 'platform') {
+					throw new HttpProblem(
+						'PLATFORM_SETTING_OPERATOR_ONLY',
+						PLATFORM_SETTING_OPERATOR_ONLY,
+						403,
+					);
+				}
 				const value = body.value;
 				if (
 					value !== null &&
@@ -519,7 +554,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 					.list(principal.tenantId)
 					.find((item) => item.moduleId === moduleId && item.key === key);
 				return jsonResponse({
-					setting: entry ? entryPayload(entry, options.auth) : null,
+					setting: entry ? entryPayload(entry, options.auth, locked) : null,
 				});
 			} catch (error) {
 				return settingsProblem(error);

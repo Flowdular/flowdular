@@ -34,7 +34,7 @@ export interface TableLayoutInput {
 }
 
 export interface TableLayout {
-	/** Fold step class on the table: `ui-table--fold-<px>`. */
+	/** Step classes on the table: `ui-table--fold-<px>` or `ui-table--unpin-<px>`. */
 	readonly classes: readonly string[];
 	/** Per column, the container step below which it hides (`ui-table__hide-<px>`), or undefined when it never hides. */
 	readonly hideSteps: readonly (number | undefined)[];
@@ -114,6 +114,10 @@ export function tableLayout(input: TableLayoutInput): TableLayout {
 		classes.push(
 			'ui-table--fold-' + tableStep(Math.max(3 * actions, narrowest + actions)),
 		);
+	/* A single action never folds, so where two would fold it scrolls with the
+	   row instead of staying pinned over the cells beside it. */
+	if (hasActions && input.fold === 'never')
+		classes.push('ui-table--unpin-' + tableStep(3 * actions));
 	return {
 		classes,
 		hideSteps,

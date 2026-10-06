@@ -135,6 +135,7 @@ describe('deployment branding', () => {
 			auth: runtime,
 			settings: runtime.moduleSettings,
 			activation: memoryActivationRuntime(),
+			operatorTenantId: owner.tenantId,
 		});
 		await runtime.moduleSettings.prime(PLATFORM_SETTINGS_TENANT);
 	});

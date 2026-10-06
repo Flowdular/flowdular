@@ -233,7 +233,10 @@ or than the narrowest table beside it; more than two actions always sit in the
 More menu, and the column then keeps the width of that one button. The menu
 opens over the page, arrows, Home and End move between items, Enter or Space
 runs one, and Escape or Tab closes it and returns focus to the button. A refused
-action stays in the menu, announced as unavailable, with its `reason`.
+action stays in the menu, announced as unavailable, with its `reason`. The
+action column stays pinned to the right edge while the table scrolls, except a
+single action, which never folds: in a card narrower than three times its
+column it scrolls with the row instead of covering the cells beside it.
 
 **Clickable rows.** A table with `onSelect` makes its first cell a button, so
 Tab reaches the row and Enter or Space opens it. That column holds text, never
@@ -442,7 +445,8 @@ Rendered by components, not written by hand: `ui-page-head*`, `ui-search`,
 `ui-table__lead` with `ui-table__toggle` and `ui-table__open` (the first cell's
 expand and open buttons), `ui-table__hide-*` (a column hidden below that width),
 `ui-table__reveal-*` (the expand button, details list and detail shown below
-that width), `ui-table--fold-*` (the action fold step),
+that width), `ui-table--fold-*` (the action fold step), `ui-table--unpin-*`
+(the step below which a single action scrolls with its row),
 `ui-table__placeholder-body` (the loading and empty row content),
 `ui-table__details` (+`-list`), `ui-table__detail`,
 `ui-table-more` (+`--always`), `ui-table-menu` (+`__scrim`, `__label`),

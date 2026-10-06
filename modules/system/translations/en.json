@@ -119,6 +119,7 @@
 	"settings.emptyValue": "Empty",
 	"settings.mailTransportRequired": "Email confirmation needs a configured mail transport.",
 	"settings.mfaKeyRequired": "Required multi-factor authentication needs a deployment MFA encryption key.",
+	"settings.platformOperatorOnly": "Applies to every workspace; only the deployment operator's workspace can change it.",
 	"settings.timeZone.label": "Workspace time zone",
 	"settings.timeZone.description": "IANA zone name such as Europe/Warsaw. Modules that show or schedule local times read it; the default is UTC.",
 	"activation.notComposed": "This module is not enabled in the application; enable it with the CLI first.",

@@ -60,6 +60,10 @@ spec:
                   key: backgroundUrl
             - name: FD_AUTH_ALLOW_SIGN_UP
               value: 'false'
+            # Tenant id of the workspace that changes platform settings such as
+            # the branding and the mail relay. Empty, no workspace can.
+            - name: FD_OPERATOR_TENANT
+              value: ''
             - name: FD_AUTH_SECURE_COOKIE
               value: 'true'
             # The Service and any ingress sit in front of this port. Set true
