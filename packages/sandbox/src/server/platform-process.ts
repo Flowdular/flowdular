@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+
+const PLATFORM_GUARD = fileURLToPath(
+	new URL('./platform-guard.mjs', import.meta.url),
+);
 
 export interface PlatformProcess {
 	readonly url: string;
@@ -103,7 +108,12 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 		'--host',
 		options.host ?? '127.0.0.1',
 	];
-	const child = spawn('pnpm', args, {
+	const output = options.quiet ? 'ignore' : 'inherit';
+	/* The platform runs in a process group of its own so stop() reaches every
+	   process under pnpm. That group also escapes the launcher's terminal and
+	   signals, so the guard ties it to this process: when the launcher ends
+	   without calling stop(), the guard stops the group. */
+	const child = spawn(process.execPath, [PLATFORM_GUARD, 'pnpm', ...args], {
 		cwd: options.workspaceRoot,
 		env: {
 			...process.env,
@@ -111,7 +121,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 			FD_SETUP_AUTO_RESTART: 'true',
 			FD_SETUP_RESTART_EXIT_CODE: '75',
 		},
-		stdio: options.quiet ? 'ignore' : 'inherit',
+		stdio: [output, output, output, 'ipc'],
 		detached: process.platform !== 'win32',
 	});
 	let spawnError: Error | null = null;
@@ -119,6 +129,11 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 		child.once('error', (error) => {
 			spawnError = error;
 			resolve({ code: null });
+		});
+		child.on('message', (message) => {
+			const report = message as { type?: unknown; message?: unknown } | null;
+			if (report?.type === 'spawn-error' && typeof report.message === 'string')
+				spawnError = new Error(report.message);
 		});
 		child.once('close', (code) => resolve({ code }));
 		child.once('exit', (code) => options.onExit?.(code));
