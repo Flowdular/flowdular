@@ -53,6 +53,10 @@ interface Pending {
 type Cdp = ReturnType<typeof connect>;
 
 const CALL_TIMEOUT_MS = 15_000;
+/* A cold Chrome on a loaded CI runner can spend most of the call budget just
+   starting, so a call sent before Chrome has answered anything gets this
+   budget instead. It still fits the 60 s test and hook timeouts. */
+const STARTUP_TIMEOUT_MS = 45_000;
 
 const CHROME_PATHS: Readonly<Record<string, readonly string[]>> = {
 	darwin: [
@@ -102,6 +106,7 @@ function connect(chrome: ChromeProcess) {
 	let nextId = 1;
 	let buffer = '';
 	let failure: Error | null = null;
+	let started = false;
 	const decoder = new TextDecoder();
 	/** Answers by `call <id>`, events by `event <sessionId> <method>`. */
 	const waiting = new Map<string, Pending>();
@@ -122,6 +127,7 @@ function connect(chrome: ChromeProcess) {
 		for (let end = buffer.indexOf('\0'); end >= 0; end = buffer.indexOf('\0')) {
 			const message = JSON.parse(buffer.slice(0, end)) as Message;
 			buffer = buffer.slice(end + 1);
+			started = true;
 			const key =
 				message.id === undefined
 					? `event ${message.sessionId} ${message.method}`
@@ -137,10 +143,17 @@ function connect(chrome: ChromeProcess) {
 				reject(failure);
 				return;
 			}
+			const [budget, name] = started
+				? [CALL_TIMEOUT_MS, 'call']
+				: [STARTUP_TIMEOUT_MS, 'startup'];
 			const timer = setTimeout(() => {
 				waiting.delete(key);
-				reject(new Error(`Chrome did not answer ${label}.`));
-			}, CALL_TIMEOUT_MS);
+				reject(
+					new Error(
+						`Chrome did not answer ${label} within the ${budget / 1000} s ${name} budget.`,
+					),
+				);
+			}, budget);
 			waiting.set(key, {
 				resolve: (message) => {
 					clearTimeout(timer);
