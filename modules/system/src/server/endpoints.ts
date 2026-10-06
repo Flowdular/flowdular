@@ -11,6 +11,7 @@ import {
 	principalFromContext,
 	sessionMutationDenial,
 	type AuthRuntime,
+	type OperatorStanding,
 } from '@flowdular/module-auth/server';
 import {
 	ModuleSettingsError,
@@ -42,8 +43,10 @@ export interface SystemRouteOptions {
 	/** Per-workspace activation of the composed modules. */
 	readonly activation: SystemRuntime;
 	/**
-	 * Tenant id of the operator workspace, the only one whose settings managers
-	 * change platform-scoped settings. Unset, no workspace can.
+	 * FD_OPERATOR_TENANT. Set, it names the operator workspace, the only one
+	 * whose settings managers change platform-scoped settings, and auth.core's
+	 * record is not consulted; a value that is not the id of a workspace leaves
+	 * none. Unset, the workspace auth.core records is the operator.
 	 */
 	readonly operatorTenantId?: string;
 }
@@ -94,11 +97,26 @@ const MFA_KEY_REQUIRED =
 const PLATFORM_SETTING_OPERATOR_ONLY =
 	"This setting applies to every workspace; only the deployment operator's workspace can change it.";
 
+const PLATFORM_SETTING_OPERATOR_UNSET =
+	"This setting applies to every workspace, and no workspace is recorded as this deployment's operator yet. Record one with pnpm flowdular auth operator-set on the deployment.";
+
+interface PlatformLock {
+	readonly locked: string;
+	readonly lockedKey: string;
+}
+
 /* A platform-scoped value is one for every workspace, so outside the operator
    workspace its row is locked and its write is refused. */
 const PLATFORM_OPERATOR_LOCK = {
 	locked: PLATFORM_SETTING_OPERATOR_ONLY,
 	lockedKey: 'system.settings.platformOperatorOnly',
+} as const;
+
+/* While no operator is known the rows say so and name the command that records
+   one; the write refusal keeps its one code. */
+const PLATFORM_OPERATOR_UNSET_LOCK = {
+	locked: PLATFORM_SETTING_OPERATOR_UNSET,
+	lockedKey: 'system.settings.platformOperatorUnset',
 } as const;
 
 export interface SettingsEntryPayload {
@@ -164,7 +182,7 @@ function lockReason(
 function entryPayload(
 	entry: ModuleSettingEntry,
 	deployment: SettingsDeployment,
-	platformLock: typeof PLATFORM_OPERATOR_LOCK | undefined,
+	platformLock: PlatformLock | undefined,
 ): SettingsEntryPayload {
 	const definition = entry.definition;
 	const lock =
@@ -419,10 +437,34 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 		return names.get(moduleId) ?? { name: moduleId, description: '' };
 	};
 
-	const platformLock = (tenantId: string) =>
-		options.operatorTenantId && tenantId === options.operatorTenantId
-			? undefined
-			: PLATFORM_OPERATOR_LOCK;
+	/* Resolved on every request with no cache, so a record that first-run
+	   setup, the single-workspace rule or the operator command writes applies to
+	   the next one. A set FD_OPERATOR_TENANT decides alone. The tenant compared
+	   is always the principal's own, never one a request names. */
+	const operatorStanding = async (
+		tenantId: string,
+	): Promise<OperatorStanding> => {
+		const configured = options.operatorTenantId;
+		const service = await options.auth.service();
+		if (configured === undefined) return service.operatorStanding(tenantId);
+		if (configured === tenantId) return 'own';
+		return (await service.findTenant(configured))?.tenantId === configured
+			? 'other'
+			: 'none';
+	};
+
+	const platformLock = async (
+		tenantId: string,
+	): Promise<PlatformLock | undefined> => {
+		switch (await operatorStanding(tenantId)) {
+			case 'own':
+				return undefined;
+			case 'other':
+				return PLATFORM_OPERATOR_LOCK;
+			case 'none':
+				return PLATFORM_OPERATOR_UNSET_LOCK;
+		}
+	};
 
 	const overview = defineEndpoint({
 		id: 'system.overview.read',
@@ -466,10 +508,10 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: SYSTEM_PERMISSIONS.settingsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
-				const locked = platformLock(principal.tenantId);
+				const locked = await platformLock(principal.tenantId);
 				const grouped = new Map<string, SettingsEntryPayload[]>();
 				for (const entry of options.settings.list(principal.tenantId)) {
 					const group = grouped.get(entry.moduleId) ?? [];
@@ -507,14 +549,17 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 				const body = await readJsonObject(octane.request);
 				const moduleId = requiredString(body, 'moduleId', { max: 128 });
 				const key = requiredString(body, 'key', { max: 128 });
-				const locked = platformLock(principal.tenantId);
 				const declared = options.settings
 					.declarations()
 					.find((declaration) => declaration.moduleId === moduleId);
-				if (locked && declared?.settings[key]?.scope === 'platform') {
+				const locked =
+					declared?.settings[key]?.scope === 'platform'
+						? await platformLock(principal.tenantId)
+						: undefined;
+				if (locked) {
 					throw new HttpProblem(
 						'PLATFORM_SETTING_OPERATOR_ONLY',
-						PLATFORM_SETTING_OPERATOR_ONLY,
+						locked.locked,
 						403,
 					);
 				}

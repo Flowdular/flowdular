@@ -199,6 +199,9 @@ describe('platform-scoped settings and the operator workspace', () => {
 			'Customer Workspace',
 			'customer-workspace',
 		);
+		/* The record names the customer, so every case below shows that a set
+		   FD_OPERATOR_TENANT decides and the record is not consulted. */
+		await (await runtime.service()).setOperator(customer.tenantId, 'cli:ops');
 		await runtime.moduleSettings.prime(PLATFORM_SETTINGS_TENANT);
 	});
 
@@ -233,6 +236,9 @@ describe('platform-scoped settings and the operator workspace', () => {
 			seenByOperator.find((setting) => setting.key === 'portalUrl')?.value,
 		).toBe(DEFAULT_PORTAL);
 		expect(await settingsEvents(customer.tenantId)).toBe(0);
+		expect(await (await runtime.service()).operatorWorkspace()).toMatchObject({
+			workspace: { tenantId: customer.tenantId },
+		});
 	});
 
 	it('SYSTEM-SETTINGS-PLATFORM-OPERATOR stores an operator write for every workspace', async () => {
@@ -344,30 +350,5 @@ describe('platform-scoped settings and the operator workspace', () => {
 				key,
 			).toBeUndefined();
 		}
-	});
-
-	it('SYSTEM-SETTINGS-PLATFORM-UNCONFIGURED lets no workspace change a platform-scoped setting', async () => {
-		const routes = routesFor();
-		const before = platformValue('demo.core', 'portalUrl');
-		for (const session of [operator, customer]) {
-			const refused = await update(
-				routes,
-				session,
-				'demo.core',
-				'portalUrl',
-				'https://unconfigured.example',
-			);
-			expect(refused.status).toBe(403);
-			expect(await refused.json()).toMatchObject({
-				error: { code: 'PLATFORM_SETTING_OPERATOR_ONLY' },
-			});
-			const rows = await list(routes, session);
-			for (const row of rows.filter(
-				(setting) => setting.scope === 'platform',
-			)) {
-				expect(row.lockedKey).toBe('system.settings.platformOperatorOnly');
-			}
-		}
-		expect(platformValue('demo.core', 'portalUrl')).toBe(before);
 	});
 });
