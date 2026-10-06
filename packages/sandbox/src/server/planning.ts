@@ -15,10 +15,15 @@ import {
 import type { DecisionAsk } from './decisions-runtime.ts';
 import type { GateResult } from './gates.ts';
 import { gateRepairOwner } from './gate-repair.ts';
-import { QUESTIONS_LIMITS, type QuestionsReading } from './questions.ts';
+import {
+	QUESTIONS_LIMITS,
+	SPEC_OWNER_ROLE,
+	type QuestionsReading,
+} from './questions.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 import {
 	moduleSuffixOf,
+	type ChatEntry,
 	type HandoffPlan,
 	type SandboxSession,
 	type SessionModule,
@@ -46,7 +51,7 @@ export interface WorkPlan {
 }
 
 /* Who owns spec/module.yaml, for a new module and for a change alike. */
-export const SPEC_OWNER_ROLE = 'business-manager';
+export { SPEC_OWNER_ROLE };
 /* Who implements when nothing better is routed. */
 const DEFAULT_IMPLEMENTER_ROLE = 'backend-engineer';
 
@@ -526,6 +531,95 @@ export interface RoutingContext {
 	readonly lastHandoff?: HandoffPlan | null;
 }
 
+/* Who takes the turn that answers a question. Any role but the specification
+   owner implements an approved specification, so a question it had to ask is
+   about something that specification does not decide: the owner applies the
+   answer to it first. A session without that role leaves the answer with the
+   role that asked. */
+export function answeringRole(
+	asker: string,
+	roles: readonly AgentRoleDefinition[],
+): string {
+	return asker !== SPEC_OWNER_ROLE &&
+		roles.some((role) => role.id === SPEC_OWNER_ROLE)
+		? SPEC_OWNER_ROLE
+		: asker;
+}
+
+/* An implementer's questions, answered by the operator, while the
+   specification owner applies the answers. */
+export interface SpecFollowUp {
+	readonly role: string;
+	readonly roleName: string;
+	readonly module?: string;
+	/* The request text that answered the questions, read back to the role that
+	   asked when it resumes. */
+	readonly decisions: string;
+}
+
+/* The implementer a specification owner's turn is answering for, read from the
+   transcript the turn starts on. The newest handoff that is not the owner's own
+   (its questions, repairs and requested changes do not end the wait) is the
+   implementer's question; the first operator message after it is the answer.
+   When the transcript holds no message after the question yet, the turn's own
+   request text is the answer. */
+export function specFollowUp(
+	entries: readonly ChatEntry[],
+	roles: readonly AgentRoleDefinition[],
+	message: string,
+): SpecFollowUp | null {
+	let answer: string | null = null;
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index]!;
+		if (entry.kind === 'user' && entry.text) answer = entry.text;
+		const handoff = entry.handoff;
+		if (!handoff || handoff.role === SPEC_OWNER_ROLE) continue;
+		if (
+			handoff.kind !== 'question' ||
+			!roles.some((role) => role.id === handoff.role)
+		) {
+			return null;
+		}
+		return {
+			role: handoff.role,
+			roleName: handoff.roleName,
+			...(handoff.module ? { module: handoff.module } : {}),
+			decisions: answer ?? message,
+		};
+	}
+	return null;
+}
+
+export function specFollowUpReason(asker: string, owner: string): string {
+	return `${asker} asked about something the approved specification does not decide, so ${owner} applies your answers to it first.`;
+}
+
+/* What the specification owner reads beside the answers. The specification
+   text afterwards is the decision: a changed text needs the operator's approval
+   of the new hash before the implementer resumes, an unchanged one does not. */
+export function specFollowUpNote(asker: string): string {
+	return `These decisions answer questions ${asker} asked while implementing the approved specification. Record each decision that adds or changes what the module must do (an error code, field, permission, state, transition or behaviour the approved text does not state) in spec/module.yaml: set status to draft, add the invariants, acceptance scenarios and decisions it needs, and change nothing else. The operator approves the new text before ${asker} continues. Leave the file untouched when the approved text already states every decision; ${asker} then continues without a new approval.`;
+}
+
+function resumePrompt(
+	name: string,
+	decisions: string,
+	specificationChanged: boolean,
+	brief: string,
+): string {
+	return [
+		`Continue this work as ${name}. The operator answered the questions you asked.`,
+		decisions,
+		specificationChanged
+			? 'The specification now records these decisions and the operator approved the new text. Implement them as the specification states.'
+			: 'The approved specification already states these decisions, so it did not change. Implement within it.',
+		brief ? `The original request was: ${brief}` : '',
+		'Do your part of it now, then end with your handoff line.',
+	]
+		.filter(Boolean)
+		.join('\n\n');
+}
+
 const UI_WORDS =
 	/\b(screen|view|layout|design|ux|widget|dashboard|form|button|copy|wording|empty state)\b/i;
 const AGENT_WORDS = /\b(agent|tool|skill|automation|workflow|prompt)\b/i;
@@ -543,14 +637,20 @@ export function routeRole(context: RoutingContext): {
 		context.roles.some((role) => role.id === id) ? id : context.session.role;
 
 	/* An operator message that follows a question is the answer to it, so it
-	   goes back to the specialist who asked instead of to the default owner. */
+	   goes to whoever answers for the specialist that asked instead of to the
+	   default owner. */
 	if (
 		context.lastHandoff?.kind === 'question' &&
 		context.roles.some((role) => role.id === context.lastHandoff!.role)
 	) {
+		const asker = context.lastHandoff;
+		const role = answeringRole(asker.role, context.roles);
 		return {
-			role: context.lastHandoff.role,
-			reason: `${context.lastHandoff.roleName} asked the question this message answers.`,
+			role,
+			reason:
+				role === asker.role
+					? `${asker.roleName} asked the question this message answers.`
+					: specFollowUpReason(asker.roleName, roleName(context.roles, role)),
 		};
 	}
 	if (
@@ -618,6 +718,9 @@ export interface HandoffContext {
 	readonly questions?: QuestionsReading;
 	/* The last handoff before this turn ran, so a repeated repair is seen. */
 	readonly previous?: HandoffPlan | null;
+	/* Set on a specification owner's turn that applies an implementer's
+	   answered questions. */
+	readonly resume?: SpecFollowUp | null;
 }
 
 function roleName(roles: readonly AgentRoleDefinition[], id: string): string {
@@ -788,6 +891,25 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 			].join('\n\n'),
 			owner?.module ?? failedGate.module ?? context.module,
 			{ repair: true },
+		);
+	}
+
+	/* The specification owner applied an implementer's answers. The text it
+	   left behind says which case that was: a changed specification goes back
+	   to the operator for approval of the new hash, an unchanged one lets the
+	   implementer continue at once. Either way the implementer that asked
+	   resumes, whatever role the owner's handoff line named. */
+	const resume = context.resume;
+	if (resume && context.specApproved !== null) {
+		const changed = context.specApproved === false;
+		return plan(
+			changed ? 'approval' : 'continue',
+			resume.role,
+			changed
+				? 'The specification now records your decisions and is ready for your review.'
+				: `Your decisions stay inside the approved specification, so ${resume.roleName} continues without a new approval.`,
+			resumePrompt(resume.roleName, resume.decisions, changed, context.brief),
+			resume.module ?? context.module,
 		);
 	}
 

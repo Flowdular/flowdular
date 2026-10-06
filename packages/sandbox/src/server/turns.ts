@@ -51,10 +51,13 @@ import {
 	planHandoff,
 	planSpecGateHandoff,
 	routeRole,
+	specFollowUp,
+	specFollowUpNote,
+	specFollowUpReason,
 	type RoutingContext,
 } from './planning.ts';
 import type { PlatformClient } from './platform-client.ts';
-import { readQuestions } from './questions.ts';
+import { questionsInstruction, readQuestions } from './questions.ts';
 import { listSkills, writeAgentPointer } from './reference.ts';
 import {
 	materializeSampleData,
@@ -679,12 +682,25 @@ export async function* runTurn(
 		driver: driverId,
 	});
 
-	if (routed.reason) {
+	/* An implementer waiting in this module on answers the specification
+	   owner applies. */
+	const followUp =
+		roleId === SPEC_OWNER_ROLE
+			? specFollowUp(transcript, context.roles, message)
+			: null;
+	const waiting =
+		followUp && (followUp.module ?? active.directory) === active.directory
+			? followUp
+			: null;
+	const routedReason =
+		routed.reason ||
+		(waiting ? specFollowUpReason(waiting.roleName, role.name) : '');
+	if (routedReason) {
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
 			role: roleId,
 			module: active.directory,
-			text: `Routed to ${role.name}. ${routed.reason}`,
+			text: `Routed to ${role.name}. ${routedReason}`,
 		});
 	}
 
@@ -769,6 +785,8 @@ export async function* runTurn(
 						'The module already exists. Read it before changing it and keep every existing behavior that the request does not ask you to change.',
 					]
 				: []),
+			...(reviewing ? [] : [questionsInstruction(role.id)]),
+			...(waiting && !reviewing ? [specFollowUpNote(waiting.roleName)] : []),
 		],
 	});
 	await writeAgentPointer(
@@ -1061,6 +1079,7 @@ export async function* runTurn(
 		questions: asked,
 		previous:
 			transcript.filter((entry) => entry.handoff).at(-1)?.handoff ?? null,
+		resume: reviewing ? null : waiting,
 	};
 	let handoff = planHandoff(handoffContext);
 	if (handoff.kind === 'review') {

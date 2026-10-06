@@ -2,6 +2,7 @@ import { useState } from 'octane';
 import { Alert, Button, Icon, Tag } from '@flowdular/ui';
 import {
 	MAX_ANSWER_LENGTH,
+	SPEC_OWNER_ROLE,
 	type PendingQuestion,
 	type PendingQuestions,
 } from '../server/questions.ts';
@@ -42,7 +43,8 @@ const EMPTY: AnswerDraft = {
 
 /* The decisions a specialist is waiting for: one radio group per question, the
    recommendation preselected, and a free-text answer where the specialist
-   allowed one. Submitting starts the next turn in the role that asked. */
+   allowed one. Submitting starts the next turn in the role that asked, or in
+   the specification owner's when an implementer asked. */
 export function PendingQuestionsCard(props: PendingQuestionsCardProps) @{
 	const { t } = useTranslation();
 	const questions = props.pending?.questions ?? [];
@@ -97,7 +99,11 @@ export function PendingQuestionsCard(props: PendingQuestionsCardProps) @{
 				<div class="ui-form__section">
 					<div class="ui-form__section-head">
 						<b>{t('sandbox.questions.title')}</b>
-						<small>{t('sandbox.questions.help')}</small>
+						<small>{t(
+							props.pending?.role === SPEC_OWNER_ROLE
+								? 'sandbox.questions.help'
+								: 'sandbox.questions.helpSpecification',
+						)}</small>
 					</div>
 					@for (const question of questions; key question.id) {
 						<div class="ui-field">

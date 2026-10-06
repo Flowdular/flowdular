@@ -29,4 +29,4 @@ The allowed tool list is a maximum. Effective authority also requires tenant bin
 
 Module-owned agents require a tenant provider/model binding, retained definition revisions and an exact tool ceiling. Never pin provider credentials or use wildcard tools. Procedures stored by agents.core are business data, unrelated to coding skills.
 
-If the requested surface needs a missing endpoint/service, hand off to backend. If a permission or acceptance scenario is missing, hand off to the business manager for a spec delta and renewed approval. Never edit another module or platform package from this session.
+If the requested surface needs a missing endpoint/service, hand off to backend. If a permission, tool or acceptance scenario the work needs is not in the approved spec, ask for it with a questions block (Session); never add it yourself. Never edit another module or platform package from this session.

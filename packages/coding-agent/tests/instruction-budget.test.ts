@@ -100,11 +100,7 @@ describe('one task skill and bounded always-on instructions', () => {
 				allowedPaths: ['modules/catalog/src/**'],
 				skill: selectTaskSkill({ ...context, role: role.id }),
 			});
-			/* The business manager also states the questions limits the sandbox
-			   parser enforces, so a refused block is never its first news of them. */
-			expect(instruction.length).toBeLessThanOrEqual(
-				role.id === 'business-manager' ? 5_850 : 5_500,
-			);
+			expect(instruction.length).toBeLessThanOrEqual(5_500);
 			expect(
 				instruction.match(/reference\/skills\/[a-z-]+\/SKILL\.md/g),
 			).toHaveLength(1);

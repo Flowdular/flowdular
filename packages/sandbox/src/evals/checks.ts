@@ -22,6 +22,7 @@ export const CHECK_IDS = [
 	'screens-have-views',
 	'agent-tools-registered',
 	'settings-declared',
+	'permissions-specified',
 ] as const;
 
 export type CheckId = (typeof CHECK_IDS)[number];
@@ -568,6 +569,41 @@ function settingsDeclared(context: CheckContext): CheckOutcome {
 	};
 }
 
+const PERMISSION_LITERAL = /['"]([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+)['"]/g;
+const PERMISSION_PROPERTY =
+	/\bpermission\s*:\s*['"]([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+)['"]/g;
+
+/* The reverse of permissions-declared: a permission the module defines that
+   the specification does not list is one the operator never approved. Only the
+   module's own permission constants are read, src/acl/permissions.ts where the
+   scaffold writes them and a literal `permission:` value, so a translation key
+   or a data class id elsewhere is never taken for a permission. */
+function permissionsSpecified(context: CheckContext): CheckOutcome {
+	const defined = new Set<string>();
+	const constants = context.files.get('src/acl/permissions.ts') ?? '';
+	for (const match of constants.matchAll(PERMISSION_LITERAL))
+		defined.add(match[1]!);
+	for (const [, source] of sourceFiles(context)) {
+		for (const match of source.matchAll(PERMISSION_PROPERTY))
+			defined.add(match[1]!);
+	}
+	if (defined.size === 0)
+		return notApplicable(
+			'permissions-specified',
+			'the module defines no permission constant.',
+		);
+	const specified = new Set(specList(context.spec, 'permissions'));
+	const unspecified = [...defined].filter((id) => !specified.has(id)).sort();
+	return {
+		id: 'permissions-specified',
+		passed: unspecified.length === 0,
+		detail:
+			unspecified.length === 0
+				? `Every permission the module defines is in the specification.`
+				: `The module defines ${unspecified.join(', ')}, which the approved specification does not list. Ask for a new permission with a questions block instead of adding it.`,
+	};
+}
+
 const CHECKS: Record<CheckId, (context: CheckContext) => CheckOutcome> = {
 	'module-manifest': moduleManifest,
 	'permissions-declared': permissionsDeclared,
@@ -583,6 +619,7 @@ const CHECKS: Record<CheckId, (context: CheckContext) => CheckOutcome> = {
 	'screens-have-views': screensHaveViews,
 	'agent-tools-registered': agentToolsRegistered,
 	'settings-declared': settingsDeclared,
+	'permissions-specified': permissionsSpecified,
 };
 
 /* The specification is not part of the module. Reading spec/module.yaml into the
@@ -600,9 +637,10 @@ function withoutSpecification(files: ReadonlyMap<string, string>) {
 }
 
 /* Conformance needs the specification and the code to share identifiers, and
-   today they only partly do. Three checks are safe as hard gates because their
+   today they only partly do. Four checks are safe as hard gates because their
    ids are code identifiers: an agent tool's id is its registry key, a setting's
-   key is its settings key, and a lifecycle value is a value in a union type.
+   key is its settings key, a lifecycle value is a value in a union type, and a
+   permission id is the string its constant holds.
    The rest compare a kebab-case specification id against whatever the
    implementer chose to call the thing, and the shipped modules show how far
    apart those can be: connectors.core calls its `audit-entry` entity a
@@ -614,6 +652,7 @@ export const CONFORMANCE_CHECKS = [
 	'transitions-guarded',
 	'agent-tools-registered',
 	'settings-declared',
+	'permissions-specified',
 ] as const;
 
 export const PROVISIONAL_CHECKS = [

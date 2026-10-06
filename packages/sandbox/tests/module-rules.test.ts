@@ -219,3 +219,66 @@ describe('module rules gate', () => {
 		expect(results[0]!.output).toContain('endpoints-declare-permission');
 	});
 });
+
+/* The reported session added a business rule the operator never approved and
+   asked about it in prose afterwards. A permission is the part of that drift a
+   static read can prove: its id is a string constant that has to equal one the
+   specification lists. */
+describe('permissions the specification does not list', () => {
+	it('fails a permission constant the specification does not list', async () => {
+		const { modulePath } = await fixture();
+		await mkdir(join(modulePath, 'src', 'acl'), { recursive: true });
+		await writeFile(
+			join(modulePath, 'src', 'acl', 'permissions.ts'),
+			[
+				'export const CLAIMS_PERMISSIONS = {',
+				"\tread: 'claims.records.read',",
+				"\tapprove: 'claims.records.approve',",
+				'} as const;',
+			].join('\n'),
+		);
+		const report = await runGateFor(modulePath);
+		expect(report.passed).toBe(false);
+		expect(report.output).toContain(
+			'FAIL permissions-specified: The module defines claims.records.approve, which the approved specification does not list.',
+		);
+	});
+
+	it('fails an endpoint that names an unlisted permission inline', async () => {
+		const { modulePath } = await fixture();
+		await writeFile(
+			join(modulePath, 'src', 'api.ts'),
+			[
+				'export const read = "claims.records.read";',
+				'export const exportAll = defineEndpoint({',
+				' access: { kind: "permission", permission: "claims.records.export" },',
+				'});',
+			].join('\n'),
+		);
+		const report = await runGateFor(modulePath);
+		expect(report.passed).toBe(false);
+		expect(report.output).toContain(
+			'FAIL permissions-specified: The module defines claims.records.export',
+		);
+	});
+
+	it('does not read a translation key or a data class id as a permission', async () => {
+		const { modulePath } = await fixture();
+		await mkdir(join(modulePath, 'src', 'acl'), { recursive: true });
+		await writeFile(
+			join(modulePath, 'src', 'acl', 'permissions.ts'),
+			"export const CLAIMS_PERMISSIONS = { read: 'claims.records.read' } as const;",
+		);
+		await writeFile(
+			join(modulePath, 'src', 'view.ts'),
+			[
+				"export const title = t('claims.records.title');",
+				"export const dataClass = 'claims.core.records';",
+			].join('\n'),
+		);
+		const report = await runGateFor(modulePath);
+		expect(report.output).toContain(
+			'pass permissions-specified: Every permission the module defines is in the specification.',
+		);
+	});
+});

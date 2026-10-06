@@ -10,7 +10,7 @@ description: >-
 
 With an approved `schemaVersion: 2` spec delta, the specification is the requirement document. Read the spec, the module itself, the touch list for the change class below, and `.ai/references/catalog` for shape. Do not scan `modules/` or `packages/`: `.ai/platform-capabilities.md` answers what the platform provides.
 
-Anything the delta does not say is a spec defect, not your decision. Report it back (`HANDOFF: business-manager - <what is missing>` in the sandbox, a question to the user on a host) instead of guessing, and never implement an item the spec parks in `outOfScope[]`. Every new or changed `acceptanceScenarios[]` entry maps to at least one test, with the scenario id in the test name.
+Anything the delta does not say is a spec defect, not your decision. Report it back (a `questions` block in the sandbox, which the business manager turns into a spec delta for a new approval when the answer changes the spec; a question to the user on a host) instead of guessing, and never implement an item the spec parks in `outOfScope[]`. Every new or changed `acceptanceScenarios[]` entry maps to at least one test, with the scenario id in the test name.
 
 The spec-element to file mapping is the table in `module-new`; the change classes below are the same mapping arranged by what you are changing.
 
