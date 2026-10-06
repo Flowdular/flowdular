@@ -1,7 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	rm,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { sandboxDirectory } from '../src/server/config.ts';
 import { createSession, sessionPaths } from '../src/server/sessions.ts';
 
 const roots: string[] = [];
@@ -118,4 +126,37 @@ it('refuses a session graph in which two modules share a directory name', async 
 	await expect(newModuleSession(root)).rejects.toMatchObject({
 		code: 'MODULE_DIRECTORY_CONFLICT',
 	});
+});
+
+it('never writes a module manifest over the draft of an edit session', async () => {
+	const root = await publishedWorkspace();
+	const draft = { id: 'team-auth.core', package: '@app/module-team-auth' };
+	await write(join(root, 'modules/auth/module.json'), draft);
+	await expect(
+		createSession({
+			workspaceRoot: root,
+			kind: 'edit-module',
+			moduleId: 'team-auth.core',
+			sourceModule: 'auth',
+			title: 'Team sign-in',
+			brief: 'Let teams share a sign-in policy.',
+			blueprint: 'edit-module@1.0.0',
+			role: 'backend-engineer',
+			driver: 'fake',
+			install: false,
+		}),
+	).rejects.toMatchObject({ code: 'MODULE_DIRECTORY_CONFLICT' });
+	const sessions = join(sandboxDirectory(root), 'sessions');
+	const started = await readdir(sessions);
+	expect(started).toHaveLength(1);
+	for (const id of started) {
+		expect(
+			JSON.parse(
+				await readFile(
+					join(sessions, id, 'workspace/modules/auth/module.json'),
+					'utf8',
+				),
+			),
+		).toEqual(draft);
+	}
 });

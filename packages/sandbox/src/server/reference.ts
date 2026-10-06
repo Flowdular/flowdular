@@ -241,14 +241,18 @@ export async function writeAgentPointer(
 
 /* The module registry validates dependencies, so the session workspace carries
    the manifest of every enabled module, including those @flowdular/sdk ships.
-   Only the draft modules have sources. */
+   Only the draft modules have sources. Every module shares the session's one
+   modules/ directory, so a manifest whose directory a draft or another module
+   already holds is refused before anything is written. */
 export async function materializeModuleGraph(
 	workspaceRoot: string,
 	sessionWorkspace: string,
 	draftModuleIds: readonly string[],
+	draftDirectories: readonly string[] = [],
 ): Promise<readonly string[]> {
 	const drafts = new Set(draftModuleIds);
-	const directories = new Set<string>();
+	const directories = new Set(draftDirectories);
+	const graph: { directory: string; manifest: Record<string, unknown> }[] = [];
 	const enabled: string[] = [];
 	for (const manifestPath of findModuleManifests(workspaceRoot)) {
 		let manifest: { id?: string; cli?: unknown };
@@ -264,16 +268,20 @@ export async function materializeModuleGraph(
 		if (directories.has(directory)) {
 			throw new SandboxSetupError(
 				'MODULE_DIRECTORY_CONFLICT',
-				`${manifest.id} shares the module directory ${directory} with another module.`,
+				`${manifest.id} shares the module directory ${directory} with another module of this session.`,
 			);
 		}
 		directories.add(directory);
+		graph.push({ directory, manifest });
+		enabled.push(manifest.id);
+	}
+	for (const { directory, manifest } of graph) {
 		const target = join(sessionWorkspace, 'modules', directory, 'module.json');
 		await mkdir(dirname(target), { recursive: true });
 		/* Only the dependency graph travels into a session. A CLI declaration
 		   would point at command files this workspace does not carry, so the
 		   capability goes with it. */
-		const { cli: _cli, ...rest } = manifest as Record<string, unknown>;
+		const { cli: _cli, ...rest } = manifest;
 		const graphManifest = {
 			...rest,
 			capabilities: (
@@ -285,7 +293,6 @@ export async function materializeModuleGraph(
 			`${JSON.stringify(graphManifest, null, '\t')}\n`,
 			'utf8',
 		);
-		enabled.push(manifest.id);
 	}
 	return enabled;
 }
