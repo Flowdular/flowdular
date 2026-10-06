@@ -34,6 +34,10 @@ function sdkImports(source: string): string {
 			'@flowdular/sdk/modules/auth/server',
 		)
 		.replaceAll('@flowdular/module-auth', '@flowdular/sdk/modules/auth')
+		.replaceAll(
+			'@flowdular/module-system/server',
+			'@flowdular/sdk/modules/system/server',
+		)
 		.replaceAll('@flowdular/database', '@flowdular/sdk/database')
 		.replaceAll(
 			'@flowdular/kernel/runtime-config',
@@ -77,6 +81,21 @@ it('keeps generated workspace-root resolution in sync with the platform', async 
 	expect(template).toBe(platform);
 });
 
+it('keeps the generated runtime lifecycle in sync with the platform', async () => {
+	const platform = await readFile(
+		new URL('../../../platform/src/server/lifecycle.ts', import.meta.url),
+		'utf8',
+	);
+	const template = await readFile(
+		new URL(
+			'../template/default/platform/src/server/lifecycle.ts',
+			import.meta.url,
+		),
+		'utf8',
+	);
+	expect(template).toBe(sdkImports(platform));
+});
+
 it('ships the same isolated, clean production build script in generated projects', async () => {
 	const platform = await readFile(
 		new URL('../../../platform/scripts/build.mjs', import.meta.url),
@@ -97,6 +116,24 @@ it('keeps generated Docker boot files in sync with the platform stack', async ()
 		);
 		const template = await readFile(
 			new URL(`../template/default/infra/docker/${file}`, import.meta.url),
+			'utf8',
+		);
+		expect(template, file).toBe(platform);
+	}
+});
+
+it('packages generated deployments with the platform deploy scripts', async () => {
+	for (const file of [
+		'sdk-module-manifests.mjs',
+		'vercel/build.mjs',
+		'vercel/handler.mjs',
+	]) {
+		const platform = await readFile(
+			new URL(`../../../infra/${file}`, import.meta.url),
+			'utf8',
+		);
+		const template = await readFile(
+			new URL(`../template/default/infra/${file}`, import.meta.url),
 			'utf8',
 		);
 		expect(template, file).toBe(platform);

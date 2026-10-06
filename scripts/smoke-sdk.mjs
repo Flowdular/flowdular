@@ -176,6 +176,13 @@ const application = spawnSync(
 );
 if (application.status !== 0)
 	throw new Error('Initialized application startup failed.');
+const stops = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-application-stop.mjs'), consumer],
+	{ stdio: 'inherit', timeout: 300000 },
+);
+if (stops.status !== 0)
+	throw new Error('Initialized application did not drain when stopped.');
 run(['flowdular', 'module', 'validate', '--json']);
 if (process.argv[3]) {
 	const catalogPath = resolve(process.argv[3]);
@@ -237,6 +244,13 @@ const bundledFirstRun = spawnSync(
 );
 if (bundledFirstRun.status !== 0)
 	throw new Error('Bundled first-run workspace root check failed.');
+const deployedModules = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-deployed-modules.mjs'), consumer],
+	{ stdio: 'inherit', timeout: 180_000 },
+);
+if (deployedModules.status !== 0)
+	throw new Error('Deployed module manifest check failed.');
 const boundaries = spawnSync(
 	process.execPath,
 	[join(root, 'scripts/smoke-sdk-boundaries.mjs'), consumer],

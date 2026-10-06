@@ -8,7 +8,6 @@ import {
 	readFile,
 	readdir,
 	realpath,
-	rename,
 	rm,
 	stat,
 	writeFile,
@@ -20,7 +19,11 @@ import {
 	sealSessionRecord,
 	verifySessionRecord,
 } from './config.ts';
-import { replaceLocalFile } from './local-file.ts';
+import {
+	removeStaleTemporaryFiles,
+	replaceLocalFile,
+	withLocalFileLock,
+} from './local-file.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -362,6 +365,7 @@ async function prepareSessionWorkspace(options: {
 		options.workspaceRoot,
 		options.paths.workspace,
 		options.modules.map((module) => module.id),
+		options.modules.map((module) => module.directory),
 	);
 	await materializeReference(options.workspaceRoot, options.paths.workspace);
 	await writeFile(
@@ -600,17 +604,14 @@ export async function writeSession(
 	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
 	await mkdir(paths.root, { recursive: true, mode: 0o700 });
 	const body = JSON.stringify(session, null, '\t');
-	const staging = `${paths.record}.${process.pid}.${randomUUID().slice(0, 8)}`;
-	await writeFile(
-		staging,
+	await replaceLocalFile(
+		paths.record,
 		`${JSON.stringify(
 			{ seal: await sealSessionRecord(workspaceRoot, body), session },
 			null,
 			'\t',
 		)}\n`,
-		{ encoding: 'utf8', mode: 0o600 },
 	);
-	await rename(staging, paths.record);
 	notifySessionChanged(session.id);
 	return session;
 }
@@ -700,6 +701,28 @@ export async function listSessions(
 		}
 	}
 	return sessions.sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+/* A writer that died between its flush and its rename left its temporary
+   file beside the target: the configuration and key in the sandbox
+   directory, and a session's record, transcript, delivery record and preview
+   credentials. */
+export async function removeCrashLeftovers(
+	workspaceRoot: string,
+): Promise<void> {
+	await removeStaleTemporaryFiles(sandboxDirectory(workspaceRoot));
+	let entries: readonly string[];
+	try {
+		entries = await readdir(sessionsRoot(workspaceRoot));
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (!isSessionId(entry)) continue;
+		const paths = sessionPaths(workspaceRoot, entry, '');
+		await removeStaleTemporaryFiles(paths.root);
+		await removeStaleTemporaryFiles(paths.data);
+	}
 }
 
 type SessionPatch = Partial<Omit<SandboxSession, 'id' | 'createdAt'>>;
@@ -961,10 +984,16 @@ export async function appendChatEntry(
 		at: Date.now(),
 	};
 	lastSequence.set(session.id, record.sequence);
-	await rotateChatLogIfLarge(paths.chatLog);
-	await appendFile(paths.chatLog, `${JSON.stringify(redactEntry(record))}\n`, {
-		encoding: 'utf8',
-		mode: 0o600,
+	/* A rotation reads the log and renames a shortened copy over it, so an
+	   entry appended in between would be lost: appends and rotations of one
+	   log take turns. */
+	await withLocalFileLock(paths.chatLog, async () => {
+		await rotateChatLogIfLarge(paths.chatLog);
+		await appendFile(
+			paths.chatLog,
+			`${JSON.stringify(redactEntry(record))}\n`,
+			{ encoding: 'utf8', mode: 0o600 },
+		);
 	});
 	notifySessionChanged(session.id);
 	return record;

@@ -18,6 +18,7 @@ RUN pnpm build
 RUN mkdir -p module-plans \
 	&& if [ ! -f flowdular.modules.lock.json ]; then printf '{"schemaVersion":1,"modules":[]}\n' > flowdular.modules.lock.json; fi \
 	&& if [ ! -f flowdular.module-sources.json ]; then printf '{"schemaVersion":1,"sources":[]}\n' > flowdular.module-sources.json; fi
+RUN mkdir -p /sdk-manifests && node infra/sdk-module-manifests.mjs . /sdk-manifests
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -31,7 +32,9 @@ RUN groupadd --system --gid 1001 octane \
 	&& chown octane:octane /data
 
 # The server bundle is self-contained: platform/dist/server/entry.js imports
-# only node:* built-ins, so no node_modules (and no devDependencies) ship.
+# only node:* built-ins, so no node_modules (and no devDependencies) ship. The
+# platform does read the manifests and specs of the modules @flowdular/sdk
+# ships, so the last copy puts those files alone where platform/ resolves them.
 COPY --from=builder --chown=octane:octane /workspace/platform/dist ./platform/dist
 COPY --from=builder --chown=octane:octane /workspace/platform/package.json ./platform/package.json
 COPY --chown=octane:octane infra/docker/app-entrypoint.mjs infra/docker/database-urls.mjs ./infra/docker/
@@ -40,6 +43,7 @@ COPY --from=builder --chown=octane:octane /workspace/flowdular.modules.lock.json
 COPY --from=builder --chown=octane:octane /workspace/flowdular.module-sources.json ./flowdular.module-sources.json
 COPY --from=builder --chown=octane:octane /workspace/module-plans ./module-plans
 COPY --from=builder --chown=octane:octane /workspace/modules ./modules
+COPY --from=builder --chown=octane:octane /sdk-manifests/ ./
 
 USER octane
 EXPOSE 3000

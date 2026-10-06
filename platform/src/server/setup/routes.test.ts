@@ -16,9 +16,13 @@ import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
 	validateWorkspaceSlug,
+	type AuthRuntime,
 } from '@flowdular/module-auth/server';
-import type { ModuleDatabaseRequirements } from '@flowdular/database';
-import { afterEach, describe, expect, it } from 'vitest';
+import type {
+	DatabaseProvider,
+	ModuleDatabaseRequirements,
+} from '@flowdular/database';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openInChrome } from '../../../../packages/ui/tests/chrome.ts';
 import {
 	createPlatformDatabaseProvider,
@@ -827,6 +831,7 @@ describe('first-run routes', () => {
 						scopes: [],
 					},
 				],
+				ungrantedModules: [],
 			},
 			modulesApproximated: false,
 			tokenFile: null,
@@ -1146,6 +1151,179 @@ describe('first-run routes', () => {
 
 			expect(html).toContain('does not reset an existing installation');
 			expect(html).not.toContain('Flowdular is ready');
+		},
+		SLOW,
+	);
+});
+
+/* catalog.core is enabled and declares two permissions the owner defaults do
+   not carry, as an application's own module does. auth.core declares one the
+   owner already holds, so it is never reported as ungranted. ledger.core sits
+   in the same root without being enabled, so nothing of it may be granted. */
+function declareModulePermissions(root: string): void {
+	mkdirSync(join(root, 'modules', 'auth', 'spec'), { recursive: true });
+	writeFileSync(
+		join(root, 'modules', 'auth', 'spec', 'module.yaml'),
+		'id: auth.core\npermissions:\n  - id: auth.profile.read\n',
+	);
+	mkdirSync(join(root, 'modules', 'catalog', 'spec'), { recursive: true });
+	writeFileSync(
+		join(root, 'modules', 'catalog', 'spec', 'module.yaml'),
+		'id: catalog.core\npermissions:\n  - id: catalog.items.read\n  - id: catalog.items.manage\n',
+	);
+	mkdirSync(join(root, 'modules', 'ledger', 'spec'), { recursive: true });
+	writeFileSync(
+		join(root, 'modules', 'ledger', 'module.json'),
+		JSON.stringify({ id: 'ledger.core', capabilities: ['api'] }),
+	);
+	writeFileSync(
+		join(root, 'modules', 'ledger', 'spec', 'module.yaml'),
+		'id: ledger.core\npermissions:\n  - id: ledger.entries.read\n',
+	);
+}
+
+function embeddedEnvironment(data: string): NodeJS.ProcessEnv {
+	return {
+		NODE_ENV: 'development',
+		FD_DATABASE_ADAPTER: 'pglite',
+		FD_DATABASE_PGLITE_DIRECTORY: data,
+	};
+}
+
+async function completeSetup(root: string, data: string): Promise<string> {
+	const app = harness(root, undefined, [], {
+		databasePreconfigured: true,
+		environment: embeddedEnvironment(data),
+	});
+	await app.call('/setup', { step: 'unlock', token: TOKEN });
+	const csrf = await csrfOf(await app.call('/setup'));
+	await app.call('/setup', { step: 'workspace', setupCsrf: csrf, ...OWNER });
+	return (await app.call('/setup', { step: 'apply', setupCsrf: csrf })).text();
+}
+
+/* An embedded directory admits one open provider, so every look at the
+   database opens its own and closes it before setup opens the next. */
+async function withAuthService<T>(
+	root: string,
+	data: string,
+	body: (
+		service: Awaited<ReturnType<AuthRuntime['service']>>,
+		databases: DatabaseProvider,
+	) => Promise<T>,
+): Promise<T> {
+	const databases = createPlatformDatabaseProvider(
+		databaseProviderConfigFromEnvironment(embeddedEnvironment(data), root),
+	);
+	const auth = createAuthRuntime({
+		...authRuntimeOptionsFromEnvironment({ NODE_ENV: 'development' }, root),
+		databases,
+	});
+	try {
+		return await body(await auth.service(), databases);
+	} finally {
+		await auth.dispose();
+		await databases.dispose();
+	}
+}
+
+async function asMigrator(
+	databases: DatabaseProvider,
+	text: string,
+): Promise<void> {
+	const lease = await databases.acquire({
+		namespace: 'auth.core',
+		purpose: 'migration',
+	});
+	try {
+		await lease.database.execute({ text });
+	} finally {
+		await lease.release();
+	}
+}
+
+describe('permissions of the modules enabled before first run', () => {
+	it(
+		'gives the setup owner and the built-in owner role every permission an enabled module declares',
+		async () => {
+			const root = workspace();
+			declareModulePermissions(root);
+			const data = join(root, 'data');
+
+			const html = await completeSetup(root, data);
+
+			expect(html).toContain('Flowdular is ready');
+			expect(html).not.toContain('sync-scopes');
+			await withAuthService(root, data, async (service) => {
+				const [tenant] = await service.listTenants();
+				const [owner] = await service.listTenantMembers(tenant!.tenantId);
+				expect([...owner!.scopes].sort()).toEqual(
+					[
+						...OWNER_SCOPES,
+						'catalog.items.manage',
+						'catalog.items.read',
+					].sort(),
+				);
+				const later = await service.planMemberProvision({
+					workspace: OWNER.workspaceSlug,
+					email: 'second-owner@example.test',
+					role: 'owner',
+					operator: 'test:routes',
+				});
+				expect(later.role.scopes).toEqual(
+					expect.arrayContaining([
+						'catalog.items.manage',
+						'catalog.items.read',
+					]),
+				);
+				expect(later.role.scopes).not.toContain('ledger.entries.read');
+			});
+		},
+		SLOW,
+	);
+
+	it(
+		'completes setup and names the repair command when the grant fails after the workspace exists',
+		async () => {
+			const root = workspace();
+			declareModulePermissions(root);
+			const data = join(root, 'data');
+			await withAuthService(root, data, (_service, databases) =>
+				asMigrator(
+					databases,
+					`ALTER TABLE auth_membership_scopes ADD CONSTRAINT setup_grant_refusal
+					 CHECK (scope NOT LIKE 'catalog.%') NOT VALID`,
+				),
+			);
+
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			let html: string;
+			let warnings: readonly string[];
+			try {
+				html = await completeSetup(root, data);
+			} finally {
+				warnings = warn.mock.calls.map((call) => String(call[0]));
+				warn.mockRestore();
+			}
+
+			expect(html).toContain('Flowdular is ready');
+			expect(html).toContain(
+				'pnpm flowdular auth sync-scopes --module catalog.core --apply',
+			);
+			expect(html).not.toContain('auth.core');
+			expect(html).not.toContain('ledger.core');
+			const logged = warnings.filter((line) =>
+				line.includes('could not grant'),
+			);
+			expect(logged).toHaveLength(1);
+			expect(logged[0]).toContain('catalog.core');
+			expect(logged[0]).toContain('(23514)');
+			expect(logged[0]).not.toContain('setup_grant_refusal');
+			await withAuthService(root, data, async (service) => {
+				const [tenant] = await service.listTenants();
+				expect(tenant?.slug).toBe(OWNER.workspaceSlug);
+				const [owner] = await service.listTenantMembers(tenant!.tenantId);
+				expect([...owner!.scopes].sort()).toEqual([...OWNER_SCOPES].sort());
+			});
 		},
 		SLOW,
 	);

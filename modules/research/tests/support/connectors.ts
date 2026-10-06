@@ -21,7 +21,11 @@ export interface StubConnectors {
 	/** What connectors.core would seal, by tenant and module key; never answered. */
 	readonly sealed: Map<string, ConnectorModuleCredentials>;
 	readonly upserts: Parameters<ConnectorInstances['upsertModuleInstance']>[0][];
-	answer(handler: (request: CallRequest) => Partial<CallResult>): void;
+	answer(
+		handler: (
+			request: CallRequest,
+		) => Partial<CallResult> | Promise<Partial<CallResult>>,
+	): void;
 }
 
 export function succeeded(body: unknown): Partial<CallResult> {
@@ -52,8 +56,7 @@ export function stubConnectors(): StubConnectors {
 	const registered = new Map<string, ConnectorDefinitionShape>();
 	const requests: CallRequest[] = [];
 	const upserts: StubConnectors['upserts'] = [];
-	let handler: (request: CallRequest) => Partial<CallResult> = () =>
-		succeeded({});
+	let handler: Parameters<StubConnectors['answer']>[0] = () => succeeded({});
 	const slot = (tenantId: string, moduleId: string, key: string) =>
 		`${tenantId}/${moduleId}/${key}`;
 	return {
@@ -109,7 +112,7 @@ export function stubConnectors(): StubConnectors {
 					errorClass: null,
 					body: null,
 					retryAfterMs: null,
-					...handler(request),
+					...(await handler(request)),
 				};
 			},
 		},

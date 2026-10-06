@@ -1,3 +1,4 @@
+import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -11,7 +12,9 @@ import {
 } from '@flowdular/sdk/dev-console';
 import {
 	PLATFORM_SHUTDOWN_BUDGET_MS,
+	retirePlatformRuntimes,
 	stopOnSignals,
+	stopServing,
 } from '@flowdular/sdk/dev-console/shutdown';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -31,36 +34,81 @@ const verbose =
 const color = shouldUseColor();
 const restoreConsole = installOctaneConsoleBridge(verbose, color);
 
+/* Vite serves in middleware mode behind this server. A Vite that listens
+   itself exits the process on SIGTERM as soon as it has closed, before
+   octane.config.ts has released its databases. */
 let server;
+const httpServer = createHttpServer((request, response) =>
+	server.middlewares(request, response),
+);
+let localUrl;
 try {
 	server = await createServer({
 		root: appRoot,
 		configFile: resolve(appRoot, 'vite.config.ts'),
 		customLogger: createOctaneLogger(verbose, color),
 		clearScreen: false,
-		...(Number.isInteger(port) && port > 0
-			? { server: { port, strictPort: true, ...(host ? { host } : {}) } }
-			: host
-				? { server: { host } }
-				: {}),
+		server: {
+			middlewareMode: true,
+			ws: { server: httpServer },
+			...(Number.isInteger(port) && port > 0 ? { port, strictPort: true } : {}),
+			...(host ? { host } : {}),
+		},
 	});
-	await server.listen();
+	/* The address Vite would have bound: vite.config.ts or the flags above,
+	   and localhost when neither names a host. */
+	const listenPort = server.config.server.port;
+	const configuredHost = server.config.server.host;
+	const listenHost =
+		configuredHost === true ? undefined : configuredHost || 'localhost';
+	await new Promise((resolveListen, rejectListen) => {
+		httpServer.once('error', rejectListen);
+		httpServer.listen(listenPort, listenHost, () => {
+			httpServer.off('error', rejectListen);
+			resolveListen();
+		});
+	});
+	const displayHost =
+		listenHost === undefined || listenHost === '0.0.0.0' || listenHost === '::'
+			? 'localhost'
+			: listenHost;
+	localUrl = `http://${displayHost.includes(':') ? `[${displayHost}]` : displayHost}:${listenPort}/`;
 } catch (error) {
+	if (httpServer.listening) httpServer.close();
 	restoreConsole();
 	throw error;
 }
+
+/* The process ends on its own once every runtime generation has released
+   what it holds, so one that was still preparing when the stop arrived
+   drains as well; the deadline bounds the wait. */
+async function stop() {
+	process.env.FD_INTERNAL_PLATFORM_TERMINATING = 'true';
+	try {
+		await Promise.all([
+			stopServing(httpServer, server),
+			retirePlatformRuntimes(),
+		]);
+	} finally {
+		await server.close();
+		restoreConsole();
+	}
+}
+stopOnSignals(
+	() =>
+		void stop().catch((error) => {
+			console.error(error instanceof Error ? error.message : String(error));
+			process.exitCode = 1;
+		}),
+	{ deadlineMs: PLATFORM_SHUTDOWN_BUDGET_MS },
+);
+
 printReady({
 	title: 'FLOWDULAR',
 	subtitle: 'development workspace',
 	theme: createTheme(color),
 	lines: [
-		[
-			'local',
-			server.resolvedUrls?.local?.[0] ??
-				server.resolvedUrls?.network?.[0] ??
-				'the address vite.config.ts sets',
-			'info',
-		],
+		['local', localUrl, 'info'],
 		['diagnostics', verbose ? 'verbose' : 'quiet · use --verbose', 'muted'],
 	],
 });
@@ -84,8 +132,7 @@ function openBrowser(url) {
 	return !result.error && result.status === 0;
 }
 
-const localUrl = server.resolvedUrls?.local?.[0];
-if (localUrl && !process.argv.includes('--no-open')) {
+if (!process.argv.includes('--no-open')) {
 	const setupUrl = new URL('/setup', localUrl).href;
 	try {
 		const response = await fetch(setupUrl, {
@@ -100,8 +147,3 @@ if (localUrl && !process.argv.includes('--no-open')) {
 		// The server remains usable when a browser is unavailable.
 	}
 }
-
-/* Closing without exiting lets octane.config.ts release the database on the
-   same signal; the process ends once both have drained. */
-const stop = () => void server.close().finally(restoreConsole);
-stopOnSignals(stop, { deadlineMs: PLATFORM_SHUTDOWN_BUDGET_MS });

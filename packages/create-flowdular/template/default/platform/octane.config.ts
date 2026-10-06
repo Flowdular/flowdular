@@ -44,6 +44,10 @@ import {
 	createReadinessEndpoint,
 	healthEndpoint,
 } from './src/server/health.ts';
+import {
+	createPlatformRuntimeLifecycle,
+	prepareAndActivatePlatformRuntimeLifecycle,
+} from './src/server/lifecycle.ts';
 import { createMetricsRoutes } from './src/server/metrics.ts';
 import {
 	platformRuntimeRole,
@@ -97,6 +101,11 @@ function firstRunConfig(databasePreconfigured = false) {
 }
 
 async function createPlatformConfig() {
+	if (process.env.FD_INTERNAL_PLATFORM_TERMINATING === 'true') {
+		throw new Error(
+			'Platform startup was requested while the process is stopping.',
+		);
+	}
 	loadPlatformEnvironmentFile(workspaceRoot);
 	const serverless = process.env.FD_DEPLOYMENT_TARGET === 'vercel';
 	if (!building && !platformDatabaseConfigured(process.env)) {
@@ -215,10 +224,11 @@ async function createPlatformConfig() {
    catalogue, so every reader sees the declarations the modules agreed on. */
 	dataClasses.seal();
 
-	let stopping = false;
-	const shutdown = async () => {
-		if (stopping) return;
-		stopping = true;
+	/* Each evaluation of this file is one generation, and Vite evaluates it more
+	   than once per process. The generation retires when the next one is
+	   prepared, when the development server stops, or on a stop signal. */
+	const lifecycle = createPlatformRuntimeLifecycle();
+	lifecycle.add(async () => {
 		await ticker?.close();
 		for (const composition of moduleCompositions) {
 			await composition.stop?.();
@@ -230,24 +240,38 @@ async function createPlatformConfig() {
 		/* Last, so the spans and error reports this process queued while it stopped
 	   still leave with it. */
 		await observability.dispose();
-	};
+	});
 
 	/* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
    any module reads a row. */
 	if (!building) {
 		try {
-			await databases.check();
-			/* Platform-scoped settings are read by background work before any request
-		   could prime them; a workspace is primed by the authentication middleware. */
-			await settings.prime(PLATFORM_SETTINGS_TENANT);
-			for (const composition of moduleCompositions)
-				await composition.prepare?.();
+			/* The previous generation retires once this one is prepared, and this
+			   one starts its workers only after the previous has drained. */
+			await prepareAndActivatePlatformRuntimeLifecycle(lifecycle, [
+				async () => {
+					await databases.check();
+				},
+				/* Platform-scoped settings are read by background work before any request
+			   could prime them; a workspace is primed by the authentication middleware. */
+				() => settings.prime(PLATFORM_SETTINGS_TENANT),
+				...moduleCompositions.map(
+					(composition) => () => composition.prepare?.(),
+				),
+			]);
+			/* A stop that arrived while this generation was preparing retired only
+			   the generations active then, so this one retires itself. */
+			if (process.env.FD_INTERNAL_PLATFORM_TERMINATING === 'true') {
+				throw new Error(
+					'Platform startup was requested while the process is stopping.',
+				);
+			}
 			for (const composition of moduleCompositions) composition.start?.();
 			await startModuleWorkers(moduleCompositions, runtimeRole);
 		} catch (error) {
 			/* A worker that started before the failure would keep running in a
 		   process that never serves. The boot failure is the one rethrown. */
-			await shutdown().catch((cleanupError: unknown) => {
+			await lifecycle.retire().catch((cleanupError: unknown) => {
 				serverLogger().error('platform boot cleanup failed', {
 					module: 'platform',
 					err: cleanupError,
@@ -259,10 +283,23 @@ async function createPlatformConfig() {
 
 	// Bundling needs route declarations without background work or retained leases.
 	if (building) {
-		await shutdown();
+		await lifecycle.retire();
 	} else {
-		process.once('SIGINT', () => void shutdown());
-		process.once('SIGTERM', () => void shutdown());
+		/* scripts/dev.mjs retires every generation itself; a production server
+		   has only these. */
+		const retire = () =>
+			void lifecycle.retire().catch((error: unknown) => {
+				serverLogger().error('platform shutdown failed', {
+					module: 'platform',
+					err: error,
+				});
+			});
+		process.once('SIGINT', retire);
+		process.once('SIGTERM', retire);
+		lifecycle.add(() => {
+			process.off('SIGINT', retire);
+			process.off('SIGTERM', retire);
+		});
 	}
 
 	return defineConfig({
@@ -273,6 +310,7 @@ async function createPlatformConfig() {
 			createCorsMiddleware({
 				allowOrigin: (origin) => authRuntime.apiOriginAllowed(origin),
 			}),
+			lifecycle.middleware,
 			...(firstRun ? [firstRun.middleware] : []),
 			authRuntime.middleware,
 		],

@@ -466,6 +466,17 @@ function environmentSection(result: EnvironmentWriteResult): string {
 	}.</p>`;
 }
 
+function ungrantedNotice(modules: readonly string[]): string {
+	if (modules.length === 0) return '';
+	const commands = modules
+		.map(
+			(id) =>
+				`<br><code>pnpm flowdular auth sync-scopes --module ${escapeHtml(id)} --apply</code>`,
+		)
+		.join('');
+	return `<p class="setup-alert setup-alert--warning" role="alert">The owner was not granted the permissions of ${escapeHtml(modules.join(', '))}. Run ${modules.length === 1 ? 'this command' : 'these commands'} with this deployment's database settings (stop the app first if it uses the embedded database), then sign in:${commands}</p>`;
+}
+
 function doneStep(view: SetupPageView): string {
 	const seed = view.seed;
 	const owner = seed?.accounts[0];
@@ -481,7 +492,7 @@ function doneStep(view: SetupPageView): string {
 				: 'Restart this deployment to leave setup and open the sign-in screen.';
 	return `<header><span class="setup-kicker">Sign in</span><h2>Flowdular is ready</h2>
 <p class="setup-card__sub">The workspace ${escapeHtml(seed?.workspace.name ?? '')} is ready. ${nextStep}</p></header>
-${steps(view.step, view.databasePreconfigured)}${alerts(view)}
+${steps(view.step, view.databasePreconfigured)}${alerts(view)}${ungrantedNotice(seed?.ungrantedModules ?? [])}
 <div><p class="setup-label setup-sublabel">Sign in as the workspace owner</p><div class="setup-credentials"><div><b>Owner account</b><code>${escapeHtml(owner?.email ?? view.values.ownerEmail ?? '')}</code></div></div>
 <p class="setup-note setup-note--gap">After signing in, you can connect an AI model in Providers. This is optional and can be done later.</p></div>
 ${view.environment ? environmentSection(view.environment) : ''}

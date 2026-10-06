@@ -2,9 +2,11 @@ import {
 	access,
 	chmod,
 	copyFile,
+	cp,
 	mkdir,
 	mkdtemp,
 	readFile,
+	readdir,
 	rm,
 	symlink,
 	writeFile,
@@ -18,6 +20,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import { parseArguments } from '../src/arguments.ts';
 import { deploymentPlan, runDeployment } from '../src/deployment.ts';
 import { runCommand } from '../src/runner.ts';
@@ -134,6 +137,9 @@ describe('deployment targets', () => {
 			expect(await findNamedFiles(root, 'module.yaml')).toEqual([
 				join(root, 'modules/example/spec/module.yaml'),
 			]);
+			await expect(
+				access(join(functionRoot, 'platform/node_modules')),
+			).rejects.toThrow();
 			await expect(access(join(output, 'static/index.html'))).rejects.toThrow();
 			await expect(
 				access(join(output, 'static/flowdular.json')),
@@ -225,6 +231,155 @@ describe('deployment targets', () => {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 			await rm(external, { recursive: true, force: true });
+		}
+	});
+
+	it('ships the SDK module manifests so a function without node_modules finds every enabled module', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-sdk-'));
+		const deployed = await mkdtemp(join(tmpdir(), 'flowdular-vercel-func-'));
+		try {
+			const sdk = join(
+				root,
+				'node_modules/.pnpm/@flowdular+sdk@1.0.0/node_modules/@flowdular/sdk',
+			);
+			await mkdir(join(root, 'platform/dist/server'), { recursive: true });
+			await mkdir(join(root, 'platform/dist/client/assets'), {
+				recursive: true,
+			});
+			await mkdir(join(root, 'modules/example'), { recursive: true });
+			await mkdir(join(sdk, 'modules/auth/spec'), { recursive: true });
+			await mkdir(join(sdk, 'modules/auth/src'), { recursive: true });
+			await mkdir(join(sdk, 'modules/workflows'), { recursive: true });
+			await mkdir(join(root, 'platform/node_modules/@flowdular'), {
+				recursive: true,
+			});
+			await symlink(sdk, join(root, 'platform/node_modules/@flowdular/sdk'));
+			await writeFile(join(root, 'platform/dist/server/entry.js'), '');
+			await writeFile(
+				join(root, 'platform/package.json'),
+				'{"type":"module","dependencies":{"@flowdular/sdk":"1.0.0"}}',
+			);
+			const enabled = ['auth.core', 'example.core', 'workflows.core'];
+			await writeFile(
+				join(root, 'flowdular.json'),
+				JSON.stringify({ modules: { enabled } }),
+			);
+			await writeFile(
+				join(root, 'modules/example/module.json'),
+				'{"id":"example.core","package":"@app/module-example"}',
+			);
+			await writeFile(
+				join(sdk, 'package.json'),
+				JSON.stringify({
+					name: '@flowdular/sdk',
+					version: '1.0.0',
+					exports: {
+						'./modules.json': './modules.json',
+						'./modules/auth': './modules/auth/src/index.ts',
+					},
+				}),
+			);
+			await writeFile(
+				join(sdk, 'modules.json'),
+				JSON.stringify({
+					schemaVersion: 1,
+					modules: ['auth', 'workflows'].map((name) => ({
+						manifest: `modules/${name}/module.json`,
+						import: `@flowdular/sdk/modules/${name}`,
+					})),
+				}),
+			);
+			await writeFile(
+				join(sdk, 'modules/auth/module.json'),
+				'{"id":"auth.core","package":"@flowdular/module-auth"}',
+			);
+			await writeFile(
+				join(sdk, 'modules/auth/spec/module.yaml'),
+				'name: Auth\n',
+			);
+			await writeFile(join(sdk, 'modules/auth/src/index.ts'), 'export {};\n');
+			await writeFile(
+				join(sdk, 'modules/workflows/module.json'),
+				'{"id":"workflows.core","package":"@flowdular/module-workflows"}',
+			);
+			const build = new URL('../../../infra/vercel/build.mjs', import.meta.url)
+				.pathname;
+			execFileSync(process.execPath, [build, '--package-only', '--root', root]);
+
+			for (const name of ['flowdular.func', 'worker.func']) {
+				/* Away from the workspace, as Vercel runs it, so no ancestor
+				   node_modules can stand in for what the function ships. */
+				const functionRoot = join(deployed, name);
+				await cp(join(root, '.vercel/output/functions', name), functionRoot, {
+					recursive: true,
+					verbatimSymlinks: true,
+				});
+				const found = await Promise.all(
+					findModuleManifests(functionRoot).map(
+						async (path) =>
+							(JSON.parse(await readFile(path, 'utf8')) as { id: string }).id,
+					),
+				);
+				expect(found.sort()).toEqual(enabled);
+				const shipped = await readdir(
+					join(functionRoot, 'platform/node_modules'),
+					{
+						recursive: true,
+						withFileTypes: true,
+					},
+				);
+				expect(
+					shipped.every((entry) => entry.isFile() || entry.isDirectory()),
+				).toBe(true);
+				expect(
+					shipped
+						.filter((entry) => entry.isFile())
+						.map((entry) =>
+							join(entry.parentPath, entry.name).slice(
+								join(functionRoot, 'platform/node_modules/').length,
+							),
+						)
+						.sort(),
+				).toEqual([
+					'@flowdular/sdk/modules.json',
+					'@flowdular/sdk/modules/auth/module.json',
+					'@flowdular/sdk/modules/auth/spec/module.yaml',
+					'@flowdular/sdk/modules/workflows/module.json',
+					'@flowdular/sdk/package.json',
+				]);
+				expect(
+					await readFile(
+						join(
+							functionRoot,
+							'platform/node_modules/@flowdular/sdk/modules/auth/spec/module.yaml',
+						),
+						'utf8',
+					),
+				).toBe('name: Auth\n');
+			}
+
+			await writeFile(
+				join(sdk, 'modules.json'),
+				JSON.stringify({
+					schemaVersion: 1,
+					modules: [
+						{
+							manifest: '../../../../../../flowdular.json',
+							import: '@flowdular/sdk/modules/auth',
+						},
+					],
+				}),
+			);
+			const escaped = spawnSync(
+				process.execPath,
+				[build, '--package-only', '--root', root],
+				{ encoding: 'utf8' },
+			);
+			expect(escaped.status).not.toBe(0);
+			expect(escaped.stderr).toContain('escapes the package');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+			await rm(deployed, { recursive: true, force: true });
 		}
 	});
 

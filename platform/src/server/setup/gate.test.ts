@@ -152,6 +152,28 @@ async function tenantSlugs(
 	}
 }
 
+async function ownerScopes(
+	environment: NodeJS.ProcessEnv,
+	root: string,
+): Promise<readonly string[]> {
+	const databases = createPlatformDatabaseProvider(
+		databaseProviderConfigFromEnvironment(environment, root),
+	);
+	const auth = createAuthRuntime({
+		...authRuntimeOptionsFromEnvironment(environment, root),
+		databases,
+	});
+	try {
+		const service = await auth.service();
+		const [tenant] = await service.listTenants();
+		const [owner] = await service.listTenantMembers(tenant!.tenantId);
+		return owner!.scopes;
+	} finally {
+		await auth.dispose();
+		await databases.dispose();
+	}
+}
+
 describe('in-place first run', () => {
 	it('refuses to compose without the token digest', () => {
 		expect(() =>
@@ -325,6 +347,21 @@ describe.skipIf(!migratorUrl)('in-place first run on PostgreSQL', () => {
 		'lets exactly one of two concurrent instances create the first workspace',
 		async () => {
 			const root = workspace();
+			/* The winner's grant runs inside the advisory lock transaction, which
+			   holds one of the two pooled connections. */
+			writeFileSync(
+				join(root, 'flowdular.json'),
+				JSON.stringify({ modules: { enabled: ['auth.core', 'catalog.core'] } }),
+			);
+			mkdirSync(join(root, 'modules', 'catalog', 'spec'), { recursive: true });
+			writeFileSync(
+				join(root, 'modules', 'catalog', 'module.json'),
+				JSON.stringify({ id: 'catalog.core', capabilities: ['api'] }),
+			);
+			writeFileSync(
+				join(root, 'modules', 'catalog', 'spec', 'module.yaml'),
+				'id: catalog.core\npermissions:\n  - id: catalog.items.read\n',
+			);
 			const environment = {
 				NODE_ENV: 'development',
 				FD_DATABASE_ADAPTER: 'postgresql',
@@ -369,6 +406,9 @@ describe.skipIf(!migratorUrl)('in-place first run on PostgreSQL', () => {
 				pages.filter((page) => page.includes('Flowdular is ready')),
 			).toHaveLength(1);
 			expect(await tenantSlugs(environment, root)).toHaveLength(1);
+			expect(await ownerScopes(environment, root)).toContain(
+				'catalog.items.read',
+			);
 			for (const app of instances) {
 				expect((await app.call('/app')).status).toBe(200);
 			}

@@ -101,6 +101,11 @@ jobs:
           pnpm --filter @flowdular/module-sandbox test
           pnpm --filter @flowdular/module-automations test
           pnpm --filter @flowdular/module-workflows test
+          pnpm --filter @flowdular/module-adapters test
+          pnpm --filter @flowdular/module-approvals test
+          pnpm --filter @flowdular/module-audit test
+          pnpm --filter @flowdular/module-documents test
+          pnpm --filter @flowdular/module-research test
 
   container:
     runs-on: ubuntu-latest

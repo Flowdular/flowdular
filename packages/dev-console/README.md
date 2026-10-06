@@ -7,5 +7,7 @@ covers both.
 
 `@flowdular/dev-console/shutdown` is how the development server stops: its
 shutdown budget, the SIGKILL escalation a supervisor uses (kept above that
-budget), and the stop signal handling the server and the application template
-share.
+budget), the stop signal handling (SIGINT, SIGTERM and SIGHUP), and the stop
+sequence itself, which stops serving and retires every runtime generation of
+`octane.config.ts` before Vite closes. The platform and the application
+template share all of it.
