@@ -38,6 +38,15 @@ export interface CheckOutcome {
 	readonly id: CheckId;
 	readonly passed: boolean;
 	readonly detail: string;
+	/* On a failure of a delivery-gate check: the module files the fix goes
+	   in, where the defect was found or, for something missing, where the
+	   reference module keeps it. The module-rules gate sends its repair to the
+	   role that may write them. */
+	readonly paths?: readonly string[];
+}
+
+function uniqueFiles(locations: readonly string[]): string[] {
+	return [...new Set(locations.map((location) => location.split(':')[0]!))];
 }
 
 /* A headless or integration-only module has no endpoint and no table by
@@ -162,6 +171,7 @@ function permissionsDeclared(context: CheckContext): CheckOutcome {
 			missing.length === 0
 				? `All ${permissions.length} specified permissions appear in the module.`
 				: `The module never names ${missing.join(', ')}.`,
+		...(missing.length > 0 ? { paths: ['src/acl/permissions.ts'] } : {}),
 	};
 }
 
@@ -188,6 +198,7 @@ function endpointsDeclarePermission(context: CheckContext): CheckOutcome {
 			id: 'endpoints-declare-permission',
 			passed: false,
 			detail: 'The module defines no endpoint through defineEndpoint.',
+			paths: ['src/api/endpoints.ts'],
 		};
 	return {
 		id: 'endpoints-declare-permission',
@@ -196,6 +207,7 @@ function endpointsDeclarePermission(context: CheckContext): CheckOutcome {
 			offenders.length === 0
 				? `All ${endpoints} endpoints name a permission.`
 				: `Endpoints without a permission: ${offenders.join(', ')}.`,
+		...(offenders.length > 0 ? { paths: uniqueFiles(offenders) } : {}),
 	};
 }
 
@@ -216,6 +228,7 @@ function tenantNotFromRequest(context: CheckContext): CheckOutcome {
 			offenders.length === 0
 				? 'No tenant identity is read from request input.'
 				: `Tenant identity read from request input at ${offenders.join(', ')}.`,
+		...(offenders.length > 0 ? { paths: uniqueFiles(offenders) } : {}),
 	};
 }
 
@@ -233,6 +246,7 @@ function rlsForced(context: CheckContext): CheckOutcome {
 			id: 'rls-forced',
 			passed: false,
 			detail: 'The module ships no migration, so no table is protected.',
+			paths: ['migrations/'],
 		};
 	const sql = migrations.map(([, text]) => text.toUpperCase()).join('\n');
 	const missing = [
@@ -250,6 +264,7 @@ function rlsForced(context: CheckContext): CheckOutcome {
 			missing.length === 0
 				? 'Row-level security is enabled, forced, and carries both predicates.'
 				: `The migrations are missing ${missing.join(', ')}.`,
+		...(missing.length > 0 ? { paths: migrations.map(([path]) => path) } : {}),
 	};
 }
 
@@ -267,6 +282,7 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 			id: 'migrations-mirrored',
 			passed: false,
 			detail: 'The module ships no migration to mirror.',
+			paths: ['migrations/'],
 		};
 	const source = sourceFiles(context)
 		.map(([, text]) => text)
@@ -276,6 +292,7 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 			id: 'migrations-mirrored',
 			passed: false,
 			detail: 'No source file declares databaseMigrations.',
+			paths: ['src/services/migration.ts'],
 		};
 	/* Whitespace is the one difference the mirror is allowed to carry, because
 	   the formatter owns the TypeScript file and not the .sql one. */
@@ -291,6 +308,7 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 			unmirrored.length === 0
 				? `All ${migrations.length} migrations are mirrored in databaseMigrations.`
 				: `Not mirrored byte for byte: ${unmirrored.join(', ')}.`,
+		...(unmirrored.length > 0 ? { paths: unmirrored } : {}),
 	};
 }
 
@@ -312,6 +330,7 @@ function localesComplete(context: CheckContext): CheckOutcome {
 			detail: 'The specification declares no locale.',
 		};
 	const bundles = new Map<string, Set<string>>();
+	const bundlePaths = new Map<string, string>();
 	for (const locale of locales) {
 		const entry = [...context.files].find(
 			([path]) =>
@@ -319,6 +338,7 @@ function localesComplete(context: CheckContext): CheckOutcome {
 				new RegExp(`\\b${locale}\\.(ts|json)$`).test(path),
 		);
 		if (!entry) continue;
+		bundlePaths.set(locale, entry[0]);
 		bundles.set(
 			locale,
 			new Set(
@@ -334,6 +354,7 @@ function localesComplete(context: CheckContext): CheckOutcome {
 			id: 'locales-complete',
 			passed: false,
 			detail: `No translation bundle for ${absent.join(', ')}.`,
+			paths: absent.map((locale) => `translations/${locale}.json`),
 		};
 	const [reference, ...rest] = [...bundles.entries()];
 	const drifted = rest
@@ -350,6 +371,9 @@ function localesComplete(context: CheckContext): CheckOutcome {
 			drifted.length === 0
 				? `All ${locales.length} locales carry the same keys.`
 				: `Key set differs from ${reference![0]} in ${drifted.join(', ')}.`,
+		...(drifted.length > 0
+			? { paths: drifted.map((locale) => bundlePaths.get(locale)!) }
+			: {}),
 	};
 }
 
@@ -375,6 +399,7 @@ function noSqlInterpolation(context: CheckContext): CheckOutcome {
 			offenders.length === 0
 				? 'No statement interpolates a value instead of binding it.'
 				: `Interpolated statements at ${offenders.join(', ')}.`,
+		...(offenders.length > 0 ? { paths: uniqueFiles(offenders) } : {}),
 	};
 }
 
@@ -490,6 +515,7 @@ function transitionsGuarded(context: CheckContext): CheckOutcome {
 			id: 'transitions-guarded',
 			passed: false,
 			detail: `The specification declares the lifecycle ${states.join(' -> ')} and the module never mentions ${unbuilt.join(', ')}. Build every declared state, not only the first.`,
+			paths: ['src/domain/types.ts'],
 		};
 	return {
 		id: 'transitions-guarded',
@@ -544,6 +570,7 @@ function agentToolsRegistered(context: CheckContext): CheckOutcome {
 			missing.length === 0
 				? `All ${tools.length} specified agent tools appear in the module.`
 				: `The module never registers ${missing.join(', ')}.`,
+		...(missing.length > 0 ? { paths: ['src/agent/tools.ts'] } : {}),
 	};
 }
 
@@ -566,6 +593,7 @@ function settingsDeclared(context: CheckContext): CheckOutcome {
 			missing.length === 0
 				? `All ${keys.length} specified settings appear in the module.`
 				: `The module never declares ${missing.join(', ')}.`,
+		...(missing.length > 0 ? { paths: ['src/platform.ts'] } : {}),
 	};
 }
 
@@ -601,6 +629,7 @@ function permissionsSpecified(context: CheckContext): CheckOutcome {
 			unspecified.length === 0
 				? `Every permission the module defines is in the specification.`
 				: `The module defines ${unspecified.join(', ')}, which the approved specification does not list. Ask for a new permission with a questions block instead of adding it.`,
+		...(unspecified.length > 0 ? { paths: ['src/acl/permissions.ts'] } : {}),
 	};
 }
 

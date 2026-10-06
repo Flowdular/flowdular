@@ -440,6 +440,51 @@ describe('transcript entries', () => {
 		expect(html).toMatch(/<details>[\s\S]*protocolVersion[\s\S]*<\/details>/);
 	});
 
+	it('shows an automatic repair message as the errors it sends, not as the operator', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const message =
+			'Translation key "equipment.page.title" is used by the client but absent from translations/en.json.';
+		const html = transcript([
+			{
+				sequence: 467,
+				at: 1,
+				kind: 'user',
+				role: 'business-manager',
+				text: 'Continue as Business manager. The module-schema gate failed.\n\nRecorded gate results:\nmodule-schema: failed',
+				instruction: {
+					gates: [
+						{
+							id: 'module-schema',
+							status: 'failed',
+							issues: [
+								{
+									file: 'modules/equipment/module.json',
+									code: 'TRANSLATION_KEY_MISSING',
+									path: 'src/client/EquipmentView.tsrx',
+									message,
+								},
+							],
+							moreIssues: 2,
+						},
+					],
+				},
+			},
+		]);
+		const visible = html.replace(/<details[\s\S]*?<\/details>/g, '');
+
+		expect(visible).toContain('Sandbox');
+		expect(visible).not.toContain('>You<');
+		expect(visible).toContain('Module configuration');
+		expect(visible).toContain(message);
+		expect(visible).toContain('TRANSLATION_KEY_MISSING');
+		expect(visible).toContain('2 more errors are not shown.');
+		expect(visible).not.toContain('Recorded gate results');
+		expect(html).toMatch(
+			/<details>[\s\S]*Recorded gate results[\s\S]*<\/details>/,
+		);
+	});
+
 	it('formats an agent message without letting its markup through', () => {
 		registerSandboxTranslations();
 		setActiveLocale('en');

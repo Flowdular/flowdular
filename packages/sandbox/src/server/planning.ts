@@ -13,8 +13,13 @@ import {
 	type DecisionResult,
 } from '@flowdular/ai-provider';
 import type { DecisionAsk } from './decisions-runtime.ts';
-import type { GateResult } from './gates.ts';
-import { gateRepairOwner } from './gate-repair.ts';
+import {
+	summarizeGate,
+	type GateIssue,
+	type GateResult,
+	type GateSummary,
+} from './gates.ts';
+import { planGateRepair, type GateFailure } from './gate-repair.ts';
 import {
 	QUESTIONS_LIMITS,
 	SPEC_OWNER_ROLE,
@@ -59,6 +64,10 @@ const PLAN_TIMEOUT_MS = 3 * 60 * 1000;
 const MODULE_ID = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 /* Bounded output for the fix prompt; the transcript keeps the whole output. */
 const GATE_PROMPT_OUTPUT = 4_000;
+/* A turn message is at most 20000 characters (turns.ts), and a repair that
+   could not be sent would end the chain on an error instead. */
+const REPAIR_PROMPT_LIMIT = 19_000;
+const DEFERRED_LINES = 20;
 
 export async function listWorkspaceModules(
 	workspaceRoot: string,
@@ -710,6 +719,12 @@ export interface HandoffContext {
 	readonly gates: readonly GateResult[];
 	readonly failed: boolean;
 	readonly changed: boolean;
+	/* Whether the agent wrote any file in this turn; `changed` is whether the
+	   session differs from its base at all. Absent reads as written. */
+	readonly edited?: boolean;
+	/* Whether the turn ran the previous handoff's own prompt rather than an
+	   operator message. Absent reads as an operator message. */
+	readonly instructed?: boolean;
 	/* null when the module has no specification file at all. */
 	readonly specApproved: boolean | null;
 	readonly brief: string;
@@ -774,21 +789,102 @@ function validateDeclared(context: HandoffContext): {
 	return { role: declared, note: '' };
 }
 
+function gatesFailed(gates: readonly GateResult[]): string {
+	const labels = gates.map(gateLabel);
+	return labels.length === 1
+		? `${labels[0]} gate failed`
+		: `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)} gates failed`;
+}
+
+function failedGatesOf(failures: readonly GateFailure[]): GateResult[] {
+	return [...new Set(failures.map((failure) => failure.gate))];
+}
+
+function issuesOf(
+	gate: GateResult,
+	failures: readonly GateFailure[],
+): GateIssue[] {
+	return failures.flatMap((failure) =>
+		failure.gate === gate && failure.issue ? [failure.issue] : [],
+	);
+}
+
+/* What the repair turn reads for one gate: the errors in its files when the
+   gate reported errors, the bounded output when it printed only text. The
+   validator envelope itself stays in the transcript. */
+function repairSection(gate: GateResult, failures: readonly GateFailure[]) {
+	if (gate.issues) {
+		const assigned = issuesOf(gate, failures);
+		const reported = gate.issues.length + (gate.moreIssues ?? 0);
+		const count =
+			assigned.length < reported ? ` (${assigned.length} of ${reported})` : '';
+		const lines = assigned.map(
+			(issue) =>
+				`- ${[issue.code, issue.file, issue.path].filter(Boolean).join(' ')}: ${issue.message}`,
+		);
+		return `Errors the ${gateLabel(gate)} gate reported${count}:\n${lines.join('\n')}`;
+	}
+	return [
+		`Gate command (${gateLabel(gate)}): ${gate.command}`,
+		`Gate output (first ${GATE_PROMPT_OUTPUT} characters; the transcript holds the rest):\n${gate.output.slice(0, GATE_PROMPT_OUTPUT)}`,
+	].join('\n\n');
+}
+
+/* A gate as the repair turn received it: the errors it was sent, and how
+   many more the gate reported, to this turn's files or another's. */
+function sentGate(
+	gate: GateResult,
+	failures: readonly GateFailure[],
+): GateSummary {
+	const { issues, moreIssues, ...summary } = summarizeGate(gate);
+	if (!issues) return summary;
+	const assigned = issuesOf(gate, failures);
+	const more = issues.length + (moreIssues ?? 0) - assigned.length;
+	return {
+		...summary,
+		issues: assigned,
+		...(more > 0 ? { moreIssues: more } : {}),
+	};
+}
+
+function deferredSection(
+	failures: readonly GateFailure[],
+	roles: readonly AgentRoleDefinition[],
+): string[] {
+	const lines = [
+		...new Set(
+			failures.map(
+				(failure) =>
+					`- ${gateLabel(failure.gate)}: ${
+						[failure.issue?.code, failure.path].filter(Boolean).join(' ') ||
+						'no file named'
+					}${failure.owner ? ` (${roleName(roles, failure.owner)})` : ''}`,
+			),
+		),
+	];
+	if (lines.length === 0) return [];
+	const more =
+		lines.length > DEFERRED_LINES
+			? [`- and ${lines.length - DEFERRED_LINES} more in the transcript`]
+			: [];
+	return [
+		`Another turn fixes these after yours, so leave them:\n${[
+			...lines.slice(0, DEFERRED_LINES),
+			...more,
+		].join('\n')}`,
+	];
+}
+
+function bounded(prompt: string): string {
+	return prompt.length <= REPAIR_PROMPT_LIMIT
+		? prompt
+		: `${prompt.slice(0, REPAIR_PROMPT_LIMIT - 60)}\n[cut: the transcript holds the rest]`;
+}
+
 /* Who works next, decided in one place. The specialist's own handoff line is
    trusted when it names a role it may hand to, the deterministic routing
    answers when it does not, and an unapproved specification always stops for
    the operator. */
-function reportedErrors(gate: GateResult): string[] {
-	if (!gate.issues?.length) return [];
-	const count = gate.moreIssues
-		? ` (the first ${gate.issues.length} of ${gate.issues.length + gate.moreIssues})`
-		: '';
-	const lines = gate.issues.map(
-		(issue) =>
-			`- ${[issue.code, issue.file, issue.path].filter(Boolean).join(' ')}: ${issue.message}`,
-	);
-	return [`Errors the gate reported${count}:\n${lines.join('\n')}`];
-}
 
 export function planHandoff(context: HandoffContext): HandoffPlan {
 	const roles = context.routing.roles;
@@ -801,6 +897,8 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		options: {
 			readonly repair?: boolean;
 			readonly resendQuestions?: boolean;
+			readonly gates?: readonly GateSummary[];
+			readonly author?: string;
 		} = {},
 	): HandoffPlan => ({
 		kind,
@@ -811,6 +909,8 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		module,
 		...(options.repair ? { repair: true } : {}),
 		...(options.resendQuestions ? { resendQuestions: true } : {}),
+		...(options.gates ? { gates: options.gates } : {}),
+		...(options.author ? { author: options.author } : {}),
 	});
 
 	if (context.failed) {
@@ -862,35 +962,72 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
-	/* A failed gate belongs to the module it ran in, so the fix turn works
-	   there even when the finished turn worked somewhere else. */
-	const failedGate = context.gates.find((gate) => gate.status !== 'passed');
-	if (failedGate) {
-		const owner = gateRepairOwner(
-			failedGate,
-			context.module,
+	/* A failure is fixed by a role that may write the file its fix goes in,
+	   in the module it belongs to, even when the finished turn worked
+	   somewhere else. What another role owns waits for the turn after. */
+	const failedGates = context.gates.filter((gate) => gate.status !== 'passed');
+	if (failedGates.length > 0) {
+		/* A repair turn that changed nothing is not sent the same errors
+		   again: the next attempt goes to another role that may write them,
+		   or to the operator when none may. */
+		const repairing =
+			context.instructed === true &&
+			context.previous?.repair === true &&
+			context.previous.resendQuestions !== true &&
+			context.previous.role === context.role;
+		const idle =
+			repairing && !context.reviewing && context.edited === false
+				? context.role
+				: null;
+		const idleNote = idle
+			? `${roleName(roles, idle)} changed no files in its repair turn.`
+			: '';
+		const author = repairing
+			? (context.previous!.author ?? context.role)
+			: context.role;
+		const repair = planGateRepair({
+			gates: failedGates,
+			activeModule: context.module,
 			roles,
-			context.routing.session.modules.map((module) => module.directory),
-		);
-		const repairRole =
-			owner?.role ??
-			(context.reviewing
+			modules: context.routing.session.modules.map(
+				(module) => module.directory,
+			),
+			fallback: context.reviewing
 				? (validateDeclared(context).role ?? context.role)
-				: context.role);
+				: author,
+			exclude: idle,
+		});
+		if (!repair) {
+			return plan(
+				'blocked',
+				context.role,
+				`${idleNote} No other specialist is assigned what the ${gatesFailed(failedGates)} on, so the chain stops here. Fix it by hand, or say what should change.`,
+			);
+		}
+		const sent = failedGatesOf(repair.assigned);
 		return plan(
 			'continue',
-			repairRole,
-			`The ${gateLabel(failedGate)} gate failed, so the responsible specialist fixes it before delivery.`,
+			repair.role,
 			[
-				`Continue as ${roleName(roles, repairRole)}. The ${gateLabel(failedGate)} gate failed. Fix the reported files within your role, preserve other work, and end with your handoff line.`,
-				`Recorded gate results:\n${context.gates.map((gate) => `${gateLabel(gate)}: ${gate.status}`).join('\n')}`,
-				...reportedErrors(failedGate),
-				`Gate command: ${failedGate.command}`,
-				`Gate output (first ${GATE_PROMPT_OUTPUT} characters; the transcript holds the rest):`,
-				failedGate.output.slice(0, GATE_PROMPT_OUTPUT),
-			].join('\n\n'),
-			owner?.module ?? failedGate.module ?? context.module,
-			{ repair: true },
+				idleNote,
+				`The ${gatesFailed(sent)}, so the responsible specialist fixes ${sent.length === 1 ? 'it' : 'them'} before delivery.`,
+			]
+				.filter(Boolean)
+				.join(' '),
+			bounded(
+				[
+					`Continue as ${roleName(roles, repair.role)}. The ${gatesFailed(sent)}. Fix the reported files within your role, preserve other work, and end with your handoff line.`,
+					`Recorded gate results:\n${context.gates.map((gate) => `${gateLabel(gate)}: ${gate.status}`).join('\n')}`,
+					...sent.map((gate) => repairSection(gate, repair.assigned)),
+					...deferredSection(repair.deferred, roles),
+				].join('\n\n'),
+			),
+			repair.module,
+			{
+				repair: true,
+				gates: sent.map((gate) => sentGate(gate, repair.assigned)),
+				author,
+			},
 		);
 	}
 

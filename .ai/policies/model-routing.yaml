@@ -50,7 +50,8 @@ profiles:
 # Who takes the first sandbox turn (planning.ts classifyByRules) and how the
 # next role is chosen (planHandoff): the HANDOFF line when it names a
 # registered role, otherwise routeRole by module state, and a failed gate
-# always returns to the same role.
+# goes to the role whose write paths cover the file its fix goes in
+# (gate-repair.ts).
 routing:
   new-module: business-manager
   edit-module: business-manager

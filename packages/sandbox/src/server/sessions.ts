@@ -24,7 +24,7 @@ import {
 	replaceLocalFile,
 	withLocalFileLock,
 } from './local-file.ts';
-import type { GateSummary } from './gates.ts';
+import type { GateKey, GateSummary } from './gates.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -68,6 +68,12 @@ export interface HandoffPlan {
 	/* Set when the repair is a questions block to send again. One runs in a
 	   row: a second refusal stops for the operator. */
 	readonly resendQuestions?: boolean;
+	/* On a gate repair: each failed gate the next turn is sent to fix, with
+	   the errors in that role's files. */
+	readonly gates?: readonly GateSummary[];
+	/* On a gate repair: the role whose work the repairs follow. A failure
+	   that names no file goes back to it. */
+	readonly author?: string;
 	/* The draft module directory the next turn works in. Absent on handoffs
 	   written before a session could target one module of several. */
 	readonly module?: string;
@@ -145,6 +151,11 @@ export interface SandboxSession {
 	   for none. Every turn rewrites it, so the form can only ever show what the
 	   newest specialist is still waiting on. */
 	readonly pendingQuestions: PendingQuestions | null;
+	/* Gates whose last result did not pass, with the draft module of a module
+	   gate. A turn runs them again whatever its role runs, so the recorded
+	   result of a gate stays true until it passes. Absent on records written
+	   before it existed. */
+	readonly failingGates?: readonly GateKey[];
 	readonly state: SandboxSessionState;
 	readonly createdAt: number;
 	readonly updatedAt: number;
@@ -178,6 +189,10 @@ export interface ChatEntry {
 	   it as one. */
 	readonly gate?: GateSummary;
 	readonly handoff?: HandoffPlan;
+	/* Set on a user entry whose text is the prompt a handoff wrote, not the
+	   operator's words. A gate repair carries the errors it was sent to fix,
+	   so the transcript shows those rather than the prompt. */
+	readonly instruction?: { readonly gates?: readonly GateSummary[] };
 	/* Attachments included with this turn, echoed onto the user entry so the
 	   transcript records exactly what the agent was shown. */
 	readonly attachments?: readonly SessionAttachment[];
@@ -216,18 +231,36 @@ function redactText(value: string): string {
 		: safe;
 }
 
+function redactGate<T extends GateSummary>(gate: T): T {
+	return gate.issues
+		? {
+				...gate,
+				issues: gate.issues.map((issue) => ({
+					...issue,
+					message: redactText(issue.message),
+				})),
+			}
+		: gate;
+}
+
 function redactEntry(entry: ChatEntry): ChatEntry {
 	return {
 		...entry,
 		...(entry.text === undefined ? {} : { text: redactText(entry.text) }),
-		...(entry.gate?.issues
+		...(entry.gate ? { gate: redactGate(entry.gate) } : {}),
+		...(entry.instruction?.gates
 			? {
-					gate: {
-						...entry.gate,
-						issues: entry.gate.issues.map((issue) => ({
-							...issue,
-							message: redactText(issue.message),
-						})),
+					instruction: {
+						...entry.instruction,
+						gates: entry.instruction.gates.map(redactGate),
+					},
+				}
+			: {}),
+		...(entry.handoff?.gates
+			? {
+					handoff: {
+						...entry.handoff,
+						gates: entry.handoff.gates.map(redactGate),
 					},
 				}
 			: {}),

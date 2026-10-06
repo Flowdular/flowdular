@@ -6,6 +6,7 @@ import {
 	runChecks,
 	type CheckId,
 } from '../evals/checks.ts';
+import type { GateIssue } from './gates.ts';
 
 /* The deterministic rules that used to exist only inside the evaluation suite.
    They were written, reviewed and cheap, and ran nowhere on the delivery path,
@@ -40,6 +41,7 @@ interface RuleOutcome {
 	readonly id: string;
 	readonly passed: boolean;
 	readonly detail: string;
+	readonly paths?: readonly string[];
 }
 
 /* A migration copied from an older release names a role or tenant setting the
@@ -48,10 +50,13 @@ interface RuleOutcome {
    imports for the conformance script. */
 function migrationIdentifiers(files: ReadonlyMap<string, string>): RuleOutcome {
 	const findings: string[] = [];
+	const paths = new Set<string>();
 	for (const [path, text] of files) {
 		if (!path.includes('migrations/') || !path.endsWith('.up.sql')) continue;
-		for (const issue of migrationIdentifierIssues(text))
+		for (const issue of migrationIdentifierIssues(text)) {
 			findings.push(`${path}: ${issue.message}`);
+			paths.add(path);
+		}
 	}
 	return {
 		id: 'migration-identifiers',
@@ -60,12 +65,16 @@ function migrationIdentifiers(files: ReadonlyMap<string, string>): RuleOutcome {
 			findings.length === 0
 				? 'Migrations name only the flowdular roles and tenant setting.'
 				: findings.join(' '),
+		...(paths.size > 0 ? { paths: [...paths] } : {}),
 	};
 }
 
 export interface ModuleRulesReport {
 	readonly passed: boolean;
 	readonly output: string;
+	/* One error per failed rule, at the first file its fix goes in, so a
+	   repair reaches a role that may write that file. */
+	readonly issues: readonly GateIssue[];
 }
 
 async function collectFiles(
@@ -131,5 +140,10 @@ export async function checkModuleRules(input: {
 				: `${failures.length} of ${outcomes.length} module rules failed.`,
 			...lines,
 		].join('\n'),
+		issues: failures.map((outcome) => ({
+			code: outcome.id,
+			...(outcome.paths?.[0] ? { path: outcome.paths[0] } : {}),
+			message: outcome.detail.slice(0, 500),
+		})),
 	};
 }

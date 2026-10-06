@@ -85,6 +85,8 @@ export interface PathViolation {
 
 export interface PathGuardResult {
 	readonly violations: readonly PathViolation[];
+	/* Paths the turn changed inside its allowlist. */
+	readonly written: readonly string[];
 	/* Changes the toolchain made on the agent's behalf, restored and reported
 	   without failing the turn. */
 	readonly toolOwned: readonly string[];
@@ -435,6 +437,7 @@ export async function guardAgentPaths(input: {
 			const paths = new Set([...baseline.keys(), ...current.keys()]);
 			const violations: PathViolation[] = [];
 			const toolOwned: string[] = [];
+			const written: string[] = [];
 			for (const path of [...paths].sort()) {
 				const before = baseline.get(path);
 				const after = current.get(path);
@@ -462,7 +465,7 @@ export async function guardAgentPaths(input: {
 						change,
 						reason: 'The path is outside this role and module allowlist.',
 					});
-				}
+				} else written.push(path);
 			}
 
 			/* Compare the protected trees separately: snapshot() stops at their
@@ -492,7 +495,7 @@ export async function guardAgentPaths(input: {
 				   full copy on every successful turn leaks disk and duplicates any
 				   sensitive attachment the role was allowed to read. */
 				await rm(staging, { recursive: true, force: true });
-				return { violations, toolOwned, quarantine: null };
+				return { violations, written, toolOwned, quarantine: null };
 			}
 
 			for (const violation of violations)
@@ -541,7 +544,7 @@ export async function guardAgentPaths(input: {
 				)}\n`,
 				{ encoding: 'utf8', mode: 0o600 },
 			);
-			return { violations, toolOwned, quarantine: staging };
+			return { violations, written, toolOwned, quarantine: staging };
 		},
 	};
 }
