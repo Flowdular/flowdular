@@ -14,6 +14,7 @@ import {
 	shouldUseColor,
 	watchReloads,
 } from '@flowdular/dev-console';
+import { stopOnSignals } from '@flowdular/dev-console/shutdown';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const SHUTDOWN_TIMEOUT_MS = 3_000;
@@ -240,8 +241,6 @@ export async function startDevelopmentServer(
 	const close = () => {
 		if (closing) return closing;
 		closing = (async () => {
-			process.off('SIGINT', onSignal);
-			process.off('SIGTERM', onSignal);
 			/* Vite may begin one last config evaluation while close tears down its
 			   module runner. Refuse that boot before it can reopen databases. */
 			process.env.FD_INTERNAL_PLATFORM_TERMINATING = 'true';
@@ -277,8 +276,7 @@ export async function startDevelopmentServer(
 	/* Do not replace server.close: Vite uses it internally during an in-process
 	   restart and will continue serving afterwards. Signals use this terminal
 	   path, which also retires the current platform generation. */
-	process.once('SIGINT', onSignal);
-	process.once('SIGTERM', onSignal);
+	stopOnSignals(onSignal);
 	return server;
 }
 

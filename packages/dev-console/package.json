@@ -4,7 +4,8 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.mjs",
-		"./brand": "./src/brand.mjs"
+		"./brand": "./src/brand.mjs",
+		"./shutdown": "./src/shutdown.mjs"
 	},
 	"scripts": {
 		"test": "vitest run --passWithNoTests"
