@@ -64,6 +64,12 @@ six the development server gives itself; both figures live in
 `@flowdular/dev-console/shutdown`. The installs, gates and Git commands the
 sandbox runs stop with it the same way.
 
+One sandbox runs per workspace. A second launcher, or `pnpm eval`, on a
+workspace whose sandbox is running exits with the PID of the process that holds
+it. The hold is the directory `.flowdular/sandbox/workspace.lock`; it goes away
+when that process ends, and one left by a process that was killed outright is
+taken over by the next start.
+
 ## The credential is prepared, not pasted
 
 A business user used to sign in to the application, create an API token with

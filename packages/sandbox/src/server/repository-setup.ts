@@ -4,13 +4,13 @@ import {
 	mkdir,
 	readFile,
 	realpath,
-	rename,
 	rm,
 	stat,
 	writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { assertGitHubRepository, sandboxDirectory } from './config.ts';
+import { acquireDiskLock, releaseDiskLock } from './disk-lock.ts';
 import {
 	spawnCommand,
 	type CommandResult,
@@ -222,106 +222,6 @@ function operationBusy(): never {
 	);
 }
 
-function lockOwner(value: unknown): { pid: number; id: string } | null {
-	if (!value || typeof value !== 'object') return null;
-	const record = value as { pid?: unknown; id?: unknown };
-	return Number.isSafeInteger(record.pid) &&
-		(record.pid as number) > 0 &&
-		typeof record.id === 'string' &&
-		/^[0-9a-f-]{36}$/.test(record.id)
-		? { pid: record.pid as number, id: record.id }
-		: null;
-}
-
-async function readLockOwner(path: string): Promise<{
-	pid: number;
-	id: string;
-} | null> {
-	try {
-		return lockOwner(
-			JSON.parse(await readFile(join(path, 'owner.json'), 'utf8')),
-		);
-	} catch {
-		return null;
-	}
-}
-
-function processAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code !== 'ESRCH';
-	}
-}
-
-function occupiedLock(error: unknown): boolean {
-	return ['EEXIST', 'ENOTEMPTY'].includes(
-		(error as NodeJS.ErrnoException).code ?? '',
-	);
-}
-
-/* Every lock, including a recovery claim, starts as a complete temporary
-   directory and becomes visible through one atomic rename. If a reclaimer
-   dies, its claim is another dead lock and can be recovered by the same rule. */
-async function acquireDiskLock(path: string, depth = 0): Promise<string> {
-	if (depth > 64) return operationBusy();
-	const id = randomUUID();
-	const temporary = `${path}.${id}.tmp`;
-	await mkdir(temporary, { mode: 0o700 });
-	try {
-		await writeFile(
-			join(temporary, 'owner.json'),
-			JSON.stringify({ pid: process.pid, id }) + '\n',
-			{ flag: 'wx', mode: 0o600 },
-		);
-		try {
-			await rename(temporary, path);
-		} catch (error) {
-			if (!occupiedLock(error)) throw error;
-			await recoverDeadLock(path, depth + 1);
-			try {
-				await rename(temporary, path);
-			} catch (retryError) {
-				if (occupiedLock(retryError)) return operationBusy();
-				throw retryError;
-			}
-		}
-	} finally {
-		await rm(temporary, { recursive: true, force: true });
-	}
-	return id;
-}
-
-async function releaseDiskLock(path: string, id: string): Promise<void> {
-	const current = await readLockOwner(path);
-	if (current?.id !== id) operationBusy();
-	const retired = `${path}.${id}.retired`;
-	await rename(path, retired);
-	await rm(retired, { recursive: true, force: true });
-}
-
-async function recoverDeadLock(path: string, depth: number): Promise<void> {
-	if (depth > 64) return operationBusy();
-	const owner = await readLockOwner(path);
-	if (!owner || processAlive(owner.pid)) return operationBusy();
-	const claim = join(path, 'recovery');
-	const claimId = await acquireDiskLock(claim, depth + 1);
-	let retired: string | null = null;
-	let moved = false;
-	try {
-		const current = await readLockOwner(path);
-		if (!current || current.id !== owner.id || processAlive(current.pid))
-			return operationBusy();
-		retired = `${path}.${randomUUID()}.retired`;
-		await rename(path, retired);
-		moved = true;
-	} finally {
-		if (moved && retired) await rm(retired, { recursive: true, force: true });
-		else await releaseDiskLock(claim, claimId);
-	}
-}
-
 async function withOperationLock<T>(
 	root: string,
 	work: () => Promise<T>,
@@ -329,11 +229,11 @@ async function withOperationLock<T>(
 	const directory = sandboxDirectory(root);
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	const path = join(directory, OPERATION_LOCK_NAME);
-	const id = await acquireDiskLock(path);
+	const id = await acquireDiskLock(path, operationBusy);
 	try {
 		return await work();
 	} finally {
-		await releaseDiskLock(path, id);
+		if (!(await releaseDiskLock(path, id))) operationBusy();
 	}
 }
 

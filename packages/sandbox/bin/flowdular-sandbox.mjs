@@ -17,6 +17,8 @@ const [
 	{ probeCommand },
 	{ findRunningPlatformUrl, startPlatformProcess },
 	{ collectProvisionedCredential, recordPlatformAddress },
+	{ acquireWorkspaceLock },
+	{ removeCrashLeftovers },
 	{ flowdularStateDirectory },
 	{ createServer },
 	{
@@ -34,6 +36,8 @@ const [
 	import('@flowdular/coding-agent'),
 	import('../src/server/platform-process.ts'),
 	import('../src/server/provision-local.ts'),
+	import('../src/server/workspace-lock.ts'),
+	import('../src/server/sessions.ts'),
 	import('@flowdular/kernel/runtime-config'),
 	import('vite'),
 	import('@flowdular/dev-console'),
@@ -422,9 +426,14 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	const platformStartController = new AbortController();
 	let startup = Promise.resolve();
 	let closing = false;
+	let workspaceLock = null;
 	const announcedTokenDigests = new Set();
 	try {
 		await resolveWorkspace(options);
+		/* Taken before anything writes the workspace's sandbox state, and held
+		   until this process exits, however it exits. */
+		workspaceLock = await acquireWorkspaceLock(options.workspace);
+		await removeCrashLeftovers(options.workspace);
 		const resolvedPlatform = await resolvePlatform(options);
 		/* Set before the child is spawned: the application reads it to decide
 		   whether to prepare a credential at boot, and a child inherits the
@@ -456,6 +465,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		};
 	} catch (error) {
 		restoreEarly();
+		await workspaceLock?.release().catch(() => undefined);
 		if (error instanceof BootstrapError) console.error(`\n${error.message}\n`);
 		else console.error(`\n${error instanceof Error ? error.message : error}\n`);
 		process.exitCode = 1;
@@ -510,6 +520,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	} catch (error) {
 		restoreConsole();
 		if (platform) await platform.stop();
+		await workspaceLock.release().catch(() => undefined);
 		throw error;
 	}
 

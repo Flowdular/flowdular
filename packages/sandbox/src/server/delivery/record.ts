@@ -1,5 +1,6 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { replaceLocalFile } from '../local-file.ts';
 import type { EjectTarget } from './types.ts';
 
 /* What a delivery left behind that the session record does not carry: the
@@ -21,10 +22,10 @@ export async function writeDeliveryRecord(
 	sessionRoot: string,
 	record: DeliveryRecord,
 ): Promise<DeliveryRecord> {
-	const path = recordPath(sessionRoot);
-	const staging = `${path}.${process.pid}`;
-	await writeFile(staging, `${JSON.stringify(record, null, '\t')}\n`, 'utf8');
-	await rename(staging, path);
+	await replaceLocalFile(
+		recordPath(sessionRoot),
+		`${JSON.stringify(record, null, '\t')}\n`,
+	);
 	return record;
 }
 
