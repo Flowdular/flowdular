@@ -129,6 +129,10 @@ export interface TurnOutcome {
 }
 
 const MAX_HISTORY_MESSAGES = 20;
+/* One coding-agent run, whatever the turn is for: implementation, gate repair,
+   answers or auto-review. Every driver receives it, so a driver's own default
+   never decides how long a sandbox turn may run. */
+export const AGENT_TURN_TIMEOUT_MS = 20 * 60 * 1000;
 
 function historyFrom(entries: readonly ChatEntry[]): CodingAgentMessage[] {
 	/* Orchestrator feedback, gate failures included, is replayed as user input
@@ -835,6 +839,7 @@ export async function* runTurn(
 				? { tools: [sampleDataTool(paths.workspace, session.attachments)] }
 				: {}),
 			signal: input.signal,
+			timeoutMs: AGENT_TURN_TIMEOUT_MS,
 		})) {
 			const recorded = await appendChatEntry(context.workspaceRoot, session, {
 				kind: eventKind(event),

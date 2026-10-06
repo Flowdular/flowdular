@@ -46,6 +46,7 @@ import {
 	planWork,
 } from './planning.ts';
 import {
+	AGENT_TURN_TIMEOUT_MS,
 	collectDiffs,
 	forgetDiffs,
 	runSessionGates,
@@ -111,9 +112,10 @@ const SANDBOX_COOKIE = 'flowdular_sandbox';
 /* Every sandbox mutation carries this header. A cross-site form post cannot
    set it, so together with the origin check it is the CSRF boundary. */
 export const SANDBOX_REQUEST_HEADER = 'x-flowdular-sandbox';
-/* The chain budget leaves room for a full 20-minute Codex turn plus the
-   host-owned installation, gates and cleanup around it. */
-const TURN_TIMEOUT_MS = 30 * 60 * 1000;
+/* One turn's wall clock: the agent's own budget plus the host-owned
+   installation, gates and cleanup around it. Each turn of a chain gets its
+   own, and CHAIN_LIMIT bounds how many run. */
+const TURN_TIMEOUT_MS = AGENT_TURN_TIMEOUT_MS + 10 * 60 * 1000;
 /* How many handed-off turns may run without the operator saying anything. The
    chain always stops on a failure, on a question, and on this count. */
 const CHAIN_LIMIT = 4;
@@ -877,11 +879,7 @@ export function createSandboxRoutes(
 		running.set(sessionId, channel);
 		notifySessionChanged(sessionId);
 		previous?.controller.abort('superseded');
-		const timer = setTimeout(
-			() => controller.abort('timeout'),
-			TURN_TIMEOUT_MS,
-		);
-		timer.unref?.();
+		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		void (async () => {
 			try {
@@ -899,6 +897,12 @@ export function createSandboxRoutes(
 				let depth = 0;
 				let repairs = 0;
 				while (next && !controller.signal.aborted) {
+					clearTimeout(timer);
+					timer = setTimeout(
+						() => controller.abort('timeout'),
+						TURN_TIMEOUT_MS,
+					);
+					timer.unref?.();
 					const iterator = runTurn(turnContext(platform), {
 						sessionId,
 						...next,
@@ -910,6 +914,17 @@ export function createSandboxRoutes(
 						step = await iterator.next();
 					}
 					const outcome: TurnOutcome = step.value;
+					if (controller.signal.reason === 'timeout') {
+						publish(
+							channel,
+							'entry',
+							await appendChatEntry(runtime.workspaceRoot, outcome.session, {
+								kind: 'system',
+								role: outcome.session.role,
+								text: `This turn was stopped at the sandbox limit of ${TURN_TIMEOUT_MS / 60_000} minutes for one turn, which covers the coding agent, installation and gates. Review the draft before continuing.`,
+							}),
+						);
+					}
 					publish(channel, 'completed', outcome);
 					next = null;
 					if (outcome.handoff.kind === 'continue')

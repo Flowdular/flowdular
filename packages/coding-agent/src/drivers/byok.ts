@@ -23,6 +23,7 @@ import {
 	type ToolSet,
 } from 'ai';
 import {
+	turnTimeLimitMessage,
 	type CodingAgentAvailability,
 	type CodingAgentDriver,
 	type CodingAgentEvent,
@@ -300,6 +301,17 @@ export function createByokDriver(
 				})),
 				{ role: 'user' as const, content: request.prompt },
 			];
+			/* The deadline stops the provider call the way an operator stop does,
+			   so the two are told apart by which signal fired. */
+			const timeoutMs = request.timeoutMs;
+			const deadline =
+				timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
+			const abortSignal =
+				deadline && request.signal
+					? AbortSignal.any([request.signal, deadline])
+					: (deadline ?? request.signal);
+			const timedOut = () =>
+				deadline?.aborted === true && request.signal?.aborted !== true;
 
 			try {
 				const result = streamText({
@@ -311,7 +323,7 @@ export function createByokDriver(
 					messages,
 					maxOutputTokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
 					maxRetries: 1,
-					...(request.signal ? { abortSignal: request.signal } : {}),
+					...(abortSignal ? { abortSignal } : {}),
 					stopWhen: stepCountIs(options.maxSteps ?? DEFAULT_MAX_STEPS),
 					tools: workspaceTools(
 						request.workspacePath,
@@ -332,6 +344,8 @@ export function createByokDriver(
 					if (part.type === 'error') throw part.error;
 				}
 				while (queue.length > 0) yield queue.shift()!.event;
+				/* The SDK ends an aborted stream quietly, with an abort part. */
+				if (timedOut()) throw deadline!.reason;
 				if (text.trim()) yield { type: 'assistant.message', text: text.trim() };
 				yield {
 					type: 'turn.completed',
@@ -342,7 +356,12 @@ export function createByokDriver(
 				};
 			} catch (error) {
 				while (queue.length > 0) yield queue.shift()!.event;
-				const failure = classifyProviderFailure(error);
+				const failure = timedOut()
+					? {
+							code: 'DRIVER_TIMEOUT',
+							message: turnTimeLimitMessage(timeoutMs!),
+						}
+					: classifyProviderFailure(error);
 				yield { type: 'error', code: failure.code, message: failure.message };
 				yield {
 					type: 'turn.completed',

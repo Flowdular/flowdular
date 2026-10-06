@@ -114,3 +114,17 @@ export class CodingAgentError extends Error {
 		this.name = 'CodingAgentError';
 	}
 }
+
+function durationText(ms: number): string {
+	const [amount, unit] =
+		ms % 60_000 === 0
+			? [ms / 60_000, 'minute']
+			: ms % 1_000 === 0
+				? [ms / 1_000, 'second']
+				: [ms, 'millisecond'];
+	return `${amount} ${unit}${amount === 1 ? '' : 's'}`;
+}
+
+export function turnTimeLimitMessage(timeoutMs: number): string {
+	return `The coding agent exceeded the turn time limit of ${durationText(timeoutMs)}. Review the draft before continuing.`;
+}

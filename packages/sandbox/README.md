@@ -503,6 +503,10 @@ next step:
   is the default, the server starts the next turn by itself on the same stream,
   up to four chained turns per operator message (`chainDepth` in the record).
   With it off, the transcript shows a `Continue with <role>` button instead.
+  Each turn of the chain has its own 30 minutes: the coding agent may run for
+  20 of them, whichever driver it is, and the rest covers installation, gates
+  and cleanup. A turn that reaches either limit is stopped, and the transcript
+  names the limit.
 - **approval**: every new or edited module stops before implementation until
   the operator approves its current specification. The review card shows the
   SHA-256 of the text it renders, and `POST /sandbox/api/sessions/:id/approve`

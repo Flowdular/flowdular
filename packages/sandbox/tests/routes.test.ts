@@ -1,4 +1,5 @@
 import {
+	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -14,6 +15,8 @@ import { createRouter } from '@octanejs/app-core';
 import {
 	DEFAULT_AGENT_ROLES,
 	CodingAgentError,
+	createClaudeCodeDriver,
+	createCodexDriver,
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
@@ -33,6 +36,7 @@ import {
 	sessionPaths,
 	updateSession,
 } from '../src/server/sessions.ts';
+import { MAX_OPTION_LENGTH } from '../src/server/questions.ts';
 import { hashSpec } from '../src/server/spec.ts';
 import { settledSession } from './settle.ts';
 import type { InstallResult } from '../src/server/workspace-install.ts';
@@ -233,6 +237,55 @@ async function sessionFor(root: string) {
 		driver: 'fake',
 		install: false,
 	});
+}
+
+/* A refused block is repaired by one automatic turn and a valid one stops the
+   chain, so a chain built from them changes no files and runs no gates. */
+function questionsBlock(option: string): string {
+	return `Two decisions first.\n\n\`\`\`questions\n${JSON.stringify({
+		questions: [
+			{
+				id: 'Q-1',
+				question: 'Who may cancel a booking?',
+				options: ['Only the owner', option],
+				recommended: 'Only the owner',
+				allowFreeText: true,
+			},
+		],
+	})}\n\`\`\`\nHANDOFF: none - asked`;
+}
+
+/* A driver whose every turn takes the given minutes of the fake clock, and
+   which records whether the sandbox had stopped the turn by then. */
+function slowDriver(
+	minutes: number,
+	closings: readonly string[],
+	stopped: boolean[],
+): CodingAgentDriver {
+	return {
+		...fakeDriver({ handoff: '' }),
+		async *run(request: CodingAgentTurnRequest) {
+			yield {
+				type: 'turn.started',
+				driver: 'fake',
+				role: request.role,
+				resumeId: null,
+			};
+			await vi.advanceTimersByTimeAsync(minutes * 60_000);
+			stopped.push(request.signal?.aborted === true);
+			yield {
+				type: 'assistant.message',
+				text: closings[Math.min(stopped.length, closings.length) - 1]!,
+			};
+			yield {
+				type: 'turn.completed',
+				resumeId: null,
+				usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+				costUsd: null,
+				finishReason: 'stop',
+			};
+		},
+	};
 }
 
 async function readSse(
@@ -1082,6 +1135,137 @@ describe('detached turns', () => {
 		const recovered = await readSession(root, session.id);
 		expect(recovered.state).not.toBe('failed');
 		expect(Object.values(recovered.resumeIds)).toContain('new-thread');
+	});
+
+	it.each([
+		['claude-code', createClaudeCodeDriver],
+		['codex', createCodexDriver],
+	] as const)(
+		'stops a %s turn at the sandbox agent budget, not at the limit of the driver',
+		async (id, createDriver) => {
+			const root = await workspace();
+			const started = join(root, 'agent-started');
+			const command = join(root, 'fake-agent');
+			await writeFile(
+				command,
+				[
+					`#!${process.execPath}`,
+					"if (process.argv.includes('--version')) { console.log('1.0.0'); process.exit(0); }",
+					`require('node:fs').writeFileSync(${JSON.stringify(started)}, String(process.pid));`,
+					'setInterval(() => {}, 1000);',
+				].join('\n'),
+			);
+			await chmod(command, 0o755);
+			/* The driver's own limit is far shorter than the sandbox budget, so a
+			   turn that falls back to it names the wrong limit. */
+			const call = api(
+				fakeRuntime(root, createDriver({ command, timeoutMs: 5 * 60_000 })),
+			);
+			const session = await sessionFor(root);
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			try {
+				const turn = call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+					body: {
+						role: 'business-manager',
+						message: 'Write the specification.',
+						driver: id,
+					},
+				}).then(readSse);
+				await vi.waitFor(() => stat(started), { timeout: 15_000 });
+				await vi.advanceTimersByTimeAsync(20 * 60_000);
+				await turn;
+			} finally {
+				vi.useRealTimers();
+				const pid = Number(await readFile(started, 'utf8').catch(() => ''));
+				if (pid > 0) {
+					try {
+						process.kill(pid);
+					} catch {
+						/* Already stopped by the driver. */
+					}
+				}
+			}
+			const chat = await readChat(root, session);
+			expect(
+				chat.some((entry) =>
+					entry.text?.includes('turn time limit of 20 minutes'),
+				),
+			).toBe(true);
+			expect(chat.filter((entry) => entry.handoff).at(-1)?.handoff?.kind).toBe(
+				'blocked',
+			);
+			await rm(root, { recursive: true, force: true });
+		},
+		30_000,
+	);
+
+	it('gives each turn of a chain its own time limit', async () => {
+		const root = await workspace();
+		const stopped: boolean[] = [];
+		const call = api(
+			fakeRuntime(
+				root,
+				slowDriver(
+					25,
+					[
+						questionsBlock('x'.repeat(MAX_OPTION_LENGTH + 1)),
+						questionsBlock('Any team member'),
+					],
+					stopped,
+				),
+			),
+		);
+		const session = await sessionFor(root);
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		try {
+			await readSse(
+				await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+					body: {
+						role: 'business-manager',
+						message: 'Write the specification.',
+						driver: 'fake',
+					},
+				}),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+		/* Fifty minutes for the chain, but neither turn ran past its own. */
+		expect(stopped).toEqual([false, false]);
+		await rm(root, { recursive: true, force: true });
+	});
+
+	it('names the sandbox limit when a turn runs past it', async () => {
+		const root = await workspace();
+		const stopped: boolean[] = [];
+		const call = api(
+			fakeRuntime(
+				root,
+				slowDriver(31, [questionsBlock('Any team member')], stopped),
+			),
+		);
+		const session = await sessionFor(root);
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		try {
+			await readSse(
+				await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+					body: {
+						role: 'business-manager',
+						message: 'Write the specification.',
+						driver: 'fake',
+					},
+				}),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(stopped).toEqual([true]);
+		expect(
+			(await readChat(root, session)).some((entry) =>
+				entry.text?.includes('sandbox limit of 30 minutes'),
+			),
+		).toBe(true);
+		await rm(root, { recursive: true, force: true });
 	});
 
 	it('resumes only the same role and scope, never a previous specialist conversation', async () => {
