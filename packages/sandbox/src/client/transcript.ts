@@ -69,6 +69,23 @@ export function transcriptRows(entries: readonly ChatEntry[]): TranscriptRow[] {
 	return rows;
 }
 
+/* Whether the transcript keeps following the newest entry after a scroll
+   event. Only the operator scrolling up stops it: content that grows after a
+   programmatic scroll moves the bottom away before the event lands, and that
+   must not read as the operator leaving the bottom. */
+export function keepsFollowing(
+	following: boolean,
+	previousTop: number,
+	node: {
+		readonly scrollTop: number;
+		readonly scrollHeight: number;
+		readonly clientHeight: number;
+	},
+): boolean {
+	if (node.scrollHeight - node.scrollTop - node.clientHeight < 64) return true;
+	return following && node.scrollTop >= previousTop;
+}
+
 export function shortToolDetail(detail: string): string {
 	if (!/^(?:\/|[A-Za-z]:[\\/]|modules[\\/])/.test(detail)) return detail;
 	return detail
