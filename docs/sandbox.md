@@ -336,7 +336,13 @@ and a human review remain the repository's own gate.
 ## Decisions the specialist needs
 
 A specialist that cannot continue without a business decision ends its reply
-with one fenced block tagged `questions` holding a single JSON object:
+with one fenced block tagged `questions` holding a single JSON object. An
+implementer (every role but the business manager) asks this way for anything
+the approved specification does not decide, such as a new error code, field,
+permission, state or changed behaviour, and leaves that part unbuilt instead of
+deciding it and mentioning it in prose. Every turn's instruction carries the
+format and the limits below from `questions.ts`, the module that parses the
+block.
 
 ````
 ```questions
@@ -389,8 +395,11 @@ POST /sandbox/api/sessions/:id/answers
 ```
 
 behind the same origin, header and ownership checks as every other mutation. It
-clears `pendingQuestions` and starts the next turn in the role that asked, in
-the module it asked about, with the decisions leading the request text:
+clears `pendingQuestions` and starts the next turn in the module the questions
+were about, with the decisions leading the request text. The business manager's
+own questions go back to it. An implementer's questions go to the business
+manager first (`answeringRole` in `planning.ts`), and so does an answer the
+operator types in the message box instead:
 
 ```
 Decisions:
@@ -405,6 +414,32 @@ nothing is waiting, `409 SESSION_ARCHIVED`, `409 SESSION_DELIVERED`, and `400
 INVALID_INPUT` for a body that leaves a question unanswered, names a question
 the session did not ask, exceeds 400 characters, or gives an answer that is not
 one of the offered options when the specialist allowed no free text.
+
+### Answers to an implementer's questions
+
+The business manager applies the answers to `spec/module.yaml`, and the text it
+leaves behind decides what happens next:
+
+- An answer that changes what the module must do is recorded in the
+  specification, which goes back to `draft`. Its hash no longer matches the
+  approval, so the session waits in `awaiting-approval` with the implementer
+  that asked as the next role, and implementation is refused until the operator
+  approves the new hash. Approving resumes that implementer with its decisions.
+- An answer the approved text already decides leaves the file untouched. The
+  approval still holds, and the implementer that asked continues at once with
+  its decisions.
+
+The wait is read from the transcript (`specFollowUp` in `planning.ts`): the
+newest handoff that is not the business manager's own is the implementer's
+question, so the implementer still resumes when the business manager asks a
+question of its own in between.
+
+The `module-rules` gate backs the rule for permissions: `permissions-specified`
+fails a module whose `src/acl/permissions.ts`, or an inline `permission:`
+value, names a permission the specification does not list. Error codes have no
+structured list in a specification and the shipped modules throw many codes
+their specifications never name, so a matching rule for them would fail correct
+modules; the instruction and the question card cover them.
 
 ## Operator commands
 
