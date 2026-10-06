@@ -904,15 +904,15 @@ export async function* runTurn(
 	}
 
 	/* A specialist that needs decisions closes with a questions block. A block
-	   the protocol cannot read is a warning on this turn, never a failure: the
-	   words of the reply still stand. */
+	   the protocol cannot read is never a failure, and never silent: the
+	   transcript says why, and the handoff sends it back to be fixed. */
 	const asked = closing ? readQuestions(closing) : ({ kind: 'none' } as const);
 	if (asked.kind === 'invalid') {
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
 			role: roleId,
 			module: active.directory,
-			text: `The questions block in this reply was ignored: ${asked.reason}`,
+			text: `The questions block in this reply was refused: ${asked.reason}`,
 		});
 	}
 
@@ -1050,6 +1050,9 @@ export async function* runTurn(
 		specApproved: closingGate.approved,
 		brief: session.brief || message,
 		reviewing,
+		questions: asked,
+		previous:
+			transcript.filter((entry) => entry.handoff).at(-1)?.handoff ?? null,
 	};
 	let handoff = planHandoff(handoffContext);
 	if (handoff.kind === 'review') {

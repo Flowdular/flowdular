@@ -54,9 +54,13 @@ export interface HandoffPlan {
 	readonly roleName: string;
 	readonly reason: string;
 	readonly prompt: string;
-	/* Set when this turn exists only to fix a failed gate. The chain counts
-	   these so a module that cannot satisfy a gate cannot spin forever. */
+	/* Set when this turn exists only to fix a failed gate or a refused
+	   questions block. The chain counts these so a module that cannot satisfy
+	   a gate cannot spin forever. */
 	readonly repair?: boolean;
+	/* Set when the repair is a questions block to send again. One runs in a
+	   row: a second refusal stops for the operator. */
+	readonly resendQuestions?: boolean;
 	/* The draft module directory the next turn works in. Absent on handoffs
 	   written before a session could target one module of several. */
 	readonly module?: string;
@@ -858,6 +862,17 @@ export async function approveSpecification(
 		throw new SandboxSetupError(
 			'SPEC_NOT_FOUND',
 			`${module.id} has no specification to approve yet.`,
+		);
+	}
+	const pending = session.pendingQuestions;
+	if (
+		pending &&
+		pending.questions.length > 0 &&
+		(pending.module === undefined || pending.module === module.directory)
+	) {
+		throw new SandboxSetupError(
+			'QUESTIONS_PENDING',
+			`${module.id} still has ${pending.questions.length} open question(s). Answer them before approving the specification.`,
 		);
 	}
 	const status = /^status:[ \t]*(\S+)[ \t]*$/m.exec(spec);
