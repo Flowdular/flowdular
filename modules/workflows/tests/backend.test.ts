@@ -4889,6 +4889,43 @@ describe('workflow worker transitions after a cancellation', () => {
 	});
 });
 
+const detailRead = (service: WorkflowsService, runId: string) =>
+	service.getRunDetail('tenant-a', runId).then(
+		(detail) => ({ status: detail.run.status }),
+		(error: Error) => ({ error: error.message }),
+	);
+
+describe('workflow run detail while a worker resumes a wait', () => {
+	it('reads a run whose due retry is claimed, then started', async () => {
+		const race = await cancellationRace(agentGraph(), failingAgents);
+		try {
+			let runId = '';
+			const reads: unknown[] = [];
+			race.wrapNext(
+				'startAttempt',
+				async (call) => {
+					reads.push(await detailRead(race.service, runId));
+					const started = await call();
+					reads.push(await detailRead(race.service, runId));
+					return started;
+				},
+				([write]) => (write as { attempt: number }).attempt === 2,
+			);
+			await race.runtime.start();
+			runId = await race.enqueue();
+			const detail = await race.settled(runId);
+			expect(reads).toEqual([
+				{ status: expect.any(String) },
+				{ status: expect.any(String) },
+			]);
+			expect(detail.run.status).toBe('failed');
+			expect(agentAttempts(detail)).toHaveLength(2);
+		} finally {
+			await race.dispose();
+		}
+	});
+});
+
 /* These cancellations commit inside the worker's own transaction, which needs
    a second connection; the embedded engine runs one transaction at a time. */
 describe.skipIf(process.env.FD_TEST_DATABASE_ADAPTER !== 'postgresql')(

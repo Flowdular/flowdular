@@ -658,6 +658,8 @@ const SQL = Object.freeze({
 	markNodeWaitingChild: `UPDATE workflow_node_states
 		 SET status = 'waiting-child', next_attempt_at = NULL
 		 WHERE tenant_id = $1 AND run_id = $2 AND node_id = $3`,
+	resumeRetryingRun: `UPDATE workflow_runs SET status = 'running'
+		 WHERE tenant_id = $1 AND id = $2 AND status = 'waiting-retry'`,
 	markRunWaitingAgent: `UPDATE workflow_runs SET status = 'waiting-agent'
 		 WHERE tenant_id = $1 AND id = $2 AND status = 'running'`,
 	markRunWaitingApproval: `UPDATE workflow_runs SET status = 'waiting-approval'
@@ -1733,15 +1735,12 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			if (!claimable) return null;
 			const priorLease = row.lease_owner;
 			const recovering = priorLease !== null && row.status !== 'queued';
-			/* A due retry becomes runnable again. Keeping the run in waiting-retry
-			   after its node starts would make the new waiting-child projection
-			   unreachable by the next claim. */
-			const status =
-				row.status === 'queued' ||
-				row.status === 'waiting-retry' ||
-				row.status === 'waiting-approval'
-					? 'running'
-					: row.status;
+			/* Only a queued run records its claim as an event. A claimed wait keeps
+			   its status until the event that ends it moves the row in the same
+			   transaction: node.retry.started in startAttempt, node.attempt.settled
+			   in settleAttempt. Moving it here would leave the row ahead of the
+			   events until then. */
+			const status = row.status === 'queued' ? 'running' : row.status;
 			const changed = await this.#exec(transaction, SQL.claimRun, [
 				status,
 				workerId,
@@ -1898,6 +1897,13 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				TERMINAL_RUNS.has(run.status)
 			) {
 				return null;
+			}
+			/* The node.ready below ends the run's wait for this retry. */
+			if (run.status === 'waiting-retry') {
+				await this.#exec(transaction, SQL.resumeRetryingRun, [
+					write.tenantId,
+					write.runId,
+				]);
 			}
 			const payloadId = await this.#storePayload(
 				transaction,
