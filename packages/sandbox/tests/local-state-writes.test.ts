@@ -10,6 +10,8 @@ import {
 	symlink,
 	writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -19,6 +21,8 @@ import {
 	openSecret,
 	saveSandboxConfiguration,
 	sealSecret,
+	updateSandboxConfiguration,
+	type SealedSecret,
 } from '../src/server/config.ts';
 import { setLocalFileTestHooks } from '../src/server/local-file.ts';
 import {
@@ -26,6 +30,8 @@ import {
 	recordPlatformAddress,
 	writeCredentialForTest,
 } from '../src/server/provision-local.ts';
+import { createSandboxRuntime } from '../src/server/runtime.ts';
+import { completeSessionMove } from '../src/server/session-owner.ts';
 import {
 	appendChatEntry,
 	createSession,
@@ -85,6 +91,45 @@ function deferred<T = void>() {
 	return { promise, resolve, reject };
 }
 
+/* Holds the first write of a file just before its rename until a second
+   writer either waits for that file or reaches its own rename. A writer that
+   does not wait has by then read what the held write is about to replace. */
+function holdFirstWrite(name: string) {
+	const held = deferred();
+	const second = deferred();
+	const release = deferred();
+	let writes = 0;
+	setLocalFileTestHooks({
+		beforeRename: async (target) => {
+			if (basename(target) !== name) return;
+			writes += 1;
+			if (writes > 1) return second.resolve();
+			held.resolve();
+			await release.promise;
+		},
+		queued: (target) => {
+			if (basename(target) === name) second.resolve();
+		},
+	});
+	return {
+		held: held.promise,
+		second: second.promise,
+		release: () => release.resolve(),
+	};
+}
+
+/* Answers 503 like a platform that is still booting, so a runtime holding a
+   credential settles its connection without reaching any real service. */
+async function bootingPlatform(): Promise<string> {
+	const server = createServer((_request, response) => {
+		response.statusCode = 503;
+		response.end();
+	});
+	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+	cleanup.push(() => new Promise<void>((done) => server.close(() => done())));
+	return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
 describe('sandbox configuration writes', () => {
 	it('keeps the previous configuration readable when a save stops before its rename', async () => {
 		const root = await workspace();
@@ -138,6 +183,12 @@ describe('sandbox configuration writes', () => {
 				driverModel: 'after',
 			}),
 		).rejects.toThrow('disk full');
+		await expect(
+			updateSandboxConfiguration(root, (current) => ({
+				...current,
+				driverModel: 'after',
+			})),
+		).rejects.toThrow('disk full');
 
 		expect(await readdir(stateDirectory(root))).toEqual(['config.json']);
 		setLocalFileTestHooks(null);
@@ -155,6 +206,12 @@ describe('sandbox configuration writes', () => {
 		const target = join(stateDirectory(root), 'config.json');
 		await symlink(outside, target);
 
+		await expect(
+			updateSandboxConfiguration(root, (current) => ({
+				...current,
+				driverModel: 'redirected',
+			})),
+		).rejects.toThrow(/symbolic link/);
 		await expect(
 			saveSandboxConfiguration(root, DEFAULT_CONFIGURATION),
 		).rejects.toThrow(/symbolic link/);
@@ -178,6 +235,129 @@ describe('sandbox configuration writes', () => {
 			const info = await stat(join(stateDirectory(root), name));
 			expect(info.mode & 0o777, name).toBe(0o600);
 		}
+	});
+
+	it('lands both of two overlapping read-modify-write saves', async () => {
+		const root = await workspace();
+		await saveSandboxConfiguration(root, DEFAULT_CONFIGURATION);
+		const gate = holdFirstWrite('config.json');
+
+		const first = updateSandboxConfiguration(root, (current) => ({
+			...current,
+			driverModel: 'first-model',
+		}));
+		await gate.held;
+		const second = updateSandboxConfiguration(root, (current) => ({
+			...current,
+			previewData: 'bridge',
+		}));
+		await gate.second;
+		gate.release();
+		await Promise.all([first, second]);
+
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.driverModel).toBe('first-model');
+		expect(stored.previewData).toBe('bridge');
+	});
+
+	it('keeps the credential the launcher saved while the runtime was serving', async () => {
+		const root = await workspace();
+		const platformUrl = await bootingPlatform();
+		const runtime = await createSandboxRuntime(root);
+		await prepareLauncherInbox(root);
+		expect(
+			await collectProvisionedCredential({ workspaceRoot: root, platformUrl }),
+		).toBe(true);
+
+		await runtime.update({ previewData: 'bridge' });
+
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.previewData).toBe('bridge');
+		expect(stored.platformUrl).toBe(platformUrl);
+		expect(await openSecret(root, stored.platformToken!)).toBe(LAUNCHER_TOKEN);
+	});
+
+	it('keeps an operator save that overlaps the session move', async () => {
+		const root = await workspace();
+		const platformUrl = await bootingPlatform();
+		await prepareLauncherInbox(root);
+		await collectProvisionedCredential({
+			workspaceRoot: root,
+			platformUrl: 'http://127.0.0.1:4311',
+		});
+		await recordPlatformAddress({
+			workspaceRoot: root,
+			platformUrl,
+			startedByLauncher: true,
+		});
+		const runtime = await createSandboxRuntime(root);
+		const gate = holdFirstWrite('config.json');
+
+		const saving = runtime.update({ previewData: 'bridge' });
+		await gate.held;
+		const moving = completeSessionMove({
+			workspaceRoot: root,
+			configuration: await loadSandboxConfiguration(root),
+			principal: { tenantId: 'tenant-1', accountId: 'account-1' },
+			log: () => undefined,
+		});
+		await gate.second;
+		gate.release();
+		await Promise.all([saving, moving]);
+
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.previewData).toBe('bridge');
+		expect(stored.pendingSessionMoveFrom).toEqual([]);
+	});
+
+	it('keeps a token the operator connected while the launcher sealed its own', async () => {
+		const root = await workspace();
+		const inbox = await prepareLauncherInbox(root);
+		const operatorToken: SealedSecret = {
+			iv: 'b3BlcmF0b3ItaXY=',
+			tag: 'b3BlcmF0b3ItdGFn',
+			ciphertext: 'b3BlcmF0b3ItdG9rZW4=',
+		};
+		/* The launcher's first seal creates the local key; the operator's
+		   connection lands while that write is in flight. */
+		setLocalFileTestHooks({
+			beforeRename: async (target) => {
+				if (basename(target) !== 'secret.key') return;
+				await saveSandboxConfiguration(root, {
+					...DEFAULT_CONFIGURATION,
+					platformUrl: 'http://127.0.0.1:4311',
+					platformToken: operatorToken,
+				});
+			},
+		});
+
+		expect(
+			await collectProvisionedCredential({
+				workspaceRoot: root,
+				platformUrl: 'http://127.0.0.1:4311',
+			}),
+		).toBe(false);
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.platformToken).toEqual(operatorToken);
+		expect(stored.launcherTokenFingerprint).toBeNull();
+		await expect(readFile(inbox, 'utf8')).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
+	});
+
+	it('agrees on one local key when two first uses overlap', async () => {
+		const root = await workspace();
+		const gate = holdFirstWrite('secret.key');
+
+		const first = sealSecret(root, 'first-secret');
+		await gate.held;
+		const second = sealSecret(root, 'second-secret');
+		await gate.second;
+		gate.release();
+		const [firstSealed, secondSealed] = await Promise.all([first, second]);
+
+		expect(await openSecret(root, firstSealed)).toBe('first-secret');
+		expect(await openSecret(root, secondSealed)).toBe('second-secret');
 	});
 });
 

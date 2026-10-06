@@ -21,7 +21,7 @@ import { buildDecisionAsk, type DecisionAsk } from './decisions-runtime.ts';
 import {
 	loadSandboxConfiguration,
 	openSecret,
-	saveSandboxConfiguration,
+	updateSandboxConfiguration,
 	type SandboxConfiguration,
 } from './config.ts';
 import { PlatformClient, type PlatformAuthority } from './platform-client.ts';
@@ -246,11 +246,12 @@ export async function createSandboxRuntime(
 		decisions: () => decisions,
 		refresh: rebuild,
 		update: async (patch) => {
-			configuration = await saveSandboxConfiguration(workspaceRoot, {
-				...configuration,
-				...patch,
-				version: 1,
-			});
+			/* Patch what is stored, not the copy this runtime cached at its last
+			   rebuild: the launcher saves its credential while this runtime serves. */
+			configuration = await updateSandboxConfiguration(
+				workspaceRoot,
+				(current) => ({ ...current, ...patch, version: 1 }),
+			);
 			return rebuild();
 		},
 		openBrowserSession: async (token) => {
