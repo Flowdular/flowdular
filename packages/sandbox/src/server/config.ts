@@ -83,6 +83,11 @@ export interface SandboxConfiguration {
 	   it started. A token connected later seals differently, so the launcher
 	   never takes an operator's credential for its own. */
 	readonly launcherTokenFingerprint: string | null;
+	/* Addresses the launcher moved that credential away from. The sessions its
+	   account owns under them follow it to platformUrl on the first connection
+	   that proves the account, and an address is dropped only after that, so a
+	   move cut short by a crash finishes on the next connection. */
+	readonly pendingSessionMoveFrom: readonly string[];
 	readonly driver: string;
 	readonly driverModel: string | null;
 	readonly previewData: PreviewDataMode;
@@ -112,6 +117,7 @@ export const DEFAULT_CONFIGURATION: SandboxConfiguration = {
 	platformUrl: 'http://localhost:4310',
 	platformToken: null,
 	launcherTokenFingerprint: null,
+	pendingSessionMoveFrom: [],
 	driver: 'claude-code',
 	driverModel: null,
 	previewData: 'fixtures',
@@ -351,6 +357,16 @@ export function secretFingerprint(sealed: SealedSecret | null): string | null {
 		: null;
 }
 
+export function holdsLauncherCredential(
+	configuration: SandboxConfiguration,
+): boolean {
+	return (
+		configuration.platformToken !== null &&
+		secretFingerprint(configuration.platformToken) ===
+			configuration.launcherTokenFingerprint
+	);
+}
+
 /* The session record is the authority on which specification the operator
    approved: a module may not be implemented, and a module may not be ejected,
    until its recorded specHash matches the text on disk. That hash used to be a
@@ -437,6 +453,11 @@ export async function loadSandboxConfiguration(
 			platformUrl: assertPlatformUrl(
 				stored.platformUrl ?? DEFAULT_CONFIGURATION.platformUrl,
 			),
+			pendingSessionMoveFrom: Array.isArray(stored.pendingSessionMoveFrom)
+				? stored.pendingSessionMoveFrom.filter(
+						(url): url is string => typeof url === 'string',
+					)
+				: [],
 			github: resolveGitHubConfiguration(stored.github),
 		};
 	} catch (error) {

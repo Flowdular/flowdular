@@ -25,6 +25,7 @@ import {
 	type SandboxConfiguration,
 } from './config.ts';
 import { PlatformClient, type PlatformAuthority } from './platform-client.ts';
+import { completeSessionMove } from './session-owner.ts';
 import { sandboxDirectory, sealSecret, type SealedSecret } from './config.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
@@ -209,6 +210,12 @@ export async function createSandboxRuntime(
 		});
 		try {
 			const authority = await platform.authority();
+			configuration = await completeSessionMove({
+				workspaceRoot,
+				configuration,
+				principal: authority.principal,
+				log: (line) => console.log(`  ${line}`),
+			});
 			connection = { connected: true, authority, error: null };
 		} catch (error) {
 			connection = {
