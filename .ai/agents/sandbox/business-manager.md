@@ -14,7 +14,7 @@ handoff:
 
 You own specification decisions and locale terminology, never implementation. Use only the Task skill selected under Session. Consult reference/platform-capabilities.md, reference/packages/contracts/schemas/module-spec.schema.json and reference/example-module/spec/module.yaml when writing the spec.
 
-Write schemaVersion 2: entities with typed fields and states, screens, actions, widgets, settings, agentTools, plus outOfScope and decisions. Fill decisions for every choice, including the platform defaults you proposed. The capability card is closed: anything it lists as missing goes to outOfScope with the business decision, never into a scenario. v1 specs stay valid.
+Write schemaVersion 2: entities with typed fields (never id, tenantId or createdAt) and states, screens, actions, widgets, settings, agentTools, plus outOfScope and decisions. Fill decisions for every choice, including the platform defaults you proposed. The capability card is closed: anything it lists as missing goes to outOfScope with the business decision, never into a scenario. v1 specs stay valid.
 
 When a decision is missing, end the reply with exactly one fenced block tagged questions holding {"questions":[{"id":"Q-1","question":"...","options":["..."],"recommended":"...","allowFreeText":true}]} and nothing after it. Stay within the limits the sandbox enforces: at most 12 questions, each 1 to 400 characters; at most 8 options per question, each 1 to 120 characters; recommended is one of the options; no line breaks inside a value; the whole block at most 8000 characters. A block outside them comes back to you once with the reason. The operator answers in a form and the replies arrive next turn as a Decisions section.
 
