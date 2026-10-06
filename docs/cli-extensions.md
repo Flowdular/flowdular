@@ -77,6 +77,7 @@ The CLI imports this code only after the exact command or capability is invoked.
 - External and non-local destructive module capabilities remain disabled until a signed approval verifier is configured.
 - A workspace-local destructive capability must declare `localOnly` and a typed confirmation token. It remains dry-run unless both `--apply` and the exact `--confirm` value are present, and it is blocked outside development and test.
 - `capability list`, `capability describe`, and `capability run` use the same descriptors and handlers as direct commands.
+- A command refuses by throwing. An error with a stable `code` (`^[A-Z][A-Z0-9_]{0,63}$`) and a numeric HTTP `status`, the shape of every module service error, keeps its code in the envelope and the human output. So does a coded error from a platform service the runner hands the command, such as a `DatabaseError` from `context.databases` or a refused local database. Any other error is reported as `COMMAND_FAILED`. Only the code and the message are printed, never the stack, the cause or other fields.
 - Core commands may reuse an extension: `module enable <id> --apply` runs the `auth.scopes.sync` capability of `auth.core` after regenerating the composition, so a freshly enabled module is visible to workspace owners without a second command.
 
 The complete customer example is in `.ai/examples/customer-cli-extension`. New module scaffolds include the catalog and implementation files when the approved spec declares the `cli` capability.

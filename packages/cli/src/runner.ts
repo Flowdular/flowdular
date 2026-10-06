@@ -3,15 +3,13 @@ import {
 	approvalGrantKeyringFromEnvironment,
 	approvalInputDigest,
 	PLATFORM_API_VERSION,
-	RegistryError,
 	verifyApprovalGrant,
 } from '@flowdular/kernel';
 import {
 	validateInstalledModules,
 	recoverModuleInstall,
 } from './module-install.ts';
-import { ModuleDistributionError } from './module-artifact.ts';
-import { DatabaseMigrationError } from '@flowdular/database';
+import { commandFailure } from './command-failure.ts';
 import {
 	applyModulePlan,
 	createModulePlan,
@@ -1052,13 +1050,6 @@ export async function runCommand(
 			`Unknown command: ${arguments_.positionals.join(' ')}`,
 		);
 	} catch (error) {
-		return failure(
-			error instanceof ModuleDistributionError ||
-				error instanceof RegistryError ||
-				error instanceof DatabaseMigrationError
-				? error.code
-				: 'COMMAND_FAILED',
-			error instanceof Error ? error.message : String(error),
-		);
+		return commandFailure(error);
 	}
 }
