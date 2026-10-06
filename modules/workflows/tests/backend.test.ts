@@ -4607,6 +4607,34 @@ async function cancellationRace(
 			});
 			return detail!;
 		},
+		/** Starts a second worker over the same store and reports its first claim. */
+		async otherWorker() {
+			let report!: (claimed: unknown) => void;
+			const firstClaim = new Promise<unknown>((resolve) => (report = resolve));
+			const observed = new Proxy(database.repository, {
+				get(target, property) {
+					const value = Reflect.get(target, property, target) as unknown;
+					if (typeof value !== 'function') return value;
+					return async (...args: unknown[]) => {
+						const returned = await (value.apply(
+							target,
+							args,
+						) as Promise<unknown>);
+						if (property === 'claimNext') report(returned);
+						return returned;
+					};
+				},
+			});
+			const other = createWorkflowsRuntime({
+				databases: gate.provider,
+				repository: observed,
+				capabilities: registry,
+				cursorKey: Buffer.alloc(32, 76),
+				worker: { pollMs: 250, leaseMs: 1_000 },
+			});
+			await other.start();
+			return { runtime: other, firstClaim };
+		},
 		async dispose() {
 			await runtime.dispose();
 			await database.dispose();
@@ -4887,6 +4915,81 @@ describe('workflow worker transitions after a cancellation', () => {
 			await race.dispose();
 		}
 	});
+
+	it('leaves a run to its owner when a cancellation lands inside a node', async () => {
+		const race = await cancellationRace(agentGraph());
+		let other: Awaited<ReturnType<typeof race.otherWorker>> | undefined;
+		try {
+			let runId = '';
+			let otherClaim: unknown = 'not reached';
+			race.wrapNext('markChildWaiting', async (call) => {
+				await race.service.cancel('tenant-a', runId, actor);
+				other = await race.otherWorker();
+				otherClaim = await other.firstClaim;
+				/* A worker that took the run anyway finishes its cancellation first. */
+				if (otherClaim) {
+					await waitFor(
+						async () =>
+							(await race.service.getRun('tenant-a', runId))?.status ===
+							'cancelled',
+					);
+				}
+				return call();
+			});
+			await race.runtime.start();
+			runId = await race.enqueue();
+			await waitFor(async () =>
+				(await race.service.getRunDetail('tenant-a', runId)).events.some(
+					(event) => event.type === 'node.cancel.acknowledged',
+				),
+			);
+			race.result.current = { name: 'must not be routed' };
+			const detail = await race.settled(runId);
+			expect(otherClaim).toBeNull();
+			expect(detail.run.status).toBe('cancelled');
+			expect(lateIgnoredChildren(detail)).toEqual(['child-run-1']);
+		} finally {
+			await other?.runtime.dispose();
+			await race.dispose();
+		}
+	});
+});
+
+const detailRead = (service: WorkflowsService, runId: string) =>
+	service.getRunDetail('tenant-a', runId).then(
+		(detail) => ({ status: detail.run.status }),
+		(error: Error) => ({ error: error.message }),
+	);
+
+describe('workflow run detail while a worker resumes a wait', () => {
+	it('reads a run whose due retry is claimed, then started', async () => {
+		const race = await cancellationRace(agentGraph(), failingAgents);
+		try {
+			let runId = '';
+			const reads: unknown[] = [];
+			race.wrapNext(
+				'startAttempt',
+				async (call) => {
+					reads.push(await detailRead(race.service, runId));
+					const started = await call();
+					reads.push(await detailRead(race.service, runId));
+					return started;
+				},
+				([write]) => (write as { attempt: number }).attempt === 2,
+			);
+			await race.runtime.start();
+			runId = await race.enqueue();
+			const detail = await race.settled(runId);
+			expect(reads).toEqual([
+				{ status: expect.any(String) },
+				{ status: expect.any(String) },
+			]);
+			expect(detail.run.status).toBe('failed');
+			expect(agentAttempts(detail)).toHaveLength(2);
+		} finally {
+			await race.dispose();
+		}
+	});
 });
 
 /* These cancellations commit inside the worker's own transaction, which needs
@@ -5079,6 +5182,80 @@ describe.skipIf(process.env.FD_TEST_DATABASE_ADAPTER !== 'postgresql')(
 				await expect(cancellation).resolves.toMatchObject({ requested: true });
 				expect(detail.run.status).toBe('cancelled');
 				expect(lateIgnoredChildren(detail)).toEqual(['action-1']);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('orders a cancellation after an edge settled beside it', async () => {
+			const race = await cancellationRace(agentGraph());
+			try {
+				let runId = '';
+				let cancellation: Promise<{ requested: boolean }> | undefined;
+				race.wrapNext('settleEdge', async (call) => {
+					/* The cancellation holds the run and has read its sequence. */
+					const hold = race.gate.holdNextWrite((text) =>
+						text.startsWith('INSERT INTO workflow_run_events'),
+					);
+					cancellation = race.service.cancel('tenant-a', runId, actor);
+					await hold.arrived;
+					const settling = call();
+					await race.gate.settledOrBlocked(settling);
+					hold.release();
+					return settling;
+				});
+				await race.runtime.start();
+				runId = await race.enqueue();
+				await waitFor(() => cancellation !== undefined);
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				const detail = await race.settled(runId);
+				expect(detail.run.status).toBe('cancelled');
+				expect(race.enqueues()).toBe(0);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('orders a cancellation after a node event appended beside it', async () => {
+			const race = await cancellationRace(agentGraph());
+			try {
+				await race.runtime.start();
+				const runId = await race.enqueue();
+				await waitFor(
+					async () =>
+						(await race.service.getRun('tenant-a', runId))?.status ===
+						'waiting-agent',
+				);
+				await race.runtime.stop();
+				const repository = await race.runtime.repository();
+				const hold = race.gate.holdNextWrite((text) =>
+					text.startsWith('INSERT INTO workflow_run_events'),
+				);
+				const cancellation = race.service.cancel('tenant-a', runId, actor);
+				await hold.arrived;
+				/* What withdrawing a parked approval appends while the run lives. */
+				const appending = repository.appendRunEvent(
+					'tenant-a',
+					runId,
+					'node.cancel.requested',
+					{
+						nodeId: 'agent.process',
+						attempt: 1,
+						childKind: 'agent',
+						childId: 'child-run-1',
+					},
+					Date.now(),
+				);
+				await race.gate.settledOrBlocked(appending);
+				hold.release();
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				await expect(appending).resolves.toMatchObject({
+					type: 'node.cancel.requested',
+				});
+				const detail = await race.service.getRunDetail('tenant-a', runId);
+				expect(detail.run.status).toBe('cancel-requested');
 				expect(cancelRequests(detail)).toBe(1);
 			} finally {
 				await race.dispose();

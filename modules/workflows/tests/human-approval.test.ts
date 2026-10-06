@@ -356,6 +356,46 @@ describe('WORKFLOWS-HUMAN-APPROVAL', () => {
 		).toBe(true);
 	});
 
+	it('WORKFLOWS-HUMAN-APPROVAL keeps the run detail readable while a decision wakes the run', async () => {
+		const approvals = fakeApprovals();
+		let service: WorkflowsService | undefined;
+		let runId = '';
+		const reads: unknown[] = [];
+		/* The worker reads the decided request after it claimed the woken run and
+		   before it writes anything, which is where the detail is read too. */
+		const capability: ApprovalsRequests = {
+			...approvals.capability,
+			get: async (tenant, id) => {
+				const request = await approvals.capability.get(tenant, id);
+				if (request?.status === 'approved' && service) {
+					reads.push(
+						await service.getRunDetail(tenantId, runId).then(
+							(detail) => ({ status: detail.run.status }),
+							(error: Error) => ({ error: error.message }),
+						),
+					);
+				}
+				return request;
+			},
+		};
+		const runtime = trackedRuntime(registry(capability));
+		({ service, runId } = await startRun(runtime, 'approve-wake-detail'));
+		await waitFor(
+			async () =>
+				(await service!.getRun(tenantId, runId))?.status === 'waiting-approval',
+		);
+
+		await approvals.decide('approval-1', 'approved');
+		await waitFor(
+			async () =>
+				(await service!.getRun(tenantId, runId))?.status === 'succeeded',
+		);
+		expect(reads).toEqual([{ status: expect.any(String) }]);
+		expect((await service.getRunDetail(tenantId, runId)).run.status).toBe(
+			'succeeded',
+		);
+	});
+
 	it('WORKFLOWS-HUMAN-APPROVAL keeps a run parked past the live window and withdraws the request at the deadline', async () => {
 		const clock = workerClock();
 		const approvals = fakeApprovals({ now: clock.now });

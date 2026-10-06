@@ -617,9 +617,9 @@ const SQL = Object.freeze({
 		  OR (status = 'cancel-requested' AND (lease_expires_at IS NULL OR lease_expires_at <= $4))
 		 )
 		 ORDER BY queued_at, id LIMIT $5`,
-	/* $9 is the status the claim read. A cancellation clears the lease, so the
-		   lease predicate alone still matches a run cancelled since that read and
-		   writes the stale status back over the request. */
+	/* $9 is the status the claim read. A run parked on a wait holds no lease,
+		   so the lease predicate alone still matches a run cancelled since that
+		   read and writes the stale status back over the request. */
 	claimRun: `UPDATE workflow_runs SET status = $1, lease_owner = $2, lease_expires_at = $3,
 		 started_at = coalesce(started_at, $4)
 		 WHERE tenant_id = $5 AND id = $6
@@ -658,6 +658,8 @@ const SQL = Object.freeze({
 	markNodeWaitingChild: `UPDATE workflow_node_states
 		 SET status = 'waiting-child', next_attempt_at = NULL
 		 WHERE tenant_id = $1 AND run_id = $2 AND node_id = $3`,
+	resumeRetryingRun: `UPDATE workflow_runs SET status = 'running'
+		 WHERE tenant_id = $1 AND id = $2 AND status = 'waiting-retry'`,
 	markRunWaitingAgent: `UPDATE workflow_runs SET status = 'waiting-agent'
 		 WHERE tenant_id = $1 AND id = $2 AND status = 'running'`,
 	markRunWaitingApproval: `UPDATE workflow_runs SET status = 'waiting-approval'
@@ -711,8 +713,11 @@ const SQL = Object.freeze({
 		 WHERE tenant_id = $7 AND id = $8 AND status = $9`,
 	expireRunPayloads: `UPDATE workflow_payloads SET expires_at = $1
 		 WHERE tenant_id = $2 AND run_id = $3 AND kind = 'execution'`,
+	/* The lease stays with a worker inside the run, which finds the request at
+		   its next step. Clearing it would let a second worker take the run while
+		   the first still writes to it. */
 	requestCancellation: `UPDATE workflow_runs SET status = 'cancel-requested',
-		 cancellation_requested_at = $1, lease_owner = NULL, lease_expires_at = NULL
+		 cancellation_requested_at = $1
 		 WHERE tenant_id = $2 AND id = $3
 		 AND status NOT IN ('cancel-requested', 'succeeded', 'failed', 'refused', 'cancelled')`,
 	readExecutionPayload: `SELECT ciphertext FROM workflow_payloads
@@ -970,6 +975,13 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		recordedAt: number,
 		virtualOffsetMs?: number,
 	): Promise<WorkflowRunEventV1> {
+		/* The next sequence is read from the stream, so two transactions
+		   appending to one run side by side would read the same one and the
+		   later insert would fail: a cancellation request, or the write that
+		   records a child the worker already started. The run's row lock
+		   orders them. It is a statement of its own so that the read below sees
+		   whatever the lock waited for; most callers hold it already. */
+		await this.#query(transaction, SQL.lockRun, [tenantId, runId]);
 		const previous = (
 			await this.#query<{ sequence: Int | null }>(
 				transaction,
@@ -1733,15 +1745,12 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			if (!claimable) return null;
 			const priorLease = row.lease_owner;
 			const recovering = priorLease !== null && row.status !== 'queued';
-			/* A due retry becomes runnable again. Keeping the run in waiting-retry
-			   after its node starts would make the new waiting-child projection
-			   unreachable by the next claim. */
-			const status =
-				row.status === 'queued' ||
-				row.status === 'waiting-retry' ||
-				row.status === 'waiting-approval'
-					? 'running'
-					: row.status;
+			/* Only a queued run records its claim as an event. A claimed wait keeps
+			   its status until the event that ends it moves the row in the same
+			   transaction: node.retry.started in startAttempt, node.attempt.settled
+			   in settleAttempt. Moving it here would leave the row ahead of the
+			   events until then. */
+			const status = row.status === 'queued' ? 'running' : row.status;
 			const changed = await this.#exec(transaction, SQL.claimRun, [
 				status,
 				workerId,
@@ -1899,6 +1908,13 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			) {
 				return null;
 			}
+			/* The node.ready below ends the run's wait for this retry. */
+			if (run.status === 'waiting-retry') {
+				await this.#exec(transaction, SQL.resumeRetryingRun, [
+					write.tenantId,
+					write.runId,
+				]);
+			}
 			const payloadId = await this.#storePayload(
 				transaction,
 				write.tenantId,
@@ -2040,10 +2056,6 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				runId,
 				nodeId,
 			]);
-			/* The child already exists. Without the run's lock, a cancellation
-			   appending beside this event takes the same sequence and fails this
-			   write, and the cancellation never learns of the child. */
-			await this.#query(transaction, SQL.lockRun, [tenantId, runId]);
 			if (childKind === 'agent') {
 				await this.#exec(transaction, SQL.markRunWaitingAgent, [
 					tenantId,
