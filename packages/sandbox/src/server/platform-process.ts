@@ -129,6 +129,14 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 	const stop = (): Promise<void> => {
 		if (stopPromise) return stopPromise;
 		stopPromise = (async () => {
+			/* Darwin answers EPERM, not ESRCH, for a group whose members have all
+			   exited but are not reaped yet, the state right after the wizard's
+			   restart exit. The other cause of EPERM, a member running as another
+			   user, does not occur in a group this launcher spawned. */
+			const groupGone = (error: unknown) => {
+				const code = (error as NodeJS.ErrnoException).code;
+				return code === 'ESRCH' || code === 'EPERM';
+			};
 			const active = () => {
 				if (process.platform === 'win32' || !child.pid)
 					return child.exitCode === null && child.signalCode === null;
@@ -136,7 +144,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 					process.kill(-child.pid, 0);
 					return true;
 				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+					if (groupGone(error)) return false;
 					throw error;
 				}
 			};
@@ -147,7 +155,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 					else if (child.exitCode === null && child.signalCode === null)
 						child.kill(signal);
 				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+					if (!groupGone(error)) throw error;
 				}
 			};
 			kill('SIGTERM');

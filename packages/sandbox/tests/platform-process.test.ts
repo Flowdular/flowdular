@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
 	findRunningPlatformUrl,
 	PlatformStartAbortedError,
@@ -16,6 +16,7 @@ import {
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await Promise.all(
 		temporaryDirectories
 			.splice(0)
@@ -417,6 +418,98 @@ createServer(async (request, response) => {
 		expect(await application.text()).toContain('Application');
 	} finally {
 		await platform.stop();
+		const pids = (await readFile(pidFile, 'utf8'))
+			.trim()
+			.split('\n')
+			.map(Number);
+		for (const pid of pids) await waitUntil(() => processGone(pid));
+	}
+}, 90_000);
+
+it('restarts after setup when the exited process group answers EPERM', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-eperm-'));
+	temporaryDirectories.push(root);
+	const marker = join(root, 'configured');
+	const pidFile = join(root, 'children.txt');
+	await writeFile(
+		join(root, 'package.json'),
+		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
+	);
+	await writeFile(
+		join(root, 'child.mjs'),
+		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
+const args = process.argv;
+const port = Number(args[args.indexOf('--port') + 1]);
+const host = args[args.indexOf('--host') + 1];
+const setup = !existsSync(${JSON.stringify(marker)});
+createServer((request, response) => {
+  if (request.url === '/setup' && setup) {
+    if (request.method === 'POST') {
+      writeFileSync(${JSON.stringify(marker)}, 'configured');
+      response.writeHead(204).end();
+      setTimeout(() => process.exit(Number(process.env.FD_SETUP_RESTART_EXIT_CODE)), 100);
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html', 'x-flowdular-setup': 'first-run' }).end('<h1>Setup</h1>');
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/html' }).end('<h1>Application</h1>');
+}).listen(port, host);
+`,
+	);
+	/* Darwin reports a process group whose members have exited but are not
+	   reaped yet as EPERM rather than ESRCH. */
+	const signal = process.kill.bind(process);
+	const kill = vi
+		.spyOn(process, 'kill')
+		.mockImplementation((pid: number, name?: string | number) => {
+			try {
+				return signal(pid, name);
+			} catch (error) {
+				if (pid < 0 && (error as NodeJS.ErrnoException).code === 'ESRCH')
+					throw Object.assign(new Error('kill EPERM'), {
+						code: 'EPERM',
+						syscall: 'kill',
+					});
+				throw error;
+			}
+		});
+	const ready: boolean[] = [];
+	const logs: string[] = [];
+	let settle = () => {};
+	const settled = new Promise<void>((resolve) => {
+		settle = resolve;
+	});
+	try {
+		const platform = await startPlatformProcess({
+			workspaceRoot: root,
+			port: await freePort(),
+			quiet: true,
+			onReady: (state) => {
+				ready.push(state.setup);
+				if (!state.setup) settle();
+			},
+			log: (line) => {
+				logs.push(line);
+				if (/restart failed|did not restart|process stopped/.test(line))
+					settle();
+			},
+		});
+		try {
+			expect(ready).toEqual([true]);
+			expect(
+				(await fetch(`${platform.url}/setup`, { method: 'POST' })).status,
+			).toBe(204);
+			await settled;
+			expect(logs).not.toContain('the platform restart failed: kill EPERM');
+			expect(ready).toEqual([true, false]);
+		} finally {
+			await platform.stop();
+		}
+	} finally {
+		kill.mockRestore();
 		const pids = (await readFile(pidFile, 'utf8'))
 			.trim()
 			.split('\n')
