@@ -337,10 +337,12 @@ export function createByokDriver(
 
 				let text = '';
 				let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+				let aborted = false;
 				for await (const part of result.fullStream) {
 					while (queue.length > 0) yield queue.shift()!.event;
 					if (part.type === 'text-delta') text += part.text;
 					if (part.type === 'finish') usage = normalizeUsage(part.totalUsage);
+					if (part.type === 'abort') aborted = true;
 					if (part.type === 'error') throw part.error;
 				}
 				while (queue.length > 0) yield queue.shift()!.event;
@@ -352,7 +354,7 @@ export function createByokDriver(
 					resumeId: request.resumeId ?? null,
 					usage,
 					costUsd: null,
-					finishReason: 'stop',
+					finishReason: aborted ? 'aborted' : 'stop',
 				};
 			} catch (error) {
 				while (queue.length > 0) yield queue.shift()!.event;
