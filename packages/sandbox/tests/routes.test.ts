@@ -481,6 +481,7 @@ describe('sandbox route security', () => {
 			for (const [method, suffix] of [
 				['GET', ''],
 				['GET', '/turn/stream'],
+				['GET', '/events'],
 				['GET', '/preview'],
 				['GET', '/spec'],
 				['POST', '/approve'],
@@ -1381,5 +1382,166 @@ describe('detached turns', () => {
 		);
 		expect(stopped.status).toBe(200);
 		expect((await readSession(root, session.id)).state).toBe('deleted');
+	});
+});
+
+/* Reads one event stream as it arrives. Comment lines are keepalives, not
+   events, so they are skipped. */
+function eventReader(response: Response) {
+	const reader = response.body!.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	return {
+		async next(): Promise<{ readonly event: string; readonly data: unknown }> {
+			for (;;) {
+				const end = buffer.indexOf('\n\n');
+				if (end >= 0) {
+					const block = buffer.slice(0, end);
+					buffer = buffer.slice(end + 2);
+					const event = /^event: (.+)$/m.exec(block)?.[1];
+					if (!event) continue;
+					return {
+						event,
+						data: JSON.parse(/^data: (.+)$/m.exec(block)?.[1] ?? 'null'),
+					};
+				}
+				const chunk = await reader.read();
+				if (chunk.done) throw new Error('The event stream ended.');
+				buffer += decoder.decode(chunk.value, { stream: true });
+			}
+		},
+		close: () => reader.cancel(),
+	};
+}
+
+describe('following a session from another client', () => {
+	/* A turn that stays running until the test lets it go, so "running" is a
+	   state the test controls instead of a race it hopes to win. */
+	function heldDriver() {
+		let release = () => undefined as void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const base = fakeDriver({ handoff: 'HANDOFF: none - done', delayMs: 0 });
+		const driver: CodingAgentDriver = {
+			...base,
+			async *run(request: CodingAgentTurnRequest) {
+				await held;
+				yield* base.run(request);
+			},
+		};
+		return { driver, release };
+	}
+
+	it('tells an open view that another client started a turn, finished it and approved', async () => {
+		const root = await workspace();
+		const { driver, release } = heldDriver();
+		const call = api(fakeRuntime(root, driver));
+		const session = await sessionFor(root);
+		const view = async () =>
+			(await (
+				await call('GET', `/sandbox/api/sessions/${session.id}`)
+			).json()) as {
+				running: boolean;
+				specs: readonly { approved: boolean | null }[];
+			};
+
+		const watching = await call(
+			'GET',
+			`/sandbox/api/sessions/${session.id}/events`,
+		);
+		expect(watching.status).toBe(200);
+		expect(watching.headers.get('content-type')).toContain('text/event-stream');
+		const tab = eventReader(watching);
+		expect(await tab.next()).toEqual({
+			event: 'ready',
+			data: { sessionId: session.id, running: false },
+		});
+
+		/* Another client starts a turn. */
+		const turn = call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+			body: { role: 'business-manager', message: 'Draft it', driver: 'fake' },
+		});
+		expect(await tab.next()).toEqual({
+			event: 'changed',
+			data: { sessionId: session.id, running: true },
+		});
+		expect((await view()).running).toBe(true);
+
+		/* The turn finishes. Every change while it ran says so; the view hears
+		   the one that says it stopped, and reloads to a finished session. */
+		release();
+		await readSse(await turn);
+		let event = await tab.next();
+		while ((event.data as { running: boolean }).running) {
+			event = await tab.next();
+		}
+		expect(event.event).toBe('changed');
+		expect((await view()).running).toBe(false);
+
+		/* A change to the record alone reaches the view too. */
+		await call('POST', `/sandbox/api/sessions/${session.id}/settings`, {
+			body: { autoContinue: false },
+		});
+		expect((await tab.next()).event).toBe('changed');
+		await tab.close();
+
+		/* Another client approves the draft the agent left. */
+		const specPath = join(
+			sessionPaths(root, session.id, session.moduleSuffix).workspace,
+			'modules',
+			'booking',
+			'spec',
+			'module.yaml',
+		);
+		const spec = 'schemaVersion: 1\nid: booking.core\nstatus: draft\n';
+		await mkdir(join(specPath, '..'), { recursive: true });
+		await writeFile(specPath, spec, 'utf8');
+		const second = eventReader(
+			await call('GET', `/sandbox/api/sessions/${session.id}/events`),
+		);
+		expect((await second.next()).event).toBe('ready');
+		const approved = await call(
+			'POST',
+			`/sandbox/api/sessions/${session.id}/approve`,
+			{ body: { module: 'booking', specHash: hashSpec(spec) } },
+		);
+		expect(approved.status).toBe(200);
+		expect((await second.next()).event).toBe('changed');
+		expect((await view()).specs[0]!.approved).toBe(true);
+		await second.close();
+	});
+
+	it('releases a closed view and refuses views past the bound', async () => {
+		const root = await workspace();
+		const call = api(
+			fakeRuntime(root, fakeDriver({ handoff: 'HANDOFF: none - done' })),
+		);
+		const session = await sessionFor(root);
+		const open = () =>
+			call('GET', `/sandbox/api/sessions/${session.id}/events`);
+
+		/* Closing a view gives its place back, however often tabs come and go. */
+		for (let index = 0; index < 40; index += 1) {
+			const response = await open();
+			expect(response.status).toBe(200);
+			await response.body!.cancel();
+		}
+
+		const views = [];
+		for (let index = 0; index < 32; index += 1) {
+			const response = await open();
+			expect(response.status).toBe(200);
+			views.push(response);
+		}
+		const refused = await open();
+		expect(refused.status).toBe(429);
+		expect(
+			((await refused.json()) as { error: { code: string } }).error.code,
+		).toBe('SESSION_WATCHERS_EXHAUSTED');
+		for (const response of views) await response.body!.cancel();
+		const reopened = await open();
+		expect(reopened.status).toBe(200);
+		await reopened.body!.cancel();
 	});
 });

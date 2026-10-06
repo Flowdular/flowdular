@@ -45,8 +45,12 @@ is a new spec-authoring step and needs approval after that edit.
 ## 3. Sandbox path
 
 In the sandbox, use the operator approval action for the selected session module.
-The live route is POST /sandbox/api/sessions/:id/approve, exposed by
-approveSpecification in packages/sandbox/src/client/api.ts.
+The live route is POST /sandbox/api/sessions/:id/approve with
+{ "module", "specHash" }, exposed by approveSpecification in
+packages/sandbox/src/client/api.ts. specHash is the SHA-256 the review card
+shows for the text it renders. The route refuses with 409 SPEC_CHANGED when the
+current text has another hash, and with 409 QUESTIONS_PENDING while the module
+has unanswered questions; it records nothing then.
 
 The route changes the status presentation and records the SHA-256 hash of the
 exact approved text in the session. Do not patch the session workspace file to

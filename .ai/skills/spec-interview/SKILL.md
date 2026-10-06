@@ -74,7 +74,7 @@ In the sandbox, end the reply with exactly one fenced block tagged `questions`, 
 ```
 ````
 
-The sandbox renders it as a form and the answers return in the next turn as a `Decisions` section. Outside the sandbox: in Claude Code ask through the question tool with the same options, and in Codex ask in plain text with the options numbered. In every host, `recommended` is the default from the card, and an unanswered question stays a question, never a guess.
+The sandbox enforces the bounds: at most 12 questions, each 1 to 400 characters; at most 8 options per question, each 1 to 120 characters; `recommended` is one of the options; no line breaks inside a value; the whole block at most 8000 characters. A block outside them comes back to you once with the reason. The sandbox renders it as a form and the answers return in the next turn as a `Decisions` section. Outside the sandbox: in Claude Code ask through the question tool with the same options, and in Codex ask in plain text with the options numbered. In every host, `recommended` is the default from the card, and an unanswered question stays a question, never a guess.
 
 When the answers come back, copy each one into `decisions[]` with `decidedBy: user` and the answer text, and update whatever the answer changed.
 
