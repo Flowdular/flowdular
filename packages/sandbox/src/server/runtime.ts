@@ -261,9 +261,22 @@ export async function createSandboxRuntime(
 				workspaceRoot,
 				(current) => {
 					const change = typeof patch === 'function' ? patch(current) : patch;
-					return change === null
-						? current
-						: { ...current, ...change, version: 1 };
+					if (change === null) return current;
+					/* A caller may have checked an address against a cached copy
+					   that predates the launcher's credential; the stored token must
+					   never follow an address without a token of its own. */
+					if (
+						change.platformUrl !== undefined &&
+						change.platformUrl !== current.platformUrl &&
+						change.platformToken === undefined &&
+						current.platformToken !== null
+					) {
+						throw new SandboxSetupError(
+							'PLATFORM_TOKEN_REQUIRED',
+							'Changing the application address needs the API token for that application.',
+						);
+					}
+					return { ...current, ...change, version: 1 };
 				},
 			);
 			return rebuild();

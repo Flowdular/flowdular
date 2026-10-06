@@ -130,26 +130,57 @@ function holdFirstWrite(name: string) {
 	};
 }
 
-/* Answers 503 like a platform that is still booting, so a runtime holding a
-   credential settles its connection without reaching any real service. It
-   keeps the Authorization header of every request it receives. */
-async function bootingPlatform(): Promise<{
+/* A platform that records the Authorization header of every request. A
+   booting one answers 503, so a runtime holding a credential settles its
+   connection without reaching any real service; a granting one answers the
+   sandbox authority check for any token, as a platform a caller runs would. */
+async function recordingPlatform(granting = false): Promise<{
 	readonly url: string;
 	readonly authorizations: string[];
 }> {
 	const authorizations: string[] = [];
 	const server = createServer((request, response) => {
 		authorizations.push(request.headers.authorization ?? '');
-		response.statusCode = 503;
-		response.end();
+		if (!granting) {
+			response.statusCode = 503;
+			response.end();
+			return;
+		}
+		response.setHeader('content-type', 'application/json');
+		response.end(
+			JSON.stringify({
+				principal: {
+					tenantId: 'tenant-x',
+					accountId: 'account-x',
+					email: 'caller@example.test',
+					displayName: 'Caller',
+					role: 'owner',
+					scopes: [],
+					tenantName: 'Tenant',
+					tenantSlug: 'tenant',
+				},
+				writeAllowed: true,
+				authority: {
+					granted: true,
+					grantId: 'grant-x',
+					capabilities: ['sandbox.access.use'],
+					expiresAt: null,
+				},
+			}),
+		);
 	});
 	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-	cleanup.push(() => new Promise<void>((done) => server.close(() => done())));
+	cleanup.push(async () => {
+		server.closeAllConnections();
+		await new Promise<void>((done) => server.close(() => done()));
+	});
 	return {
 		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
 		authorizations,
 	};
 }
+
+const bootingPlatform = () => recordingPlatform(false);
 
 const preview: PreviewRuntime = {
 	compose: () => Promise.reject(new Error('no preview in tests')),
@@ -158,24 +189,26 @@ const preview: PreviewRuntime = {
 	dispose: () => undefined,
 };
 
-/* The browser sign-in a self-hosted sandbox offers before any session. */
-async function connectBrowser(
+async function post(
 	runtime: SandboxRuntime,
-	input: { readonly platformUrl: string; readonly token: string },
-): Promise<void> {
+	path: string,
+	input: Record<string, unknown>,
+	cookie?: string,
+): Promise<Response> {
 	const router = createRouter([
 		...createSandboxRoutes(runtime, preview, { port: 4320 }),
 	]);
-	const url = new URL('/sandbox/api/connect', 'http://127.0.0.1:4320');
+	const url = new URL(path, 'http://127.0.0.1:4320');
 	const match = router.match('POST', url.pathname);
 	if (!match || match.route.type !== 'server') throw new Error('no route');
-	await match.route.handler({
+	return match.route.handler({
 		request: new Request(url, {
 			method: 'POST',
 			headers: {
 				host: '127.0.0.1:4320',
 				'content-type': 'application/json',
 				[SANDBOX_REQUEST_HEADER]: '1',
+				...(cookie ? { cookie } : {}),
 			},
 			body: JSON.stringify(input),
 		}),
@@ -183,6 +216,15 @@ async function connectBrowser(
 		url,
 		state: new Map(),
 	});
+}
+
+/* The browser sign-in a self-hosted sandbox offers before any session. */
+async function connectBrowser(
+	runtime: SandboxRuntime,
+	input: { readonly platformUrl: string; readonly token: string },
+): Promise<string> {
+	const response = await post(runtime, '/sandbox/api/connect', input);
+	return (response.headers.get('set-cookie') ?? '').split(';')[0]!;
 }
 
 const OPERATOR_TOKEN: SealedSecret = {
@@ -445,6 +487,49 @@ describe('sandbox configuration writes', () => {
 		});
 
 		expect(elsewhere.authorizations).toEqual([]);
+		/* The sign-in goes where it would have after a refresh. */
+		expect(platform.authorizations).toContain('Bearer fd_test_browser_token');
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.platformUrl).toBe(platform.url);
+		expect(await openSecret(root, stored.platformToken!)).toBe(LAUNCHER_TOKEN);
+	});
+
+	it('keeps a stored token at its address when a signed-in browser saves another', async () => {
+		const mode = process.env.FD_SANDBOX_MODE;
+		process.env.FD_SANDBOX_MODE = 'self-hosted';
+		cleanup.push(async () => {
+			if (mode === undefined) delete process.env.FD_SANDBOX_MODE;
+			else process.env.FD_SANDBOX_MODE = mode;
+		});
+		const root = await workspace();
+		const platform = await bootingPlatform();
+		const elsewhere = await recordingPlatform(true);
+		const runtime = await createSandboxRuntime(root);
+		/* A fresh self-hosted sandbox may be pointed at an application once,
+		   before it holds a token; the launcher then collects its own. */
+		const cookie = await connectBrowser(runtime, {
+			platformUrl: elsewhere.url,
+			token: 'fd_test_browser_token',
+		});
+		expect(cookie).toMatch(/^flowdular_sandbox=/);
+		await prepareLauncherInbox(root);
+		await collectProvisionedCredential({
+			workspaceRoot: root,
+			platformUrl: platform.url,
+		});
+
+		const saved = await post(
+			runtime,
+			'/sandbox/api/config',
+			{ platformUrl: elsewhere.url },
+			cookie,
+		);
+
+		expect(elsewhere.authorizations).not.toContain(`Bearer ${LAUNCHER_TOKEN}`);
+		expect(saved.status).toBe(400);
+		expect(
+			((await saved.json()) as { error: { code: string } }).error.code,
+		).toBe('PLATFORM_TOKEN_REQUIRED');
 		const stored = await loadSandboxConfiguration(root);
 		expect(stored.platformUrl).toBe(platform.url);
 		expect(await openSecret(root, stored.platformToken!)).toBe(LAUNCHER_TOKEN);
