@@ -70,5 +70,19 @@ it('does not report an operator stop as a time limit', async () => {
 	setTimeout(() => controller.abort('stopped'), 20);
 	const events = await run({ timeoutMs: 60_000, signal: controller.signal });
 	expect(events.some((event) => event.type === 'error')).toBe(false);
-	expect(events.at(-1)).toMatchObject({ type: 'turn.completed' });
+	expect(events.at(-1)).toMatchObject({
+		type: 'turn.completed',
+		finishReason: 'aborted',
+	});
+});
+
+it('reports an operator stop without a time limit as aborted', async () => {
+	const controller = new AbortController();
+	setTimeout(() => controller.abort('stopped'), 20);
+	const events = await run({ signal: controller.signal });
+	expect(events.some((event) => event.type === 'error')).toBe(false);
+	expect(events.at(-1)).toMatchObject({
+		type: 'turn.completed',
+		finishReason: 'aborted',
+	});
 });
