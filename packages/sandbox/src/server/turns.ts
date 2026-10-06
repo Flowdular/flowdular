@@ -480,6 +480,17 @@ export function forgetDiffs(sessionId: string): void {
 	diffCache.delete(sessionId);
 }
 
+/* The state finished gates leave the drafts in. Never `validating`: nothing
+   moves a session on once its gates are done, so that state would claim work
+   no process is doing. */
+export function gateOutcomeState(
+	gates: readonly GateResult[],
+	changed: boolean,
+): 'failed' | 'previewing' | 'planned' {
+	if (gates.some((gate) => gate.status !== 'passed')) return 'failed';
+	return changed ? 'previewing' : 'planned';
+}
+
 export async function runSessionGates(
 	context: TurnContext,
 	session: SandboxSession,
@@ -1167,11 +1178,7 @@ export async function* runTurn(
 				? 'awaiting-approval'
 				: handoff.kind === 'question'
 					? 'awaiting-answers'
-					: gates.some((gate) => gate.status !== 'passed')
-						? 'validating'
-						: diffs.length > 0
-							? 'previewing'
-							: 'planned',
+					: gateOutcomeState(gates, diffs.length > 0),
 		role: roleId,
 		driver: driverId,
 	});

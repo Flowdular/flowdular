@@ -621,9 +621,9 @@ export function ChatPane(props: ChatPaneProps) @{
 											<span class="ui-mono">{question.id}</span>
 											{' ' + question.question}
 											@if (question.options.length > 0) {
-												<span class="ui-help">{question.options.join(
+												<div class="ui-help">{question.options.join(
 													' · ',
-												)}</span>
+												)}</div>
 											}
 										</li>
 									}

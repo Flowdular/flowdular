@@ -18,7 +18,7 @@ export function GateResults(props: {
 		onClose={props.onClose}
 	>
 		<div class="ui-drawer__body">
-			<div class="ui-view">
+			<div class="ui-form">
 				@if (props.running) {
 					<p role="status">{t('sandbox.gates.running')}</p>
 				} @else if (props.error) {
