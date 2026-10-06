@@ -7,6 +7,11 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { createSandboxRuntime } from '../server/runtime.ts';
 import { hashSpec } from '../server/spec.ts';
+import {
+	acquireWorkspaceLock,
+	SandboxAlreadyRunningError,
+	type WorkspaceLock,
+} from '../server/workspace-lock.ts';
 import { approvalState, loadCases, type EvalCase } from './cases.ts';
 import { runSuite, type EvalSuiteReport } from './run.ts';
 
@@ -167,26 +172,42 @@ export async function main(argv: readonly string[]): Promise<number> {
 		return 1;
 	}
 
-	const runtime = await createSandboxRuntime(options.workspace);
-	const suite = await runSuite(
-		{
-			context: {
-				workspaceRoot: options.workspace,
-				configuration: runtime.configuration(),
-				registry: runtime.registry(),
-				roles: runtime.roles(),
-				platform: runtime.platform(),
+	/* A run writes the same configuration, session records and transcripts
+	   as a running sandbox, so it takes the same workspace lock. */
+	let lock: WorkspaceLock;
+	try {
+		lock = await acquireWorkspaceLock(options.workspace);
+	} catch (error) {
+		if (!(error instanceof SandboxAlreadyRunningError)) throw error;
+		console.error(error.message);
+		return 1;
+	}
+	try {
+		const runtime = await createSandboxRuntime(options.workspace);
+		const suite = await runSuite(
+			{
+				context: {
+					workspaceRoot: options.workspace,
+					configuration: runtime.configuration(),
+					registry: runtime.registry(),
+					roles: runtime.roles(),
+					platform: runtime.platform(),
+				},
+				driver: options.driver ?? runtime.configuration().driver,
+				model: options.model,
+				...(options.json
+					? {}
+					: { onEvent: (message: string) => console.log(message) }),
 			},
-			driver: options.driver ?? runtime.configuration().driver,
-			model: options.model,
-			...(options.json
-				? {}
-				: { onEvent: (message: string) => console.log(message) }),
-		},
-		selected,
-	);
-	console.log(options.json ? JSON.stringify(suite, null, '\t') : report(suite));
-	return suite.failed > 0 ? 1 : 0;
+			selected,
+		);
+		console.log(
+			options.json ? JSON.stringify(suite, null, '\t') : report(suite),
+		);
+		return suite.failed > 0 ? 1 : 0;
+	} finally {
+		await lock.release();
+	}
 }
 
 /* tsx runs this file as the process entry; the guard keeps the module
