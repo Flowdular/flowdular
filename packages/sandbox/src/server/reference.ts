@@ -1,4 +1,6 @@
 import { materializeSdkReference } from './sdk-reference.ts';
+import { SandboxSetupError } from './workspace-root.ts';
+import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import { createRequire } from 'node:module';
 import {
 	access,
@@ -8,7 +10,7 @@ import {
 	readdir,
 	writeFile,
 } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 
 export async function referenceSource(
 	workspaceRoot: string,
@@ -238,22 +240,17 @@ export async function writeAgentPointer(
 }
 
 /* The module registry validates dependencies, so the session workspace carries
-   the manifest of every enabled module. Only the draft modules have sources. */
+   the manifest of every enabled module, including those @flowdular/sdk ships.
+   Only the draft modules have sources. */
 export async function materializeModuleGraph(
 	workspaceRoot: string,
 	sessionWorkspace: string,
 	draftModuleIds: readonly string[],
 ): Promise<readonly string[]> {
 	const drafts = new Set(draftModuleIds);
+	const directories = new Set<string>();
 	const enabled: string[] = [];
-	let entries: readonly string[] = [];
-	try {
-		entries = await readdir(join(workspaceRoot, 'modules'));
-	} catch {
-		return enabled;
-	}
-	for (const entry of entries) {
-		const manifestPath = join(workspaceRoot, 'modules', entry, 'module.json');
+	for (const manifestPath of findModuleManifests(workspaceRoot)) {
 		let manifest: { id?: string; cli?: unknown };
 		try {
 			manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
@@ -263,7 +260,15 @@ export async function materializeModuleGraph(
 			continue;
 		}
 		if (!manifest.id || drafts.has(manifest.id)) continue;
-		const target = join(sessionWorkspace, 'modules', entry, 'module.json');
+		const directory = basename(dirname(manifestPath));
+		if (directories.has(directory)) {
+			throw new SandboxSetupError(
+				'MODULE_DIRECTORY_CONFLICT',
+				`${manifest.id} shares the module directory ${directory} with another module.`,
+			);
+		}
+		directories.add(directory);
+		const target = join(sessionWorkspace, 'modules', directory, 'module.json');
 		await mkdir(dirname(target), { recursive: true });
 		/* Only the dependency graph travels into a session. A CLI declaration
 		   would point at command files this workspace does not carry, so the
