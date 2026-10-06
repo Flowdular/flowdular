@@ -134,6 +134,8 @@ flowdular auth sync-scopes --module <id> [--apply] # re-grant a module's scopes 
 flowdular auth workspaces [--limit <n>]            # workspaces of this deployment and their owners
 flowdular auth workspace-create --name <name> --owner-email <email> --owner-name <name> [--slug <id>] [--password-env <VAR>] [--actor <label>] [--apply]
 flowdular auth member-add --workspace <slug|id> --email <email> [--role <key>] [--actor <label>] [--apply]
+flowdular auth operator                            # the recorded operator workspace and whether FD_OPERATOR_TENANT overrides it
+flowdular auth operator-set <id|slug> [--actor <label>] [--apply]
 flowdular auth secrets-rotate [--apply]              # re-seal enrolled TOTP secrets with the current MFA key
 flowdular auth greenfield                          # destructive local auth reset (setup quick)
 
@@ -196,6 +198,20 @@ Both commands append an audit row to the workspace trail whose actor is
 `cli:<user>`, or `cli:<label>` with `--actor <label>`. `auth workspaces` lists
 what exists, with each workspace's owners, so the slug or id for the other
 commands is at hand.
+
+The first workspace of an empty database is recorded as the operator
+workspace, the one whose owners change the branding and the other platform
+settings. `auth operator` shows the record and says whether
+`FD_OPERATOR_TENANT` is set in that shell, which overrides the record wherever
+the deployment sets it. `auth operator-set` names another workspace, previews
+without `--apply`, and with it releases the current operator and records the
+new one, each with an audit row in that workspace's trail. If it fails between
+the two, no workspace is the operator until the same command runs again.
+
+```bash
+flowdular auth operator
+flowdular auth operator-set northwind --apply
+```
 
 ## Workspace scripts
 
