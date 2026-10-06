@@ -34,6 +34,8 @@ import {
 
 afterEach(async () => {
 	vi.restoreAllMocks();
+	/* The cleanup runs ps, which a stubbed PATH would hide. */
+	vi.unstubAllEnvs();
 	await cleanupPlatformTests();
 });
 
@@ -721,6 +723,9 @@ it('reports the address of the platform it starts before that platform answers',
 	}
 }, 90_000);
 
+/* Most of the budget goes to the sandbox's first Vite request, which
+   transforms its server modules cold and has taken a minute on a loaded
+   machine. */
 it('shows the private setup token once in the launcher terminal without putting it in HTTP state', async () => {
 	const workspace = await platformWorkspace('flowdular-launcher-setup-');
 	const root = workspace.root;
@@ -829,7 +834,7 @@ createServer((request, response) => {
 			.map(Number);
 		for (const pid of pids) await waitUntil(() => processGone(pid));
 	}
-}, 40_000);
+}, 120_000);
 
 it('stops every process in the platform group, including one that ignores SIGTERM', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-group-');
@@ -884,20 +889,15 @@ stopOnSignals(() => {
 
 it('reports a platform command that cannot be started', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-missing-');
-	const path = process.env.PATH;
 	/* The guard starts by absolute path; pnpm is looked up in an empty PATH. */
-	process.env.PATH = workspace.root;
-	try {
-		await expect(
-			startTrackedPlatform({
-				workspaceRoot: workspace.root,
-				port: await freePort(),
-				quiet: true,
-			}),
-		).rejects.toThrow('spawn pnpm ENOENT');
-	} finally {
-		process.env.PATH = path;
-	}
+	vi.stubEnv('PATH', workspace.root);
+	await expect(
+		startTrackedPlatform({
+			workspaceRoot: workspace.root,
+			port: await freePort(),
+			quiet: true,
+		}),
+	).rejects.toThrow('spawn pnpm ENOENT');
 });
 
 it.each([
