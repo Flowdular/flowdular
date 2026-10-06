@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: system.core
-specVersion: 0.9.2
-status: approved
+specVersion: 0.9.3
+status: draft
 name: System Core
 description: Provides the application shell, platform health, module discovery, the deployment's own branding, and the administration surface for module settings.
 profile: full
@@ -26,7 +26,10 @@ invariants:
   - The module catalog exposed to administrators is read from workspace manifests and specifications; it never loads module code and never changes the enabled set.
   - The Modules screen reads host-authored module sources, pinned change plans and install hashes without changing the deployed application's source or enabled set. Applying a plan remains a host CLI operation followed by a build and restart.
   - Module settings are declared by their owning module, stored per tenant by auth.core, and changed only through the settings administration API served by system.core, with an audit record.
-  - A platform-scoped setting carries one value for every workspace, so the settings administration API changes it only for a principal with system.settings.manage in the operator workspace, the tenant whose id the deployment sets in FD_OPERATOR_TENANT. A principal of any other workspace reads it with the row locked, and its write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY before any validation, storing nothing and writing no audit event. While FD_OPERATOR_TENANT is unset no workspace changes a platform-scoped setting and the stored values keep applying. Tenant-scoped settings and feature flags are unaffected.
+  - A platform-scoped setting carries one value for every workspace, so the settings administration API changes it only for a principal with system.settings.manage in the operator workspace. The operator workspace is the tenant whose id the deployment sets in FD_OPERATOR_TENANT when the variable is set, and otherwise the workspace auth.core records as the deployment's operator, which first-run setup records in the transaction that creates the first workspace. A set variable always wins and the record is then not consulted; a value that is not the id of an existing workspace leaves the deployment with no operator workspace rather than falling back to the record. A principal of any other workspace, and every principal while no operator workspace is known, reads platform-scoped rows locked, and its write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY before any validation, storing nothing and writing no audit event, while the stored values keep applying. Tenant-scoped settings and feature flags are unaffected.
+  - The operator workspace is resolved on every settings read and write, from the deployment environment and auth.core's answer for the principal's own workspace, with no cache, so a record that first-run setup, the single-workspace rule or the operator command writes applies to the next request without a restart, a redeploy or an environment change. That answer says only whether the principal's own workspace is the operator, whether another workspace is, or whether none is known, and no settings response names or identifies another workspace.
+  - The operator workspace is never chosen, changed or cleared over HTTP. No system.core route writes it and no body field, query parameter or header is read to decide it; the tenant compared is the authenticated principal's own, so a request that names another workspace is decided exactly as one that names none. The deployment changes it through FD_OPERATOR_TENANT or the operator command auth.core owns.
+  - While no operator workspace is known, every platform-scoped row carries a lock reason distinct from the one shown outside a known operator workspace. It says that no workspace is recorded as this deployment's operator and names the operator command that records one, and the Branding screen shows it on each row. The write refusal keeps the stable code PLATFORM_SETTING_OPERATOR_ONLY in both cases.
   - system.core declares the workspace time zone as a shared tenant setting, system.core.timeZone, defaulting to UTC. Only a name the runtime zone database resolves is stored, in its canonical IANA spelling, and any module that declares a dependency on system.core reads it live through the settings runtime; a value this deployment cannot resolve reads back as UTC instead of failing the reader.
   - A feature flag is a module setting declared with kind flag, which is a non-secret boolean with a declared default, a label, a description, and tenant scope, the only scope a flag may take. It is stored, read, validated and overridden exactly like any other setting, so a module reads it on the request path through the settings runtime at no cost beyond the settings read itself; system.core adds no flag store, no flag endpoint and no second write path.
   - The composed module set is CLI-owned and baked at build; a module cannot be added to a running application from the UI. system.core owns per-workspace activation of the modules the application already composes, stored in the tenant table system_module_activations under forced row-level security. A composed module without a row is active.
@@ -54,6 +57,7 @@ dataOwnership:
   - system.core owns application-shell layout, navigation behavior, route selection, and contribution composition.
   - Feature modules own their navigation metadata and screen implementations.
   - Module settings values are stored by auth.core on behalf of the declaring module; system.core owns the settings API, the per-module settings section of the Modules drawer, the Flags screen, and the settings permissions.
+  - The deployment's operator workspace record is owned by auth.core, which writes it when it provisions the first workspace, by its single-workspace rule and through its operator command. system.core owns the precedence of FD_OPERATOR_TENANT over that record and the settings locks that follow from it, reads the record only through the auth runtime, and never reads its table.
   - A feature flag is owned by the module that declares it; system.core only lists and edits it, and auth.core records the change.
   - system.core owns the per-workspace module activation rows and the system.modules.v1 capability; the composed module set stays owned by the CLI and flowdular.json.
 entities:
@@ -129,19 +133,35 @@ acceptanceScenarios:
   - id: SYSTEM-SETTINGS-READ
     given: A principal with system.settings.read.
     when: The principal requests the declared settings, from a module drawer or from GET /api/settings.
-    then: Every declared setting is listed with its current tenant value, platform-scoped rows are marked as applying to all workspaces and, outside the operator workspace, locked with a reason saying only the deployment operator changes them, and secret values are never returned.
+    then: Every declared setting is listed with its current tenant value, platform-scoped rows are marked as applying to all workspaces and are locked outside the operator workspace with a reason saying only the deployment operator's workspace changes them, or, while no operator workspace is known, with a reason saying none is recorded and naming the operator command, no response names another workspace, and secret values are never returned.
   - id: SYSTEM-SETTINGS-MANAGE
     given: A principal with system.settings.manage changes a declared tenant setting, or a platform-scoped one from the operator workspace.
     when: The value passes the declared type, bounds, and enum validation.
     then: The value is stored for the tenant, or for the deployment when the setting is platform-scoped, takes effect on the next read, and an audit event records the change.
+  - id: SYSTEM-SETTINGS-PLATFORM-FIRST-RUN
+    given: A new deployment on Vercel, Docker, a local checkout or the sandbox's local platform that sets no FD_OPERATOR_TENANT, whose first-run setup created workspace A, and a workspace B signed up afterwards.
+    when: An owner of A and an owner of B each open Administration, Branding and the module settings and change the application name and a platform-scoped setting of another module.
+    then: A's platform-scoped rows are unlocked and its writes are stored for the deployment with one audit event each, with no environment change, restart or redeploy; B's rows are locked with the reason that only the deployment operator's workspace changes them, and its writes are refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, storing nothing and writing no audit event.
   - id: SYSTEM-SETTINGS-PLATFORM-OPERATOR
-    given: A deployment whose FD_OPERATOR_TENANT names workspace A, and an owner of workspace A and an owner of workspace B.
+    given: A deployment whose FD_OPERATOR_TENANT names workspace A while auth.core records workspace B as the operator, and an owner of workspace A and an owner of workspace B.
     when: The owner of B changes a platform-scoped setting of system.core and one of another module, then the owner of A changes the same settings, and the owner of B changes a tenant setting and a feature flag of B.
-    then: The writes of B's owner to platform-scoped settings are refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, no audit event is written and both workspaces still read the earlier values; the writes of A's owner are stored for the deployment with one audit event each and both workspaces read them on their next read; the tenant setting and the flag of B are stored for B alone as before.
+    then: The writes of B's owner to platform-scoped settings are refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, no audit event is written and both workspaces still read the earlier values; the writes of A's owner are stored for the deployment with one audit event each and both workspaces read them on their next read; the tenant setting and the flag of B are stored for B alone as before; the record still names B and is not consulted while the variable is set.
+  - id: SYSTEM-SETTINGS-PLATFORM-OVERRIDE-UNKNOWN
+    given: A deployment whose FD_OPERATOR_TENANT is set to a value that is not the id of any workspace, while auth.core records workspace A as the operator, and owners of A and of B.
+    when: Both owners read the settings and change a platform-scoped setting.
+    then: Every platform-scoped row in both workspaces is locked with the reason that no operator workspace is known, both writes are refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, and the record is neither consulted nor changed.
+  - id: SYSTEM-SETTINGS-PLATFORM-UPGRADE
+    given: A deployment upgraded from 0.6.0 that sets no FD_OPERATOR_TENANT and holds exactly one workspace A and no operator record.
+    when: The upgraded platform starts, an owner of A changes the application name, and later a workspace B signs up and its owner tries the same.
+    then: A is the operator through the record auth.core's single-workspace rule wrote at start, A's change is stored with one audit event, and B's rows are locked with the operator-only reason and its write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY.
   - id: SYSTEM-SETTINGS-PLATFORM-UNCONFIGURED
-    given: A deployment that sets no FD_OPERATOR_TENANT.
-    when: The owner of any workspace reads the settings and changes a platform-scoped setting.
-    then: Every platform-scoped row is locked, the write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, and the stored and default values keep applying.
+    given: A deployment that sets no FD_OPERATOR_TENANT and for which auth.core records no operator workspace, such as one upgraded from 0.6.0 with workspaces A and B.
+    when: An owner of each workspace reads the settings and changes a platform-scoped setting, then the deployment operator runs auth operator-set naming A with apply, and both owners repeat without a restart.
+    then: At first every platform-scoped row is locked with the reason that no operator workspace is recorded, naming the operator command, both writes are refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, and the stored and default values keep applying; after the command A's next read shows the rows unlocked and its write is stored with one audit event, while B's rows carry the operator-only reason and its write is still refused.
+  - id: SYSTEM-SETTINGS-PLATFORM-REQUEST-INPUT
+    given: A deployment whose operator workspace is A, and an owner of workspace B holding system.settings.manage on a browser session.
+    when: The owner of B posts a platform-scoped change whose body also carries A's tenant id in fields such as tenantId or operatorTenant, with a query parameter and a header naming A as well, and then reads the platform's OpenAPI document.
+    then: The extra fields, the parameter and the header are ignored, the write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY exactly as any write from B, nothing is stored, and the document lists no operation that sets, changes or clears the operator workspace.
   - id: SYSTEM-SETTINGS-VALIDATE
     given: A principal with system.settings.manage submits a value outside the declared type, bounds, or enum, or names an undeclared setting.
     when: The update is processed.
@@ -181,7 +201,7 @@ acceptanceScenarios:
   - id: SYSTEM-BRANDING-READ
     given: A principal with system.settings.read opens Administration > Branding.
     when: The screen loads.
-    then: Every branding setting is listed with its current value, a value nobody changed shows the product default, the screen states that it applies to every workspace, and every control is disabled without system.settings.manage, or outside the operator workspace, where each row says only the deployment operator changes it.
+    then: Every branding setting is listed with its current value, a value nobody changed shows the product default, the screen states that it applies to every workspace, and every control is disabled without system.settings.manage, outside the operator workspace, where each row says only the deployment operator's workspace changes it, or while no operator workspace is known, where each row says none is recorded and names the operator command.
   - id: SYSTEM-BRANDING-MANAGE
     given: A principal with system.settings.manage in the operator workspace changes the name, the document title, the description, the preview image, the icon, the theme colour or the logo.
     when: The change is submitted and the application document is requested again.
@@ -199,9 +219,9 @@ acceptanceScenarios:
     when: An anonymous visitor loads the sign-in document, or a crawler reads it for a link preview.
     then: The server-rendered head already carries the changed title, description, preview image, icon and theme colour, without a session, without a tenant and without a second request.
   - id: SYSTEM-BRANDING-DENY
-    given: A principal without system.settings.manage, a principal of a workspace other than the operator workspace, or a mutation carrying an API token instead of a browser session.
+    given: A principal without system.settings.manage, a principal of a workspace other than the operator workspace, any principal while no operator workspace is known, or a mutation carrying an API token instead of a browser session.
     when: The principal changes a branding setting.
-    then: The server returns 401 or 403, with PLATFORM_SETTING_OPERATOR_ONLY for the other workspace, nothing is stored and no audit event is written.
+    then: The server returns 401 or 403, with PLATFORM_SETTING_OPERATOR_ONLY for the other workspace and while no operator workspace is known, nothing is stored and no audit event is written.
 screens:
   - id: branding
     kind: form
@@ -313,7 +333,31 @@ decisions:
     decidedBy: default
   - id: D-PLATFORM-SETTINGS-OPERATOR
     question: Every workspace owner holds system.settings.manage, so who may change a platform-scoped setting that every workspace reads?
-    answer: Only a principal with system.settings.manage in the operator workspace, the tenant whose id the deployment sets in FD_OPERATOR_TENANT, through the same settings administration API and screens; every other workspace sees the value locked. Deployment configuration is already the operator's channel. A new scope would be granted to every owner by auth sync-scopes, which grants whatever a specification declares, and a CLI write path would need every module's settings declaration outside the composed platform. Unset means no workspace changes a platform-scoped setting.
+    answer: Only a principal with system.settings.manage in the operator workspace, through the same settings administration API and screens; every other workspace sees the value locked. The operator workspace is the tenant FD_OPERATOR_TENANT names, or, while the variable is unset, the workspace auth.core records (D-OPERATOR-FIRST-RUN). A new scope would be granted to every owner by auth sync-scopes, which grants whatever a specification declares, and a CLI write path for the values would need every module's settings declaration outside the composed platform. With neither the variable nor a record, no workspace changes a platform-scoped setting.
+    decidedBy: default
+  - id: D-OPERATOR-FIRST-RUN
+    question: Which workspace changes platform-scoped settings on a new deployment that sets no FD_OPERATOR_TENANT?
+    answer: The workspace its first-run setup creates. auth.core records it as the operator workspace in the transaction that creates it, so every new deployment (Vercel, Docker, local, the sandbox's local platform) can change its branding, sign-up, session policy and mail relay without an environment variable or a redeploy. Owner decision of 2026-10-06.
+    decidedBy: user
+  - id: D-OPERATOR-ENV-OVERRIDE
+    question: Which wins when FD_OPERATOR_TENANT is set and a record exists?
+    answer: The variable. It stays an override, and while it is set the record is not consulted; removing it lets the record decide again. Owner decision of 2026-10-06.
+    decidedBy: user
+  - id: D-OPERATOR-ENV-UNKNOWN
+    question: What happens when FD_OPERATOR_TENANT names no workspace?
+    answer: No workspace is the operator and every platform-scoped row shows the no-operator reason. A set variable is an explicit deployment decision, so a mistyped value fails closed rather than silently handing platform settings to the recorded workspace.
+    decidedBy: default
+  - id: D-OPERATOR-RESOLVE-PER-REQUEST
+    question: How fresh is the operator decision a settings request sees?
+    answer: Resolved on every settings read and write with no cache, at the cost of one single-row read in the principal's own transaction and, outside the operator workspace, at most one routing read. Settings requests are administrative and rare, and a record the operator command writes from another process applies to the next request.
+    decidedBy: default
+  - id: D-OPERATOR-UNKNOWN-REASON
+    question: What do GET /api/settings and the screens show when no operator workspace is known?
+    answer: Every platform-scoped row locked with its own reason and translation key, saying no workspace is recorded as this deployment's operator and naming the operator command; the Branding screen shows the same reason per row. The write refusal keeps 403 PLATFORM_SETTING_OPERATOR_ONLY so API clients see one stable code. No response names or identifies another workspace.
+    decidedBy: default
+  - id: D-OPERATOR-CHANGE-CHANNEL
+    question: How does an operator set or change the operator workspace later?
+    answer: Through FD_OPERATOR_TENANT or the auth.core operator command run from a shell on the deployment, never through a screen, an HTTP route or any request input, because tenant identity never comes from a request.
     decidedBy: default
   - id: D-MODULE-ACTIVATION-SCOPE
     question: What can the administration UI change about modules?
@@ -346,7 +390,8 @@ decisions:
 outOfScope:
   - Uploading a logo or a preview image through the screen; the settings hold the address of an image the deployment already serves.
   - Branding a single workspace differently from the deployment, which would leave the sign-in screen and a shared link without an answer.
-  - More than one operator workspace, a per-account operator grant, or a CLI write path for platform-scoped settings; the operator workspace named by FD_OPERATOR_TENANT is the only writer.
+  - More than one operator workspace, a per-account operator grant, or a CLI write path for platform-scoped settings values; the operator workspace, named by FD_OPERATOR_TENANT or else recorded by auth.core, is the only writer.
+  - Choosing, changing or clearing the operator workspace from a screen or any HTTP route; the deployment sets FD_OPERATOR_TENANT or runs the auth.core operator command.
   - Restyling the product beyond these values, so colour themes, fonts, custom CSS and the branding of the e-mails auth.core sends stay out.
   - Adding or removing a module from a running application through the UI; the composition is CLI-owned and baked at build.
   - Withholding the agent tools of an inactive module from a workspace, which needs a per-tenant hook in the harness tool registry.
