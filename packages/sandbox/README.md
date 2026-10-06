@@ -547,7 +547,10 @@ no file is named in the next handoff and its specialist is not sent the same
 errors in the next turn; when no other specialist is assigned them, the chain
 stops for the operator. When the same turn also asks questions, the questions
 come first and the handoff names the failed gate: the gates run again after the
-answering turn, and a failure that remains then gets its repair turn.
+answering turn, and a failure that remains then gets its repair turn. After the
+business manager applied an implementer's answers, that implementer resumes
+with its decisions before any repair but one the business manager takes in
+that module, and the gates run again after its turn.
 
 ### Active questions
 

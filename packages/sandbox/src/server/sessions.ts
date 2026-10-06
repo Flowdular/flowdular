@@ -222,7 +222,7 @@ const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
 const ENTRY_TEXT_LIMIT = 120_000;
 const CHAT_LOG_LIMIT_BYTES = 32 * 1024 * 1024;
 
-function redactText(value: string): string {
+export function redactText(value: string): string {
 	let safe = value;
 	for (const [pattern, replacement] of TRANSCRIPT_REDACTIONS)
 		safe = safe.replace(pattern, replacement);
@@ -256,11 +256,14 @@ function redactEntry(entry: ChatEntry): ChatEntry {
 					},
 				}
 			: {}),
-		...(entry.handoff?.gates
+		...(entry.handoff
 			? {
 					handoff: {
 						...entry.handoff,
-						gates: entry.handoff.gates.map(redactGate),
+						prompt: redactText(entry.handoff.prompt),
+						...(entry.handoff.gates
+							? { gates: entry.handoff.gates.map(redactGate) }
+							: {}),
 					},
 				}
 			: {}),

@@ -14,7 +14,10 @@ import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import { routeRole } from '../src/server/planning.ts';
 import type { PreviewRuntime } from '../src/server/preview-runtime.ts';
 import { QUESTIONS_LIMITS } from '../src/server/questions.ts';
-import { createSandboxRoutes } from '../src/server/routes.ts';
+import {
+	createSandboxRoutes,
+	type SandboxRouteOptions,
+} from '../src/server/routes.ts';
 import type { SandboxRuntime } from '../src/server/runtime.ts';
 import {
 	approveSpecification,
@@ -147,6 +150,23 @@ function writesSpec(text: string, reply: string): Reply {
 	};
 }
 
+function writes(files: Readonly<Record<string, string>>, reply: string): Reply {
+	return async (request) => {
+		for (const [path, text] of Object.entries(files)) {
+			const target = join(request.workspacePath, 'modules', 'equipment', path);
+			await mkdir(join(target, '..'), { recursive: true });
+			await writeFile(target, text, 'utf8');
+		}
+		return reply;
+	};
+}
+
+/* A server file the specialist leaves failing typecheck while it waits for
+   the answers, and its fix. */
+const SERVER_FILE = 'src/server/items.ts';
+const BROKEN_SERVER = "export const limit: number = 'broken';\n";
+const FIXED_SERVER = 'export const limit = 10;\n';
+
 const preview: PreviewRuntime = {
 	compose: () => Promise.reject(new Error('no preview in tests')),
 	cached: () => null,
@@ -202,7 +222,52 @@ function fakeRuntime(root: string, driver: CodingAgentDriver): SandboxRuntime {
 	};
 }
 
-function api(root: string, driver: CodingAgentDriver) {
+type Gates = NonNullable<SandboxRouteOptions['executeGates']>;
+
+const PASSING: Gates = async ({ gates }) =>
+	gates.map((id) => ({
+		id,
+		status: 'passed' as const,
+		durationMs: 0,
+		command: id,
+		output: 'valid',
+	}));
+
+/* Every gate passes but one, which fails with the output given while the
+   session's copy of the module file still reads as broken. */
+function failingUntilFixed(
+	root: string,
+	failing: string,
+	file: string,
+	broken: (text: string) => boolean,
+	output: string,
+): Gates {
+	return async ({ session, gates }) => {
+		const text = await readFile(
+			join(
+				modulePathOf(
+					sessionPaths(root, session.id, session.moduleSuffix),
+					'equipment',
+				),
+				file,
+			),
+			'utf8',
+		).catch(() => '');
+		return gates.map((id) => {
+			const failed = id === failing && broken(text);
+			return {
+				id,
+				module: 'equipment',
+				status: failed ? ('failed' as const) : ('passed' as const),
+				durationMs: 0,
+				command: id,
+				output: failed ? output : 'valid',
+			};
+		});
+	};
+}
+
+function api(root: string, driver: CodingAgentDriver, gates = PASSING) {
 	const router = createRouter([
 		...createSandboxRoutes(fakeRuntime(root, driver), preview, {
 			port: 4320,
@@ -212,14 +277,7 @@ function api(root: string, driver: CodingAgentDriver) {
 				durationMs: 0,
 				output: '',
 			}),
-			executeGates: async ({ gates }) =>
-				gates.map((id) => ({
-					id,
-					status: 'passed' as const,
-					durationMs: 0,
-					command: id,
-					output: 'valid',
-				})),
+			executeGates: gates,
 		}),
 	]);
 	/* Every call reads the whole response, so a turn stream has finished its
@@ -484,6 +542,166 @@ describe('a question an implementer asks after approval', () => {
 		});
 		/* The implementer resumes with the answers to its own questions. */
 		expect(approval.prompt).toContain('-> Refuse with 409 ITEM_NOT_RETIRED');
+	});
+
+	describe('when a gate the specialist left failing fails on the business manager turn too', () => {
+		const typecheck = (root: string) =>
+			failingUntilFixed(
+				root,
+				'typecheck',
+				SERVER_FILE,
+				(text) => text.includes('broken'),
+				"src/server/items.ts(1,30): error TS2322: Type 'string' is not assignable to type 'number'.",
+			);
+
+		it('resumes the specialist with the decisions in its instruction, and the gate runs again after it', async () => {
+			const root = await mkdtemp(join(tmpdir(), 'flowdular-impl-questions-'));
+			const seen: CodingAgentTurnRequest[] = [];
+			const call = api(
+				root,
+				scripted(
+					[
+						writes({ [SERVER_FILE]: BROKEN_SERVER }, asks(READING)),
+						() =>
+							'The approved invariant already says this; the specification stays as it is.\n\nHANDOFF: backend-engineer - continue',
+						writes({ [SERVER_FILE]: FIXED_SERVER }, DONE),
+					],
+					seen,
+				),
+				typecheck(root),
+			);
+
+			const asked = await implementerAsks(root, call);
+			expect(asked.failingGates).toEqual([
+				{ id: 'typecheck', module: 'equipment' },
+			]);
+			await call(`/sandbox/api/sessions/${asked.id}/answers`, {
+				answers: [{ id: 'Q-1', answer: 'Yes, as the specification says' }],
+			});
+
+			expect(seen.map((request) => request.role)).toEqual([
+				'backend-engineer',
+				'business-manager',
+				'backend-engineer',
+			]);
+			expect(seen[2]!.prompt).toContain('-> Yes, as the specification says');
+			expect(seen[2]!.prompt).toContain('did not change');
+			const resumed = (await readChat(root, asked))
+				.filter((entry) => entry.handoff)
+				.at(1)!.handoff!;
+			expect(resumed).toMatchObject({
+				kind: 'continue',
+				role: 'backend-engineer',
+			});
+			expect(resumed.repair).toBeUndefined();
+			expect(resumed.reason).toContain(
+				'The typecheck (modules/equipment) gate failed: the gates run again after Backend engineer continues',
+			);
+			expect((await readSession(root, asked.id)).failingGates).toEqual([]);
+		});
+
+		it('returns a changed specification for approval with the decisions, and the specialist resumes with them', async () => {
+			const root = await mkdtemp(join(tmpdir(), 'flowdular-impl-questions-'));
+			const seen: CodingAgentTurnRequest[] = [];
+			const call = api(
+				root,
+				scripted(
+					[
+						writes({ [SERVER_FILE]: BROKEN_SERVER }, asks(GAP)),
+						writesSpec(
+							CHANGED_SPEC,
+							'The specification now refuses reinstating an item in repair with 409 ITEM_NOT_RETIRED.\n\nHANDOFF: backend-engineer - implement the new invariant after approval',
+						),
+						writes({ [SERVER_FILE]: FIXED_SERVER }, DONE),
+					],
+					seen,
+				),
+				typecheck(root),
+			);
+
+			const asked = await implementerAsks(root, call);
+			await call(`/sandbox/api/sessions/${asked.id}/answers`, {
+				answers: [{ id: 'Q-1', answer: 'Refuse with 409 ITEM_NOT_RETIRED' }],
+			});
+
+			const waiting = await readSession(root, asked.id);
+			expect(waiting.state).toBe('awaiting-approval');
+			const approval = await lastHandoff(root, waiting);
+			expect(approval).toMatchObject({
+				kind: 'approval',
+				role: 'backend-engineer',
+				module: 'equipment',
+			});
+			expect(approval.prompt).toContain('-> Refuse with 409 ITEM_NOT_RETIRED');
+			/* "Approve it" follows the reason, so the reason ends on the
+			   specification. */
+			expect(approval.reason).toMatch(
+				/^The typecheck \(modules\/equipment\) gate failed: .* is ready for your review\.$/,
+			);
+
+			await call(`/sandbox/api/sessions/${asked.id}/approve`, {
+				module: 'equipment',
+				specHash: hashSpec(await specText(root, waiting)),
+			});
+			await call(`/sandbox/api/sessions/${asked.id}/turn`, {
+				message: approval.prompt,
+				role: approval.role,
+				module: approval.module,
+			});
+
+			expect(seen.map((request) => request.role)).toEqual([
+				'backend-engineer',
+				'business-manager',
+				'backend-engineer',
+			]);
+			expect(seen[2]!.prompt).toContain('-> Refuse with 409 ITEM_NOT_RETIRED');
+			expect(seen[2]!.prompt).toContain(
+				'The specification now records these decisions',
+			);
+		});
+
+		it('lets the business manager repair its own files first, then resumes the specialist with the decisions', async () => {
+			const root = await mkdtemp(join(tmpdir(), 'flowdular-impl-questions-'));
+			const seen: CodingAgentTurnRequest[] = [];
+			const call = api(
+				root,
+				scripted(
+					[
+						writes({ [SERVER_FILE]: FIXED_SERVER }, asks(READING)),
+						() =>
+							'The approved invariant already says this; the specification stays as it is.\n\nHANDOFF: backend-engineer - continue',
+						writes(
+							{
+								'translations/en.json': '{"page.title":"Equipment"}\n',
+							},
+							'Added the missing copy.\n\nHANDOFF: backend-engineer - continue',
+						),
+						() => DONE,
+					],
+					seen,
+				),
+				failingUntilFixed(
+					root,
+					'module-schema',
+					'translations/en.json',
+					(text) => !text.includes('page.title'),
+					'translations/en.json:1 has no page.title key the client uses.',
+				),
+			);
+
+			const asked = await implementerAsks(root, call);
+			await call(`/sandbox/api/sessions/${asked.id}/answers`, {
+				answers: [{ id: 'Q-1', answer: 'Yes, as the specification says' }],
+			});
+
+			expect(seen.map((request) => request.role)).toEqual([
+				'backend-engineer',
+				'business-manager',
+				'business-manager',
+				'backend-engineer',
+			]);
+			expect(seen[3]!.prompt).toContain('-> Yes, as the specification says');
+		});
 	});
 
 	it('sends a typed answer to the business manager too', () => {
