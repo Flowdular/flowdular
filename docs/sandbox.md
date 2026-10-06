@@ -59,7 +59,10 @@ An application already serving on the platform port is left alone, and no
 credential is prepared for it. `--platform` and `--platform-port` say otherwise
 explicitly; `--no-platform` never starts one. An application the launcher
 started stops with it, including when the terminal closes or the launcher is
-killed.
+killed. It gets eight seconds to drain before it is killed, two more than the
+six the development server gives itself; both figures live in
+`@flowdular/dev-console/shutdown`. The installs, gates and Git commands the
+sandbox runs stop with it the same way.
 
 ## The credential is prepared, not pasted
 

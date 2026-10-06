@@ -2,10 +2,15 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+	PLATFORM_SHUTDOWN_BUDGET_MS,
+	PLATFORM_STOP_ESCALATION_MS,
+} from '@flowdular/dev-console/shutdown';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
 	findRunningPlatformUrl,
@@ -16,18 +21,21 @@ import {
 	cleanupPlatformTests,
 	freePort,
 	platformWorkspace,
-	processAlive,
 	readLedger,
 	recordedFixtures,
 	spawnLauncher,
 	startTrackedPlatform,
 	stubbornPlatformSource,
+	survivors,
+	survivorsAfter,
 	trackLedger,
 	writePlatformChild,
 } from './support/platform-processes.ts';
 
 afterEach(async () => {
 	vi.restoreAllMocks();
+	/* The cleanup runs ps, which a stubbed PATH would hide. */
+	vi.unstubAllEnvs();
 	await cleanupPlatformTests();
 });
 
@@ -715,6 +723,10 @@ it('reports the address of the platform it starts before that platform answers',
 	}
 }, 90_000);
 
+/* Most of the budget goes to the sandbox's first Vite request, which
+   transforms its server modules cold and has taken a minute on a loaded
+   machine. Starting the sandbox before the platform has taken over twenty
+   seconds under the full suite on a saturated machine. */
 it('shows the private setup token once in the launcher terminal without putting it in HTTP state', async () => {
 	const workspace = await platformWorkspace('flowdular-launcher-setup-');
 	const root = workspace.root;
@@ -774,7 +786,7 @@ createServer((request, response) => {
 		await waitUntil(async () => {
 			if (launcher.exitCode !== null) throw new Error(output());
 			return output().includes(`Setup token: ${token}`);
-		}, 400);
+		}, 1_200);
 		expect(
 			output().match(new RegExp(`Setup token: ${token}`, 'g')),
 		).toHaveLength(1);
@@ -817,21 +829,15 @@ createServer((request, response) => {
 					throw new Error(`Launcher did not exit: ${output()}`);
 				}),
 			]);
-		const pids = (await readFile(pidFile, 'utf8'))
-			.trim()
+		/* A platform that never started left no file; the error that ended the
+		   test is the one to report. */
+		const pids = (await readFile(pidFile, 'utf8').catch(() => ''))
 			.split('\n')
+			.filter(Boolean)
 			.map(Number);
 		for (const pid of pids) await waitUntil(() => processGone(pid));
 	}
-}, 40_000);
-
-function survivors(
-	recorded: readonly { readonly pid: number; readonly group: number | null }[],
-): number[] {
-	return recorded
-		.flatMap(({ pid, group }) => (group === null ? [pid] : [pid, -group]))
-		.filter(processAlive);
-}
+}, 120_000);
 
 it('stops every process in the platform group, including one that ignores SIGTERM', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-group-');
@@ -851,22 +857,67 @@ it('stops every process in the platform group, including one that ignores SIGTER
 	expect(survivors(recorded)).toEqual([]);
 }, 30_000);
 
+/* pnpm delivers the stop's SIGTERM twice; the drain outlasts the old
+   three-second SIGKILL and ends a second before the budget. A shell that does
+   not exec the script dies on the SIGTERM, and pnpm exits with it while the
+   platform still drains. */
+it.each([
+	['directly', 'node child.mjs'],
+	['through a shell that stays', 'sh run.sh'],
+])(
+	'lets the platform drain past three seconds within its shutdown budget, started %s',
+	async (_, dev) => {
+		const workspace = await platformWorkspace('flowdular-platform-drain-');
+		const drained = join(workspace.root, 'drained');
+		const shutdown = pathToFileURL(
+			createRequire(import.meta.url).resolve('@flowdular/dev-console/shutdown'),
+		).href;
+		await writeFile(
+			join(workspace.root, 'run.sh'),
+			'node child.mjs "$@"\nexit $?\n',
+		);
+		await writePlatformChild(
+			workspace,
+			`import { writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { stopOnSignals } from ${JSON.stringify(shutdown)};
+const args = process.argv;
+const server = createServer((request, response) => response.writeHead(404).end()).listen(Number(args[args.indexOf('--port') + 1]), args[args.indexOf('--host') + 1]);
+stopOnSignals(() => {
+	server.close();
+	setTimeout(() => {
+		writeFileSync(${JSON.stringify(drained)}, 'drained');
+		process.exit(0);
+	}, ${PLATFORM_SHUTDOWN_BUDGET_MS - 1_000});
+});
+`,
+			dev,
+		);
+		const platform = await startTrackedPlatform({
+			workspaceRoot: workspace.root,
+			port: await freePort(),
+			quiet: true,
+		});
+		const stopping = Date.now();
+		await platform.stop();
+		expect(await readFile(drained, 'utf8')).toBe('drained');
+		/* The stop ends with the drain, not with the SIGKILL after the grace. */
+		expect(Date.now() - stopping).toBeLessThan(PLATFORM_STOP_ESCALATION_MS);
+	},
+	30_000,
+);
+
 it('reports a platform command that cannot be started', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-missing-');
-	const path = process.env.PATH;
 	/* The guard starts by absolute path; pnpm is looked up in an empty PATH. */
-	process.env.PATH = workspace.root;
-	try {
-		await expect(
-			startTrackedPlatform({
-				workspaceRoot: workspace.root,
-				port: await freePort(),
-				quiet: true,
-			}),
-		).rejects.toThrow('spawn pnpm ENOENT');
-	} finally {
-		process.env.PATH = path;
-	}
+	vi.stubEnv('PATH', workspace.root);
+	await expect(
+		startTrackedPlatform({
+			workspaceRoot: workspace.root,
+			port: await freePort(),
+			quiet: true,
+		}),
+	).rejects.toThrow('spawn pnpm ENOENT');
 });
 
 it.each([
@@ -898,12 +949,11 @@ it.each([
 		launcher.kill(signal);
 		await waitUntil(async () => launcher.signalCode !== null);
 		expect(launcher.signalCode).toBe(signal);
-		/* The guard escalates to SIGKILL three seconds after SIGTERM; ten
-		   seconds bounds that on a loaded machine. */
-		await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
-			() => undefined,
-		);
-		expect(survivors(recorded)).toEqual([]);
+		/* The guard escalates to SIGKILL after PLATFORM_STOP_ESCALATION_MS;
+		   seven more seconds bound that on a loaded machine. */
+		expect(
+			await survivorsAfter(recorded, PLATFORM_STOP_ESCALATION_MS + 7_000),
+		).toEqual([]);
 	},
 	60_000,
 );
@@ -931,10 +981,9 @@ it('stops the platform tree when a second Ctrl+C ends the launcher during shutdo
 	await waitUntil(
 		async () => launcher.exitCode !== null || launcher.signalCode !== null,
 	);
-	await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
-		() => undefined,
-	);
-	expect(survivors(recorded)).toEqual([]);
+	expect(
+		await survivorsAfter(recorded, PLATFORM_STOP_ESCALATION_MS + 7_000),
+	).toEqual([]);
 }, 60_000);
 
 it('leaves no process behind when a launcher test fails or times out', async () => {

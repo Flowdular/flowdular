@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 
-/* platform-process.ts starts the platform through this guard. The guard leads
-   the platform's process group and holds an IPC channel to the launcher. The
+/* platform-process.ts starts the platform through this guard, and
+   process-command.ts every bounded command. The guard leads the command's
+   process group and holds an IPC channel to the launcher. The
    launcher stops the group on every path it runs; the channel covers the ones
    it never reaches (SIGKILL, SIGHUP from a closed terminal, a crash, a test
    runner torn down). The operating system closes the channel however the
@@ -9,11 +10,11 @@ import { spawn } from 'node:child_process';
 
    The channel is this process's stdin. The child gets its own stdin, because
    Linux would otherwise pass the channel's descriptor down to every platform
-   process and keep it open after the guard exits. */
-const STOP_GRACE_MS = 3_000;
+   process and keep it open after the guard exits.
 
-const [command, ...args] = process.argv.slice(2);
-const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
+   The caller passes the delay from SIGTERM to SIGKILL first. */
+const [grace, command, ...args] = process.argv.slice(2);
+const STOP_GRACE_MS = Number(grace);
 let stopping = false;
 
 function signalGroup(signal) {
@@ -24,6 +25,29 @@ function signalGroup(signal) {
 	}
 }
 
+/* Whether a process besides this guard (and the ps it runs) is left in the
+   group it leads. Without a listing it assumes so, and the SIGKILL timer
+   ends the group. */
+function othersInGroup() {
+	return new Promise((resolve) => {
+		const lister = execFile(
+			'ps',
+			['-A', '-o', 'pid=,pgid='],
+			(error, stdout) => {
+				if (error) return resolve(true);
+				resolve(
+					stdout.split('\n').some((line) => {
+						const [pid, group] = line.trim().split(/\s+/).map(Number);
+						return (
+							group === process.pid && pid !== process.pid && pid !== lister.pid
+						);
+					}),
+				);
+			},
+		);
+	});
+}
+
 /* Once a stop has begun the guard outlives the SIGTERM and owns the SIGKILL,
    so the group is stopped even if the launcher dies before it is. */
 function stop() {
@@ -31,6 +55,12 @@ function stop() {
 	stopping = true;
 	setTimeout(() => signalGroup('SIGKILL'), STOP_GRACE_MS);
 }
+
+/* stop() in the launcher signals the whole group, this guard included. A
+   SIGTERM ends the guard until this handler exists, so the handler comes
+   before the child: no child runs without a guard to send its SIGKILL. */
+process.on('SIGTERM', stop);
+const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
 
 function launcherGone() {
 	if (process.platform === 'win32') {
@@ -53,14 +83,19 @@ child.once('error', (error) => {
 	process.send({ type: 'spawn-error', message: error.message }, exit);
 });
 child.once('exit', (code) => {
-	/* pnpm exits after its script, so whatever is left of a stopping group
-	   has outlived the platform. */
-	if (stopping) signalGroup('SIGKILL');
-	process.exit(code ?? 1);
+	const exit = () => process.exit(code ?? 1);
+	if (!stopping) return exit();
+	/* pnpm can exit while the platform still drains: when sh does not exec
+	   the script, the shell between them dies on the group's SIGTERM and pnpm
+	   follows it. The guard waits for the rest of its group; the SIGKILL timer
+	   that stop() armed ends whatever outlasts the grace. */
+	const awaitGroup = () =>
+		void othersInGroup().then((left) =>
+			left ? setTimeout(awaitGroup, 100) : exit(),
+		);
+	awaitGroup();
 });
 
-/* stop() in the launcher signals the whole group, this guard included. */
-process.on('SIGTERM', stop);
 process.once('disconnect', launcherGone);
 /* The channel can close while this module is still loading. */
 if (process.send && !process.connected) launcherGone();

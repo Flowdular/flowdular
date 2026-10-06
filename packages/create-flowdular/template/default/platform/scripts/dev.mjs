@@ -9,6 +9,10 @@ import {
 	createTheme,
 	printReady,
 } from '@flowdular/sdk/dev-console';
+import {
+	PLATFORM_SHUTDOWN_BUDGET_MS,
+	stopOnSignals,
+} from '@flowdular/sdk/dev-console/shutdown';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 /* `pnpm dev -- --port 4396 --host 0.0.0.0` overrides vite.config.ts, so a
@@ -100,5 +104,4 @@ if (localUrl && !process.argv.includes('--no-open')) {
 /* Closing without exiting lets octane.config.ts release the database on the
    same signal; the process ends once both have drained. */
 const stop = () => void server.close().finally(restoreConsole);
-process.once('SIGINT', stop);
-process.once('SIGTERM', stop);
+stopOnSignals(stop, { deadlineMs: PLATFORM_SHUTDOWN_BUDGET_MS });

@@ -136,14 +136,16 @@ export function trackLedger(ledger: string): void {
 	ledgers.add(ledger);
 }
 
-/** Makes `pnpm dev` in the workspace run `source` as child.mjs, recorded. */
+/** Makes `pnpm dev` in the workspace run `source` as child.mjs, recorded.
+    `dev` is the script that starts it. */
 export async function writePlatformChild(
 	workspace: PlatformWorkspace,
 	source: string,
+	dev = 'node child.mjs',
 ): Promise<void> {
 	await writeFile(
 		join(workspace.root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
+		JSON.stringify({ private: true, scripts: { dev } }),
 	);
 	await writeFile(
 		join(workspace.root, 'child.mjs'),
@@ -211,6 +213,26 @@ export async function recordedFixtures(
 		if (fixtures.length >= count) return fixtures;
 		if (Date.now() >= deadline)
 			throw new Error(`${ledger} named ${fixtures.length} of ${count}.`);
+		await delay(25);
+	}
+}
+
+/** The recorded processes and groups (as negative ids) still alive. */
+export function survivors(recorded: readonly RecordedProcess[]): number[] {
+	return recorded
+		.flatMap(({ pid, group }) => (group === null ? [pid] : [pid, -group]))
+		.filter(processAlive);
+}
+
+/** Polls until nothing recorded is alive; returns the survivors at the bound. */
+export async function survivorsAfter(
+	recorded: readonly RecordedProcess[],
+	boundMs: number,
+): Promise<number[]> {
+	const deadline = Date.now() + boundMs;
+	for (;;) {
+		const alive = survivors(recorded);
+		if (alive.length === 0 || Date.now() >= deadline) return alive;
 		await delay(25);
 	}
 }

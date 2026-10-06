@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { PLATFORM_STOP_ESCALATION_MS } from '@flowdular/dev-console/shutdown';
 
 const PLATFORM_GUARD = fileURLToPath(
 	new URL('./platform-guard.mjs', import.meta.url),
@@ -115,7 +116,8 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 	   process under pnpm. That group also escapes the launcher's terminal and
 	   signals, so the guard ties it to this process: when the launcher ends
 	   without calling stop(), the guard stops the group. */
-	const child = spawn(process.execPath, [PLATFORM_GUARD, 'pnpm', ...args], {
+	const guard = [PLATFORM_GUARD, String(PLATFORM_STOP_ESCALATION_MS)];
+	const child = spawn(process.execPath, [...guard, 'pnpm', ...args], {
 		cwd: options.workspaceRoot,
 		env: {
 			...process.env,
@@ -181,7 +183,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 				}
 			};
 			kill('SIGTERM');
-			const deadline = Date.now() + 3_000;
+			const deadline = Date.now() + PLATFORM_STOP_ESCALATION_MS;
 			while (active() && Date.now() < deadline) await delay(100);
 			if (active()) kill('SIGKILL');
 			const killDeadline = Date.now() + 2_000;

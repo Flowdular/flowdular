@@ -14,9 +14,12 @@ import {
 	shouldUseColor,
 	watchReloads,
 } from '@flowdular/dev-console';
+import {
+	PLATFORM_SHUTDOWN_BUDGET_MS,
+	stopOnSignals,
+} from '@flowdular/dev-console/shutdown';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const SHUTDOWN_TIMEOUT_MS = 3_000;
 /* Presentation is shared with the sandbox launcher so both terminals read the
    same way. This file keeps only what is specific to the platform. */
 export {
@@ -25,7 +28,10 @@ export {
 	shouldUseColor,
 } from '@flowdular/dev-console';
 
-export function withShutdownDeadline(promise, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
+export function withShutdownDeadline(
+	promise,
+	timeoutMs = PLATFORM_SHUTDOWN_BUDGET_MS,
+) {
 	let timer;
 	const deadline = new Promise((_, reject) => {
 		timer = setTimeout(
@@ -38,6 +44,20 @@ export function withShutdownDeadline(promise, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
 		timer.unref?.();
 	});
 	return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+/* Stops accepting requests. An open browser tab keeps Vite's HMR socket on
+   this server, and the HTTP close waits for every socket, so the HMR sockets
+   end here rather than in Vite's own close at the end of the shutdown. */
+export function stopServing(httpServer, server) {
+	const httpClose = new Promise((resolveClose, rejectClose) => {
+		if (!httpServer.listening) {
+			resolveClose();
+			return;
+		}
+		httpServer.close((error) => (error ? rejectClose(error) : resolveClose()));
+	});
+	return Promise.all([httpClose, server.ws.close()]).then(() => undefined);
 }
 
 export function parseDevArguments(arguments_) {
@@ -209,21 +229,13 @@ export async function startDevelopmentServer(
 	let httpClosing;
 	const closeHttpServer = () => {
 		if (httpClosing) return httpClosing;
-		httpClosing = new Promise((resolveClose, rejectClose) => {
-			if (!httpServer.listening) {
-				resolveClose();
-				return;
-			}
-			httpServer.close((error) =>
-				error ? rejectClose(error) : resolveClose(),
-			);
-		});
+		httpClosing = stopServing(httpServer, server);
 		return httpClosing;
 	};
 	const closeVite = server.close.bind(server);
 	let closing;
 	const onSignal = () => {
-		void close().then(
+		void withShutdownDeadline(close()).then(
 			() => process.exit(0),
 			(error) => {
 				console.error(
@@ -240,8 +252,6 @@ export async function startDevelopmentServer(
 	const close = () => {
 		if (closing) return closing;
 		closing = (async () => {
-			process.off('SIGINT', onSignal);
-			process.off('SIGTERM', onSignal);
 			/* Vite may begin one last config evaluation while close tears down its
 			   module runner. Refuse that boot before it can reopen databases. */
 			process.env.FD_INTERNAL_PLATFORM_TERMINATING = 'true';
@@ -260,14 +270,14 @@ export async function startDevelopmentServer(
 				);
 				channel.postMessage({ type: 'retire-all' });
 				try {
-					await withShutdownDeadline(Promise.all([httpClose, ...retirements]));
+					await Promise.all([httpClose, ...retirements]);
 					await new Promise((resolveRetirement) =>
 						setTimeout(resolveRetirement, 100),
 					);
 				} finally {
 					channel.close();
 				}
-				await withShutdownDeadline(Promise.resolve(closeVite()));
+				await closeVite();
 			} finally {
 				restoreConsole();
 			}
@@ -277,8 +287,7 @@ export async function startDevelopmentServer(
 	/* Do not replace server.close: Vite uses it internally during an in-process
 	   restart and will continue serving afterwards. Signals use this terminal
 	   path, which also retires the current platform generation. */
-	process.once('SIGINT', onSignal);
-	process.once('SIGTERM', onSignal);
+	stopOnSignals(onSignal);
 	return server;
 }
 
