@@ -4,6 +4,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import {
+	isLoopbackHostname,
 	loadSandboxConfiguration,
 	saveSandboxConfiguration,
 	sealSecret,
@@ -174,6 +175,37 @@ async function readCredential(path: string): Promise<ProvisionedCredential> {
 		token: value.token,
 		capabilities: Array.isArray(value.capabilities) ? value.capabilities : [],
 	};
+}
+
+/* The dashboard banner, the connection state and the preview bridge all read
+   the platform address from the configuration, so the launcher records the
+   address it resolved before any of them starts instead of after the platform
+   answers, which on a first run is long after the banner.
+
+   A credential stored for a loopback address is taken to be this workspace's
+   own, collected from the platform the launcher starts, so it follows that
+   platform to the port it was started on. A remote address, or a platform the
+   launcher only connects to, keeps the connection the operator configured. */
+export async function recordPlatformAddress(options: {
+	readonly workspaceRoot: string;
+	readonly platformUrl: string;
+	readonly startedByLauncher: boolean;
+}): Promise<void> {
+	const configuration = await loadSandboxConfiguration(options.workspaceRoot);
+	if (configuration.platformUrl === options.platformUrl) return;
+	if (
+		configuration.platformToken !== null &&
+		!(
+			options.startedByLauncher &&
+			isLoopbackHostname(new URL(configuration.platformUrl).hostname)
+		)
+	)
+		return;
+	await saveSandboxConfiguration(options.workspaceRoot, {
+		...configuration,
+		platformUrl: options.platformUrl,
+		version: 1,
+	});
 }
 
 /* The embedded database is single-process, so a second process cannot open it

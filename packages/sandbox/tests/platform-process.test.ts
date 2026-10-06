@@ -551,6 +551,83 @@ it('waits for a starting platform child to stop before the launcher exits', asyn
 	}
 }, 30_000);
 
+it('reports the address of the platform it starts before that platform answers', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-launcher-address-'));
+	temporaryDirectories.push(root);
+	const childPidFile = join(root, 'child.pid');
+	await writeFile(
+		join(root, 'flowdular.json'),
+		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
+	);
+	await writeFile(
+		join(root, 'package.json'),
+		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
+	);
+	/* A first-run platform is still booting when the banner prints. */
+	await writeFile(
+		join(root, 'child.mjs'),
+		`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(childPidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
+	);
+	const entry = resolve(
+		fileURLToPath(new URL('../bin/flowdular-sandbox.mjs', import.meta.url)),
+	);
+	const sandboxPort = await freePort();
+	const platformPort = await freePort();
+	const started = `http://127.0.0.1:${platformPort}`;
+	const launcher = spawn(
+		process.execPath,
+		[
+			entry,
+			'--workspace',
+			root,
+			'--port',
+			String(sandboxPort),
+			'--platform-port',
+			String(platformPort),
+		],
+		{ cwd: root, stdio: ['ignore', 'pipe', 'pipe'] },
+	);
+	let output = '';
+	const plain = () => output.replace(/\x1b\[[0-9;]*m/g, '');
+	const bannerPrinted = new Promise<void>((resolve, reject) => {
+		for (const stream of [launcher.stdout, launcher.stderr])
+			stream.on('data', (chunk: Buffer) => {
+				output = (output + chunk.toString()).slice(-12_000);
+				if (/^\s*diagnostics\s/m.test(plain())) resolve();
+			});
+		launcher.once('exit', () => reject(new Error(output)));
+	});
+	try {
+		await bannerPrinted;
+		expect(/^\s*platform\s+(\S+) · /m.exec(plain())?.[1]).toBe(started);
+		const state = await fetch(
+			`http://127.0.0.1:${sandboxPort}/sandbox/api/state`,
+		).then((response) => response.json());
+		expect(state.configuration.platformUrl).toBe(started);
+		const stored = JSON.parse(
+			await readFile(
+				join(root, '.flowdular', 'sandbox', 'config.json'),
+				'utf8',
+			),
+		);
+		expect(stored.platformUrl).toBe(started);
+	} finally {
+		launcher.kill('SIGTERM');
+		if (launcher.exitCode === null)
+			await Promise.race([
+				once(launcher, 'exit'),
+				delay(8_000).then(() => {
+					throw new Error(`Launcher did not exit: ${output}`);
+				}),
+			]);
+		const childPid = await readFile(childPidFile, 'utf8').then(
+			Number,
+			() => null,
+		);
+		if (childPid !== null) await waitUntil(() => processGone(childPid));
+	}
+}, 90_000);
+
 it('shows the private setup token once in the launcher terminal without putting it in HTTP state', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-launcher-setup-'));
 	temporaryDirectories.push(root);

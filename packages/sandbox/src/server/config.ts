@@ -378,6 +378,15 @@ export async function verifySessionRecord(
 	return a.byteLength === b.byteLength && timingSafeEqual(a, b);
 }
 
+export function isLoopbackHostname(hostname: string): boolean {
+	return (
+		hostname === 'localhost' ||
+		hostname === '::1' ||
+		hostname === '[::1]' ||
+		/^127(?:\.\d{1,3}){3}$/.test(hostname)
+	);
+}
+
 export function assertPlatformUrl(value: string): string {
 	let url: URL;
 	try {
@@ -394,12 +403,7 @@ export function assertPlatformUrl(value: string): string {
 			'The platform address must use http or https.',
 		);
 	}
-	const loopback =
-		url.hostname === 'localhost' ||
-		url.hostname === '::1' ||
-		url.hostname === '[::1]' ||
-		/^127(?:\.\d{1,3}){3}$/.test(url.hostname);
-	if (url.protocol !== 'https:' && !loopback) {
+	if (url.protocol !== 'https:' && !isLoopbackHostname(url.hostname)) {
 		throw new SandboxSetupError(
 			'INVALID_PLATFORM_URL',
 			'The platform address must use HTTPS unless it is a loopback address.',
