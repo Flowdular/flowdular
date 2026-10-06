@@ -7,6 +7,7 @@ import {
 	serverLogger,
 	type ModuleServerComposition,
 } from '@flowdular/server';
+import type { PlatformRuntimeLifecycle } from './lifecycle.ts';
 
 export const WORKER_TICK_PATH = '/api/internal/worker/tick';
 const DEFAULT_WINDOW_MS = 50_000;
@@ -139,6 +140,16 @@ export function createWorkerTicker(
 			await current?.catch(() => undefined);
 		},
 	};
+}
+
+/* An open window holds its tick request, and retirement waits for requests
+   before any quiesce runs, so the window closes as soon as retirement begins
+   and the module stops then run again. */
+export function closeWorkerTickerOnRetirement(
+	lifecycle: Pick<PlatformRuntimeLifecycle, 'addInterrupt'>,
+	ticker: WorkerTicker,
+): void {
+	lifecycle.addInterrupt(() => ticker.close());
 }
 
 function digest(value: string): Buffer {

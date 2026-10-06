@@ -57,6 +57,8 @@ const CALL_TIMEOUT_MS = 15_000;
    starting, so a call sent before Chrome has answered anything gets this
    budget instead. It still fits the 60 s test and hook timeouts. */
 const STARTUP_TIMEOUT_MS = 45_000;
+/* Chrome closes in well under a second; a loaded machine gets the rest. */
+const CLOSE_TIMEOUT_MS = 10_000;
 
 const CHROME_PATHS: Readonly<Record<string, readonly string[]>> = {
 	darwin: [
@@ -218,12 +220,36 @@ async function withChrome<T>(
 		chrome.once('exit', resolve);
 		chrome.once('error', () => resolve());
 	});
+	const cdp = connect(chrome);
 	try {
-		return await use(connect(chrome));
+		return await use(cdp);
 	} finally {
-		chrome.kill();
-		await exited;
+		await closeChrome(chrome, cdp, exited);
 	}
+}
+
+/* Browser.close has Chrome stop its network and storage services before it
+   exits, and both write into the profile. A SIGTERM ends the browser process
+   alone; under load those services outlive it and put files back into a
+   profile the caller is already removing. SIGTERM stays for a Chrome that does
+   not close. */
+async function closeChrome(
+	chrome: ChromeProcess,
+	cdp: Cdp,
+	exited: Promise<void>,
+): Promise<void> {
+	/* Chrome may exit before it answers, which fails the call itself. */
+	cdp.send('Browser.close').catch(() => undefined);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const closed = await Promise.race([
+		exited.then(() => true),
+		new Promise<boolean>((resolve) => {
+			timer = setTimeout(() => resolve(false), CLOSE_TIMEOUT_MS);
+		}),
+	]);
+	clearTimeout(timer);
+	if (!closed) chrome.kill();
+	await exited;
 }
 
 /** Opens `url` in a new tab and returns its session once the page has loaded. */

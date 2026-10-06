@@ -18,6 +18,9 @@ type Dispose = () => void | Promise<void>;
 
 export interface PlatformRuntimeLifecycle {
 	readonly middleware: Middleware;
+	/** Runs as soon as retirement begins, before the requests in flight drain:
+	    for a producer that holds a request open until it is told to stop. */
+	addInterrupt(interrupt: Dispose): void;
 	addQuiesce(quiesce: Dispose): void;
 	add(dispose: Dispose): void;
 	retire(): Promise<void>;
@@ -27,13 +30,46 @@ type ProcessWithLifecycle = NodeJS.Process & {
 	[PLATFORM_LIFECYCLE_SYMBOL]?: PlatformRuntimeLifecycle;
 };
 
+/* An event stream never finishes on its own. Its protocol has the client
+	reconnect and resume from Last-Event-ID, which reaches the next generation,
+	so retirement ends it instead of waiting for it. Any other body drains. */
+function isEventStream(response: Response): boolean {
+	const type = response.headers.get('content-type')?.split(';', 1)[0];
+	return type?.trim().toLowerCase() === 'text/event-stream';
+}
+
+/* EventSource stops reconnecting for good on any answer but a 200 event
+	stream, and a production server keeps listening while it retires. A stream
+	request to a retired generation gets an empty stream that ends at once, so
+	the client keeps reconnecting until the next process answers. */
+function retiredResponse(request: Request | undefined): Response {
+	if (
+		request?.method === 'GET' &&
+		request.headers.get('accept')?.includes('text/event-stream')
+	) {
+		return new Response('retry: 1000\n\n', {
+			headers: {
+				'content-type': 'text/event-stream; charset=utf-8',
+				'cache-control': 'no-store',
+			},
+		});
+	}
+	return new Response(null, {
+		status: 503,
+		headers: { 'retry-after': '1' },
+	});
+}
+
 /* Vite evaluates octane.config.ts again when one of its SSR dependencies is
 	invalidated. A generation owns every resource created by that evaluation.
-	Retirement waits for requests already using the old route closures, then
-	disposes its resources in reverse composition order. */
+	Retirement interrupts what would hold a request open, waits for requests
+	already using the old route closures, then disposes its resources in
+	reverse composition order. */
 export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 	const disposers: Dispose[] = [];
 	const quiescers: Dispose[] = [];
+	const interrupts = new Set<Dispose>();
+	let interrupted: Promise<unknown[]> = Promise.resolve([]);
 	let activeRequests = 0;
 	let retired = false;
 	let finishing = false;
@@ -48,7 +84,7 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 		const currentQuiescers = quiescers.splice(0).reverse();
 		const current = disposers.splice(0).reverse();
 		void (async () => {
-			const failures: unknown[] = [];
+			const failures = await interrupted;
 			/* Every background producer stops before any module repository closes. */
 			for (const quiesce of currentQuiescers) {
 				try {
@@ -84,29 +120,63 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 		})();
 	};
 
+	const interrupt = async (): Promise<unknown[]> => {
+		const failures: unknown[] = [];
+		await Promise.all(
+			[...interrupts].map(async (run) => {
+				try {
+					await run();
+				} catch (error) {
+					failures.push(error);
+				}
+			}),
+		);
+		return failures;
+	};
+
 	const lifecycle: PlatformRuntimeLifecycle = {
 		middleware: async (context, next) => {
-			if (retired) {
-				return new Response(null, {
-					status: 503,
-					headers: { 'retry-after': '1' },
-				});
-			}
+			if (retired) return retiredResponse(context.request);
 			activeRequests += 1;
+			let endStream: (() => void) | undefined;
 			const release = () => {
+				if (endStream) interrupts.delete(endStream);
 				activeRequests -= 1;
 				finish();
 			};
 			try {
+				const response = await next();
+				const signal = context.request?.signal;
+				if (!isEventStream(response)) {
+					return trackResponseBody(response, release, signal);
+				}
+				const end = new AbortController();
+				endStream = () => end.abort(new Error('The platform runtime retired.'));
+				if (retired) endStream();
+				else interrupts.add(endStream);
 				return trackResponseBody(
-					await next(),
+					response,
 					release,
-					context.request?.signal,
+					signal ? AbortSignal.any([signal, end.signal]) : end.signal,
 				);
 			} catch (error) {
 				release();
 				throw error;
 			}
+		},
+		addInterrupt(run) {
+			if (retired) {
+				void Promise.resolve()
+					.then(run)
+					.catch((error: unknown) => {
+						serverLogger().error('late platform interrupt failed', {
+							module: 'platform',
+							err: error,
+						});
+					});
+				return;
+			}
+			interrupts.add(run);
 		},
 		addQuiesce(quiesce) {
 			if (retired) {
@@ -143,6 +213,7 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 					rejectDisposal = reject;
 				});
 				retired = true;
+				interrupted = interrupt();
 				finish();
 			}
 			return disposal;

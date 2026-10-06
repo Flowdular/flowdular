@@ -2,8 +2,19 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import process from 'node:process';
+import { createContext } from '@octanejs/app-core';
+import {
+	nodeRequestToWebRequest,
+	sendWebResponse,
+} from '@octanejs/app-core/node';
 import { createServer } from 'vite';
 import { describe, expect, it } from 'vitest';
+import {
+	activatePlatformRuntimeLifecycle,
+	createPlatformRuntimeLifecycle,
+	PLATFORM_LIFECYCLE_RETIRE_EVENT,
+} from '../src/server/lifecycle.ts';
 import {
 	formatDevEvent,
 	isClientDisconnectLog,
@@ -12,6 +23,18 @@ import {
 	stopServing,
 	withShutdownDeadline,
 } from './dev.mjs';
+
+/* A stop that waits on nothing takes milliseconds; the development server's
+   budget is 6 s, and a kept-alive connection holds the close for 4 to 6 s. */
+const PROMPT_STOP_MS = 1_000;
+const noHmr = { ws: { close: () => Promise.resolve() } };
+
+async function listening(httpServer) {
+	await new Promise((resolveListen) =>
+		httpServer.listen(0, '127.0.0.1', resolveListen),
+	);
+	return `http://127.0.0.1:${httpServer.address().port}`;
+}
 
 describe('development launcher arguments', () => {
 	it('supports quiet defaults and explicit verbose networking', () => {
@@ -102,6 +125,78 @@ describe('development launcher arguments', () => {
 			tab.close();
 			await server.close();
 			await rm(temporaryRoot, { recursive: true, force: true });
+		}
+	});
+
+	it('closes a connection whose response finishes after the stop began', async () => {
+		let endStream;
+		const httpServer = createHttpServer((_request, response) => {
+			response.writeHead(200, { 'content-type': 'text/event-stream' });
+			response.write('retry: 1000\n\n');
+			endStream = () => response.end();
+		});
+		const origin = await listening(httpServer);
+		const reader = (await fetch(`${origin}/events`)).body.getReader();
+		try {
+			await reader.read();
+			const stopped = stopServing(httpServer, noHmr);
+			endStream();
+			await expect(
+				withShutdownDeadline(stopped, PROMPT_STOP_MS),
+			).resolves.toBeUndefined();
+			expect(await reader.read()).toMatchObject({ done: true });
+		} finally {
+			httpServer.closeAllConnections();
+		}
+	});
+
+	it('stops promptly while a browser holds an event stream open', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		await activatePlatformRuntimeLifecycle(lifecycle);
+		let producing = true;
+		const httpServer = createHttpServer(async (request, response) => {
+			const answer = await lifecycle.middleware(
+				createContext(nodeRequestToWebRequest(request, response), {}),
+				async () =>
+					new Response(
+						new ReadableStream({
+							start(controller) {
+								controller.enqueue(new TextEncoder().encode('retry: 1000\n\n'));
+							},
+							cancel() {
+								producing = false;
+							},
+						}),
+						{ headers: { 'content-type': 'text/event-stream' } },
+					),
+			);
+			await sendWebResponse(response, answer);
+		});
+		const origin = await listening(httpServer);
+		const reader = (
+			await fetch(`${origin}/api/workflow-runs/events`)
+		).body.getReader();
+		try {
+			await reader.read();
+			/* The order dev.mjs stops in: stop accepting, then retire the
+			   generation through the event the lifecycle listens to. */
+			const httpClose = stopServing(httpServer, noHmr);
+			const retirements = [];
+			process.emit(PLATFORM_LIFECYCLE_RETIRE_EVENT, (retirement) =>
+				retirements.push(retirement),
+			);
+			expect(retirements).toHaveLength(1);
+			await expect(
+				withShutdownDeadline(
+					Promise.all([httpClose, ...retirements]),
+					PROMPT_STOP_MS,
+				),
+			).resolves.toBeDefined();
+			expect(await reader.read()).toMatchObject({ done: true });
+			expect(producing).toBe(false);
+		} finally {
+			httpServer.closeAllConnections();
+			await lifecycle.retire().catch(() => undefined);
 		}
 	});
 

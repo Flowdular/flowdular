@@ -553,6 +553,124 @@ describe('workflow HTTP boundary', () => {
 		}
 	});
 
+	/* A client closing the tab or the platform runtime retiring cancels the
+	   stream; a read already in flight then answers into a closed stream, or
+	   fails because the runtime closed its database. */
+	const disposedDatabase = async () => {
+		throw new Error('The database provider was disposed.');
+	};
+	it.each([
+		[
+			'an event read answers with events',
+			'readEvents',
+			(read: () => Promise<unknown>) => read(),
+		],
+		[
+			'an event read fails because the runtime closed its database',
+			'readEvents',
+			disposedDatabase,
+		],
+		[
+			'a run read answers once a heartbeat is due',
+			'getRun',
+			(read: () => Promise<unknown>) => {
+				vi.useFakeTimers({ toFake: ['Date'] });
+				vi.setSystemTime(Date.now() + 15_000);
+				return read();
+			},
+		],
+		[
+			'a run read fails because the runtime closed its database',
+			'getRun',
+			disposedDatabase,
+		],
+	])(
+		'stops quietly when the observer leaves while %s',
+		async (_case, method, settle) => {
+			const runtime = createWorkflowsTestRuntime({
+				capabilities: executionCapabilities(),
+				payloadKey: Buffer.alloc(32, 33),
+				cursorKey: Buffer.alloc(32, 34),
+			});
+			const unhandled: unknown[] = [];
+			const recordUnhandled = (reason: unknown) => unhandled.push(reason);
+			process.on('unhandledRejection', recordUnhandled);
+			try {
+				await createPublishedDirectWorkflow(runtime, 'observer-leaves');
+				const service = await runtime.service();
+				const accepted = await service.enqueue(
+					{
+						workflowKey: 'observer-leaves',
+						input: { name: 'Ada' },
+						idempotencyKey: 'observer-leaves:1',
+					},
+					{
+						tenantId: 'tenant-a',
+						actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+						origin: { kind: 'manual' },
+						permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+					},
+				);
+				let release!: () => void;
+				const released = new Promise<void>((resolve) => (release = resolve));
+				/* The handler's access check reads events once before the stream
+				   opens; every later read is the stream's. */
+				const ungated = method === 'readEvents' ? 1 : 0;
+				const reads = vi.fn();
+				const gated = new Proxy(service, {
+					get(target, key) {
+						const value = Reflect.get(target, key, target);
+						if (key === method) {
+							return async (...arguments_: unknown[]) => {
+								const read = () =>
+									(value as (...values: unknown[]) => Promise<unknown>).apply(
+										target,
+										arguments_,
+									);
+								reads();
+								if (reads.mock.calls.length <= ungated) return read();
+								await released;
+								return settle(read);
+							};
+						}
+						return typeof value === 'function' ? value.bind(target) : value;
+					},
+				});
+				const routes = createWorkflowsRoutes(
+					{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+					{ ...runtime, service: async () => gated },
+				);
+				const response = await (
+					await route(routes, '/api/workflow-runs/events', 'GET')
+				).handler(
+					context(
+						new Request(
+							`https://erp.example/api/workflow-runs/events?runId=${accepted.runId}&afterSequence=0`,
+						),
+						principal([WORKFLOWS_PERMISSIONS.runsRead]),
+					),
+				);
+				const reader = response.body!.getReader();
+				expect(new TextDecoder().decode((await reader.read()).value)).toBe(
+					'retry: 1000\n\n',
+				);
+				await vi.waitFor(() =>
+					expect(reads).toHaveBeenCalledTimes(ungated + 1),
+				);
+
+				await reader.cancel();
+				release();
+				await new Promise((resolve) => setTimeout(resolve, 20));
+
+				expect(unhandled).toEqual([]);
+			} finally {
+				vi.useRealTimers();
+				process.off('unhandledRejection', recordUnhandled);
+				await runtime.dispose();
+			}
+		},
+	);
+
 	/* A resume id is bound to one run. An edited id, another run's id and a
 	   list cursor are three ways of naming a position the stream never issued,
 	   and each is refused before a stream opens. */

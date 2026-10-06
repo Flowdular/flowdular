@@ -56,6 +56,7 @@ import {
 	startModuleWorkers,
 } from './src/server/runtime-role.ts';
 import {
+	closeWorkerTickerOnRetirement,
 	createWorkerTickEndpoint,
 	createWorkerTicker,
 	WORKER_TICK_PATH,
@@ -273,9 +274,7 @@ async function createPlatformConfig() {
 					windowMs: workerTick.windowMs,
 				})
 			: null;
-		/* Registered after the module stops, so retirement closes the open
-		   window before those stops run again. */
-		if (ticker) lifecycle.addQuiesce(() => ticker.close());
+		if (ticker) closeWorkerTickerOnRetirement(lifecycle, ticker);
 		agentDefinitions.seal();
 		/* Sealed here rather than in a module: every composition has run, which
 		   is exactly when the declarations are final and before any start hook

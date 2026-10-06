@@ -1,3 +1,4 @@
+import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import { BroadcastChannel } from 'node:worker_threads';
 
 /* How the platform's development server stops, for the server itself and for
@@ -14,15 +15,23 @@ export const PLATFORM_STOP_ESCALATION_MS = PLATFORM_SHUTDOWN_BUDGET_MS + 2_000;
 
 /* Stops accepting requests. An open browser tab keeps Vite's HMR socket on
    this server, and the HTTP close waits for every socket, so the HMR sockets
-   end here rather than in Vite's own close at the end of the shutdown. */
+   end here rather than in Vite's own close at the end of the shutdown. The
+   close ends only the connections idle when it is called; one whose response
+   finishes later, such as an event stream the runtime retirement ends, would
+   stay open for keep-alive reuse, so it closes as soon as it goes idle. */
 export function stopServing(httpServer, server) {
+	const closeWhenIdle = ({ server: owner }) => {
+		if (owner === httpServer)
+			setImmediate(() => httpServer.closeIdleConnections());
+	};
+	subscribe('http.server.response.finish', closeWhenIdle);
 	const httpClose = new Promise((resolveClose, rejectClose) => {
 		if (!httpServer.listening) {
 			resolveClose();
 			return;
 		}
 		httpServer.close((error) => (error ? rejectClose(error) : resolveClose()));
-	});
+	}).finally(() => unsubscribe('http.server.response.finish', closeWhenIdle));
 	return Promise.all([httpClose, server.ws.close()]).then(() => undefined);
 }
 

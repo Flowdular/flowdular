@@ -1,7 +1,10 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { ModuleServerComposition } from '@flowdular/server';
 import { createContext } from '@octanejs/app-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPlatformRuntimeLifecycle } from './lifecycle.ts';
 import {
+	closeWorkerTickerOnRetirement,
 	createWorkerTickEndpoint,
 	createWorkerTicker,
 	WORKER_TICK_PATH,
@@ -214,5 +217,48 @@ describe('worker tick endpoint', () => {
 		);
 		expect(response.status).toBe(500);
 		expect(await response.text()).not.toContain('secret@host');
+	});
+});
+
+describe('worker tick retirement', () => {
+	it('ends an open window when the runtime retires instead of waiting it out', async () => {
+		vi.useRealTimers();
+		const events: string[] = [];
+		const ticker = createWorkerTicker([recordingComposition(events, 'a')], {
+			windowMs: 50_000,
+		});
+		const endpoint = createWorkerTickEndpoint(ticker, {
+			secret: SECRET,
+			windowMs: 50_000,
+		});
+		const lifecycle = createPlatformRuntimeLifecycle();
+		closeWorkerTickerOnRetirement(lifecycle, ticker);
+		const tick = createContext(
+			new Request(`http://localhost${WORKER_TICK_PATH}`, {
+				headers: { authorization: `Bearer ${SECRET}` },
+			}),
+			{},
+		);
+		const answered = Promise.resolve(
+			lifecycle.middleware(tick, () =>
+				Promise.resolve(endpoint.serverRoute.handler(tick)),
+			),
+		).then(async (response) => ({
+			status: response.status,
+			report: await response.json(),
+		}));
+		await vi.waitFor(() => expect(events).toEqual(['a:start']));
+
+		const retired = await Promise.race([
+			lifecycle.retire().then(() => 'retired'),
+			delay(1_000).then(() => 'waiting out the window'),
+		]);
+
+		expect(retired).toBe('retired');
+		expect(await answered).toMatchObject({
+			status: 503,
+			report: { status: 'closed' },
+		});
+		expect(events).toEqual(['a:start', 'a:stop']);
 	});
 });
