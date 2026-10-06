@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import { parse as parseYaml } from 'yaml';
@@ -55,6 +55,40 @@ function readJson<T>(path: string): T | null {
 	}
 }
 
+interface ParsedSpec {
+	readonly mtimeMs: number;
+	readonly size: number;
+	readonly spec: Spec | null;
+}
+
+/* Parsing the specs dominates a catalog read (about 780 KB of YAML for the
+   platform modules) and the overview reads the catalog on every dashboard
+   load, so a spec is parsed again only when its file changed. Each read keeps
+   just the specs it saw, which bounds the cache to one workspace's modules. */
+let parsedSpecs = new Map<string, ParsedSpec>();
+
+function readSpec(path: string, seen: Map<string, ParsedSpec>): Spec | null {
+	let mtimeMs: number;
+	let size: number;
+	try {
+		({ mtimeMs, size } = statSync(path));
+	} catch {
+		return null;
+	}
+	let parsed = parsedSpecs.get(path);
+	if (!parsed || parsed.mtimeMs !== mtimeMs || parsed.size !== size) {
+		let spec: Spec | null;
+		try {
+			spec = parseYaml(readFileSync(path, 'utf8')) as Spec;
+		} catch {
+			spec = null;
+		}
+		parsed = { mtimeMs, size, spec };
+	}
+	seen.set(path, parsed);
+	return parsed.spec;
+}
+
 /* The workspace's module manifests and specs are the only source of module
    display names and versions; nothing in the composition carries them. They
    are found where the CLI finds them when it composes the application, so a
@@ -76,18 +110,12 @@ export function readModuleCatalog(
 		return [];
 	}
 	const entries: ModuleCatalogEntry[] = [];
+	const seen = new Map<string, ParsedSpec>();
 	for (const path of manifests) {
 		const manifest = readJson<Manifest>(path);
 		if (!manifest || typeof manifest.id !== 'string') continue;
 		const moduleRoot = dirname(path);
-		let spec: Spec | null = null;
-		try {
-			spec = parseYaml(
-				readFileSync(join(moduleRoot, 'spec/module.yaml'), 'utf8'),
-			) as Spec;
-		} catch {
-			spec = null;
-		}
+		const spec = readSpec(join(moduleRoot, 'spec/module.yaml'), seen);
 		entries.push({
 			id: manifest.id,
 			name: typeof spec?.name === 'string' ? spec.name : manifest.id,
@@ -129,6 +157,7 @@ export function readModuleCatalog(
 			),
 		});
 	}
+	parsedSpecs = seen;
 	return entries.sort((left, right) =>
 		left.directory < right.directory
 			? -1

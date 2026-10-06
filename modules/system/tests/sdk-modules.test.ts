@@ -170,6 +170,32 @@ describe('a published install whose platform modules ship in @flowdular/sdk', ()
 		});
 	});
 
+	it('SYSTEM-MODULES-LIST: shows a spec edited between two reads', () => {
+		const workspace = publishedWorkspace();
+		try {
+			expect(
+				readModuleCatalog(workspace).find((entry) => entry.id === 'import.core')
+					?.name,
+			).toBe('Import');
+			writeFileSync(
+				join(
+					workspace,
+					'platform/node_modules/@flowdular/sdk/modules/import/spec/module.yaml',
+				),
+				['id: import.core', 'specVersion: 1.2.4', 'name: Data import'].join(
+					'\n',
+				),
+			);
+			expect(
+				readModuleCatalog(workspace).find(
+					(entry) => entry.id === 'import.core',
+				),
+			).toMatchObject({ name: 'Data import', specVersion: '1.2.4' });
+		} finally {
+			rmSync(workspace, { recursive: true, force: true });
+		}
+	});
+
 	describe('through the composed platform', () => {
 		let composition: PlatformServerComposition;
 		let modules: SystemModulesCapability;
