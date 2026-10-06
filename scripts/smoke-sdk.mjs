@@ -237,6 +237,13 @@ const bundledFirstRun = spawnSync(
 );
 if (bundledFirstRun.status !== 0)
 	throw new Error('Bundled first-run workspace root check failed.');
+const deployedModules = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-deployed-modules.mjs'), consumer],
+	{ stdio: 'inherit', timeout: 90_000 },
+);
+if (deployedModules.status !== 0)
+	throw new Error('Deployed module manifest check failed.');
 const boundaries = spawnSync(
 	process.execPath,
 	[join(root, 'scripts/smoke-sdk-boundaries.mjs'), consumer],

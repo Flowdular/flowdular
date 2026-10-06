@@ -160,6 +160,15 @@ async function writeFunction(directory, runtimeRole) {
 			);
 		}
 	}
+	const sdkManifests = spawnSync(
+		process.execPath,
+		[join(repositoryRoot, 'infra/sdk-module-manifests.mjs'), root, directory],
+		{ stdio: 'inherit' },
+	);
+	if (sdkManifests.error) throw sdkManifests.error;
+	if (sdkManifests.status !== 0) {
+		throw new Error('Copying the SDK module manifests failed.');
+	}
 	await copyRegular(
 		join(repositoryRoot, 'infra/vercel/handler.mjs'),
 		join(directory, 'handler.mjs'),

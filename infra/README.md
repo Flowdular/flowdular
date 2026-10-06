@@ -171,8 +171,10 @@ launcher preserves existing volumes and values; deleting `.env` and generating
 new keys against an old database will make encrypted content unreadable.
 
 The runtime image contains `platform/dist`, `platform/package.json`, and a small
-entrypoint that URL-encodes PostgreSQL passwords before starting the server. No
-`node_modules` directory ships with it.
+entrypoint that URL-encodes PostgreSQL passwords before starting the server.
+Its only `node_modules` content, in an application built on `@flowdular/sdk`, is
+the `module.json` and `spec/module.yaml` of each module the SDK ships, which the
+platform reads to list its modules.
 
 ## Published image
 
