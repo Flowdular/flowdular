@@ -15,6 +15,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createRouter } from '@octanejs/app-core';
 import {
 	DEFAULT_CONFIGURATION,
 	loadSandboxConfiguration,
@@ -24,13 +25,24 @@ import {
 	updateSandboxConfiguration,
 	type SealedSecret,
 } from '../src/server/config.ts';
-import { setLocalFileTestHooks } from '../src/server/local-file.ts';
+import {
+	replaceLocalFile,
+	setLocalFileTestHooks,
+} from '../src/server/local-file.ts';
+import type { PreviewRuntime } from '../src/server/preview-runtime.ts';
 import {
 	collectProvisionedCredential,
 	recordPlatformAddress,
 	writeCredentialForTest,
 } from '../src/server/provision-local.ts';
-import { createSandboxRuntime } from '../src/server/runtime.ts';
+import {
+	createSandboxRoutes,
+	SANDBOX_REQUEST_HEADER,
+} from '../src/server/routes.ts';
+import {
+	createSandboxRuntime,
+	type SandboxRuntime,
+} from '../src/server/runtime.ts';
 import { completeSessionMove } from '../src/server/session-owner.ts';
 import {
 	appendChatEntry,
@@ -119,16 +131,65 @@ function holdFirstWrite(name: string) {
 }
 
 /* Answers 503 like a platform that is still booting, so a runtime holding a
-   credential settles its connection without reaching any real service. */
-async function bootingPlatform(): Promise<string> {
-	const server = createServer((_request, response) => {
+   credential settles its connection without reaching any real service. It
+   keeps the Authorization header of every request it receives. */
+async function bootingPlatform(): Promise<{
+	readonly url: string;
+	readonly authorizations: string[];
+}> {
+	const authorizations: string[] = [];
+	const server = createServer((request, response) => {
+		authorizations.push(request.headers.authorization ?? '');
 		response.statusCode = 503;
 		response.end();
 	});
 	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
 	cleanup.push(() => new Promise<void>((done) => server.close(() => done())));
-	return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	return {
+		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+		authorizations,
+	};
 }
+
+const preview: PreviewRuntime = {
+	compose: () => Promise.reject(new Error('no preview in tests')),
+	cached: () => null,
+	forget: () => undefined,
+	dispose: () => undefined,
+};
+
+/* The browser sign-in a self-hosted sandbox offers before any session. */
+async function connectBrowser(
+	runtime: SandboxRuntime,
+	input: { readonly platformUrl: string; readonly token: string },
+): Promise<void> {
+	const router = createRouter([
+		...createSandboxRoutes(runtime, preview, { port: 4320 }),
+	]);
+	const url = new URL('/sandbox/api/connect', 'http://127.0.0.1:4320');
+	const match = router.match('POST', url.pathname);
+	if (!match || match.route.type !== 'server') throw new Error('no route');
+	await match.route.handler({
+		request: new Request(url, {
+			method: 'POST',
+			headers: {
+				host: '127.0.0.1:4320',
+				'content-type': 'application/json',
+				[SANDBOX_REQUEST_HEADER]: '1',
+			},
+			body: JSON.stringify(input),
+		}),
+		params: match.params,
+		url,
+		state: new Map(),
+	});
+}
+
+const OPERATOR_TOKEN: SealedSecret = {
+	iv: 'b3BlcmF0b3ItaXY=',
+	tag: 'b3BlcmF0b3ItdGFn',
+	ciphertext: 'b3BlcmF0b3ItdG9rZW4=',
+};
 
 describe('sandbox configuration writes', () => {
 	it('keeps the previous configuration readable when a save stops before its rename', async () => {
@@ -262,7 +323,7 @@ describe('sandbox configuration writes', () => {
 
 	it('keeps the credential the launcher saved while the runtime was serving', async () => {
 		const root = await workspace();
-		const platformUrl = await bootingPlatform();
+		const { url: platformUrl } = await bootingPlatform();
 		const runtime = await createSandboxRuntime(root);
 		await prepareLauncherInbox(root);
 		expect(
@@ -279,7 +340,7 @@ describe('sandbox configuration writes', () => {
 
 	it('keeps an operator save that overlaps the session move', async () => {
 		const root = await workspace();
-		const platformUrl = await bootingPlatform();
+		const { url: platformUrl } = await bootingPlatform();
 		await prepareLauncherInbox(root);
 		await collectProvisionedCredential({
 			workspaceRoot: root,
@@ -313,11 +374,6 @@ describe('sandbox configuration writes', () => {
 	it('keeps a token the operator connected while the launcher sealed its own', async () => {
 		const root = await workspace();
 		const inbox = await prepareLauncherInbox(root);
-		const operatorToken: SealedSecret = {
-			iv: 'b3BlcmF0b3ItaXY=',
-			tag: 'b3BlcmF0b3ItdGFn',
-			ciphertext: 'b3BlcmF0b3ItdG9rZW4=',
-		};
 		/* The launcher's first seal creates the local key; the operator's
 		   connection lands while that write is in flight. */
 		setLocalFileTestHooks({
@@ -326,7 +382,7 @@ describe('sandbox configuration writes', () => {
 				await saveSandboxConfiguration(root, {
 					...DEFAULT_CONFIGURATION,
 					platformUrl: 'http://127.0.0.1:4311',
-					platformToken: operatorToken,
+					platformToken: OPERATOR_TOKEN,
 				});
 			},
 		});
@@ -338,11 +394,60 @@ describe('sandbox configuration writes', () => {
 			}),
 		).toBe(false);
 		const stored = await loadSandboxConfiguration(root);
-		expect(stored.platformToken).toEqual(operatorToken);
+		expect(stored.platformToken).toEqual(OPERATOR_TOKEN);
 		expect(stored.launcherTokenFingerprint).toBeNull();
 		await expect(readFile(inbox, 'utf8')).rejects.toMatchObject({
 			code: 'ENOENT',
 		});
+	});
+
+	it('keeps the address of a token the operator connected before the launcher moved it', async () => {
+		const root = await workspace();
+		await prepareLauncherInbox(root);
+		const gate = holdFirstWrite('config.json');
+
+		const connecting = saveSandboxConfiguration(root, {
+			...DEFAULT_CONFIGURATION,
+			platformUrl: 'http://127.0.0.1:5000',
+			platformToken: OPERATOR_TOKEN,
+		});
+		await gate.held;
+		const collecting = collectProvisionedCredential({
+			workspaceRoot: root,
+			platformUrl: 'http://127.0.0.1:4311',
+		});
+		await gate.second;
+		gate.release();
+		await connecting;
+
+		expect(await collecting).toBe(false);
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.platformUrl).toBe('http://127.0.0.1:5000');
+		expect(stored.platformToken).toEqual(OPERATOR_TOKEN);
+	});
+
+	it('never sends the launcher credential to an address a browser sign-in names', async () => {
+		const root = await workspace();
+		const platform = await bootingPlatform();
+		const elsewhere = await bootingPlatform();
+		/* The runtime loads before the launcher collects, and nothing has
+		   refreshed it since. */
+		const runtime = await createSandboxRuntime(root);
+		await prepareLauncherInbox(root);
+		await collectProvisionedCredential({
+			workspaceRoot: root,
+			platformUrl: platform.url,
+		});
+
+		await connectBrowser(runtime, {
+			platformUrl: elsewhere.url,
+			token: 'fd_test_browser_token',
+		});
+
+		expect(elsewhere.authorizations).toEqual([]);
+		const stored = await loadSandboxConfiguration(root);
+		expect(stored.platformUrl).toBe(platform.url);
+		expect(await openSecret(root, stored.platformToken!)).toBe(LAUNCHER_TOKEN);
 	});
 
 	it('agrees on one local key when two first uses overlap', async () => {
@@ -414,5 +519,23 @@ describe('transcript rotation', () => {
 				name.startsWith('chat.jsonl.'),
 			),
 		).toEqual([]);
+	});
+});
+
+describe('local file replacement', () => {
+	it('reports a replacement that landed when its directory cannot be flushed', async () => {
+		const directory = await temporaryDirectory('flowdular-local-state-dir-');
+		const target = join(directory, 'state.json');
+		await writeFile(target, 'before', { mode: 0o600 });
+		/* Writable and searchable but not readable: the rename works, opening
+		   the directory to flush it does not. */
+		await chmod(directory, 0o300);
+		cleanup.push(() => chmod(directory, 0o700));
+
+		await replaceLocalFile(target, 'after');
+
+		await chmod(directory, 0o700);
+		expect(await readFile(target, 'utf8')).toBe('after');
+		expect(await readdir(directory)).toEqual(['state.json']);
 	});
 });

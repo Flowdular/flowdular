@@ -248,12 +248,14 @@ export async function collectProvisionedCredential(options: {
 		await rm(path, { force: true });
 		return false;
 	}
+	/* Both writes check the token again: one connected since the check above
+	   keeps its address and stays, as it would have there. */
 	if (configuration.platformUrl !== options.platformUrl) {
-		await updateSandboxConfiguration(options.workspaceRoot, (current) => ({
-			...current,
-			platformUrl: options.platformUrl,
-			version: 1,
-		}));
+		await updateSandboxConfiguration(options.workspaceRoot, (current) =>
+			current.platformToken !== null
+				? current
+				: { ...current, platformUrl: options.platformUrl, version: 1 },
+		);
 	}
 	let credential: ProvisionedCredential;
 	try {
@@ -267,7 +269,6 @@ export async function collectProvisionedCredential(options: {
 		options.workspaceRoot,
 		credential.token,
 	);
-	/* A token connected since the check above stays, as it would have there. */
 	const stored = await updateSandboxConfiguration(
 		options.workspaceRoot,
 		(current) =>

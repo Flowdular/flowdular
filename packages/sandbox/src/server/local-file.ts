@@ -96,18 +96,21 @@ export async function replaceLocalFile(
 	await syncDirectory(dirname(path));
 }
 
-/* Makes the rename itself survive a power loss. Windows cannot open a
-   directory for this, and some filesystems refuse to flush one; the rename has
-   already landed in both cases. */
+/* Makes the rename itself survive a power loss where the platform allows it.
+   Windows cannot open a directory, and a filesystem or a permission model may
+   refuse to open or flush one. The rename has landed by then, so a refusal
+   costs only that guarantee; failing the call would report as lost a write
+   every reader already sees. */
 async function syncDirectory(directory: string): Promise<void> {
 	if (process.platform === 'win32') return;
-	const handle = await open(directory, constants.O_RDONLY);
 	try {
-		await handle.sync();
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code !== 'EINVAL' && code !== 'ENOTSUP') throw error;
-	} finally {
-		await handle.close();
+		const handle = await open(directory, constants.O_RDONLY);
+		try {
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		return;
 	}
 }

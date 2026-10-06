@@ -54,7 +54,16 @@ export interface SandboxRuntime {
 	platform(): PlatformClient | null;
 	connection(): SandboxConnection;
 	refresh(): Promise<SandboxConnection>;
-	update(patch: Partial<SandboxConfiguration>): Promise<SandboxConnection>;
+	/* A function computes the patch from the stored configuration inside the
+	   configuration queue, for a change that depends on what is stored. Null
+	   changes nothing. */
+	update(
+		patch:
+			| Partial<SandboxConfiguration>
+			| ((
+					current: SandboxConfiguration,
+			  ) => Partial<SandboxConfiguration> | null),
+	): Promise<SandboxConnection>;
 	/* The provider the workspace itself supplies, so setup asks for a key only
 	   when there is none to adopt. Never carries the credential. */
 	aiEnvironment(): AiEnvironmentSummary | null;
@@ -250,7 +259,12 @@ export async function createSandboxRuntime(
 			   rebuild: the launcher saves its credential while this runtime serves. */
 			configuration = await updateSandboxConfiguration(
 				workspaceRoot,
-				(current) => ({ ...current, ...patch, version: 1 }),
+				(current) => {
+					const change = typeof patch === 'function' ? patch(current) : patch;
+					return change === null
+						? current
+						: { ...current, ...change, version: 1 };
+				},
 			);
 			return rebuild();
 		},
