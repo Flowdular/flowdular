@@ -52,3 +52,27 @@ it('connects using the default hostname when Vite listens on IPv6 loopback', asy
 		);
 	}
 });
+
+it('reports a session waiting on answers in a state sandbox.core accepts', async () => {
+	const sent: unknown[] = [];
+	const client = new PlatformClient({
+		platformUrl: 'https://business.example',
+		token: 'test-token',
+		fetch: async (_url, init) => {
+			sent.push(JSON.parse(String(init?.body)));
+			return new Response('{}', {
+				headers: { 'content-type': 'application/json' },
+			});
+		},
+	});
+
+	await client.updateSessionState('session-1', 'awaiting-answers');
+	await client.updateSessionState('session-1', 'awaiting-approval');
+	await client.updateSessionState('session-1', 'planned');
+
+	expect(sent).toEqual([
+		{ sessionId: 'session-1', state: 'awaiting-approval' },
+		{ sessionId: 'session-1', state: 'awaiting-approval' },
+		{ sessionId: 'session-1', state: 'planned' },
+	]);
+});

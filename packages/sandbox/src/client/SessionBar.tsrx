@@ -26,7 +26,12 @@ function stateTone(
 ): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
 	if (state === 'accepted') return 'success';
 	if (state === 'failed' || state === 'blocked') return 'danger';
-	if (state === 'awaiting-approval' || state === 'validating') return 'warning';
+	if (
+		state === 'awaiting-approval' || state === 'awaiting-answers' ||
+			state === 'validating'
+	) {
+		return 'warning';
+	}
 	if (state === 'draft') return 'neutral';
 	return 'info';
 }

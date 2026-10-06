@@ -4,8 +4,11 @@ import {
 	followTurn,
 	streamEject,
 	watchSession,
+	type SessionView,
 	type TurnHandlers,
 } from '../src/client/api.ts';
+import { approvalErrorFor, type ApprovalRefusal } from '../src/client/state.ts';
+import type { ChatEntry } from '../src/server/sessions.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -155,5 +158,89 @@ describe('session change feed', () => {
 
 		stop();
 		expect(source.closed).toBe(true);
+	});
+});
+
+describe('the banner of a refused approval', () => {
+	const approvalHandoff: ChatEntry = {
+		sequence: 7,
+		at: 7,
+		kind: 'system',
+		role: 'business-manager',
+		module: 'booking',
+		text: 'The specification is ready for approval.',
+		handoff: {
+			kind: 'approval',
+			role: 'backend-engineer',
+			roleName: 'Backend engineer',
+			reason: 'The specification is ready for approval.',
+			prompt: '',
+			module: 'booking',
+		},
+	};
+	const refusal: ApprovalRefusal = {
+		session: 'session-1',
+		module: 'booking',
+		handoff: 7,
+		message:
+			'The specification of booking.core changed after you reviewed it. Review the current text and approve again.',
+	};
+	/* What a reload of the session route returns, reduced to what decides
+	   whether the refusal still explains the card on screen. */
+	function view(
+		chat: readonly ChatEntry[],
+		approved: boolean,
+		session = 'session-1',
+	): SessionView {
+		return {
+			session: { id: session },
+			chat,
+			specs: [{ module: 'booking', approved }],
+		} as unknown as SessionView;
+	}
+
+	it('stays while the card it was refused on is still the one to approve', () => {
+		/* The reload after the refusal shows the current text, still unapproved. */
+		expect(approvalErrorFor(refusal, view([approvalHandoff], false))).toBe(
+			refusal.message,
+		);
+	});
+
+	it('goes once another client approves the module', () => {
+		const approvedElsewhere: ChatEntry = {
+			sequence: 8,
+			at: 8,
+			kind: 'system',
+			role: 'business-manager',
+			module: 'booking',
+			decision: 'approved',
+			text: 'You approved the specification of booking.core.',
+		};
+		expect(
+			approvalErrorFor(
+				refusal,
+				view([approvalHandoff, approvedElsewhere], true),
+			),
+		).toBe('');
+	});
+
+	it('goes once a newer handoff replaces the card', () => {
+		const answered: ChatEntry = {
+			...approvalHandoff,
+			sequence: 12,
+			at: 12,
+			handoff: { ...approvalHandoff.handoff!, kind: 'question' },
+		};
+		expect(
+			approvalErrorFor(refusal, view([approvalHandoff, answered], false)),
+		).toBe('');
+	});
+
+	it('never shows beside another session or without one', () => {
+		expect(
+			approvalErrorFor(refusal, view([approvalHandoff], false, 'session-2')),
+		).toBe('');
+		expect(approvalErrorFor(refusal, null)).toBe('');
+		expect(approvalErrorFor(null, view([approvalHandoff], false))).toBe('');
 	});
 });
