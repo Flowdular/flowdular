@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, rename, rm } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { lstat, open, readdir, rename, rm } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { processAlive } from './disk-lock.ts';
 
 export interface LocalFileTestHooks {
 	/* The new bytes are flushed to the temporary file and not yet renamed over
@@ -62,9 +63,9 @@ export async function withLocalFileLock<T>(
    is created exclusively, owner-only and without following a link, and the
    rename replaces a symbolic link at path rather than writing through it.
    Callers that must refuse such a link check before calling. A crash between
-   the flush and the rename leaves the temporary file behind. The file is
-   always new, so its creation mode is its mode: the preview worker's
-   permission model refuses fchmod. */
+   the flush and the rename leaves the temporary file behind, for
+   removeStaleTemporaryFiles. The file is always new, so its creation mode is
+   its mode: the preview worker's permission model refuses fchmod. */
 export async function replaceLocalFile(
 	path: string,
 	value: string,
@@ -94,6 +95,31 @@ export async function replaceLocalFile(
 		throw error;
 	}
 	await syncDirectory(dirname(path));
+}
+
+const TEMPORARY_FILE = /^.+\.(\d+)\.[0-9a-f]{8}$/;
+
+/* Removes the temporary files a writer here left in directory when its
+   process died before moving them into place. Only that name pattern, only
+   regular files, and only when the PID in the name is not running: a live
+   process with that PID may be the writer, whatever it is now. Best effort,
+   so a failure here never stops the caller. */
+export async function removeStaleTemporaryFiles(
+	directory: string,
+): Promise<void> {
+	let names: string[];
+	try {
+		names = await readdir(directory);
+	} catch {
+		return;
+	}
+	for (const name of names) {
+		const pid = Number(TEMPORARY_FILE.exec(name)?.[1]);
+		if (!Number.isSafeInteger(pid) || pid <= 0 || processAlive(pid)) continue;
+		const path = join(directory, name);
+		const info = await lstat(path).catch(() => null);
+		if (info?.isFile()) await rm(path, { force: true }).catch(() => undefined);
+	}
 }
 
 /* Makes the rename itself survive a power loss where the platform allows it.

@@ -54,6 +54,7 @@ import {
 	createSession,
 	readChat,
 	readSession,
+	removeCrashLeftovers,
 	sessionPaths,
 	updateSession,
 	type SandboxSession,
@@ -685,6 +686,46 @@ describe('session and delivery records', () => {
 
 		expect(await readDeliveryRecord(sessionRoot)).toEqual(delivered);
 		expect(await readdir(sessionRoot)).toEqual(['delivery.json']);
+	});
+});
+
+describe('crash leftovers', () => {
+	it('removes the temporary files of writers that are gone and nothing else', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await mkdir(paths.data, { recursive: true });
+		const state = stateDirectory(root);
+		/* No process ever has this PID. */
+		const gone = 2_147_483_647;
+		const stale = [
+			join(state, `config.json.${gone}.0a1b2c3d`),
+			join(state, `secret.key.${gone}.0a1b2c3d`),
+			join(paths.root, `session.json.${gone}.0a1b2c3d`),
+			join(paths.root, `chat.jsonl.${gone}.0a1b2c3d`),
+			join(paths.root, `delivery.json.${gone}.0a1b2c3d`),
+			join(paths.data, `preview-credentials.json.${gone}.0a1b2c3d`),
+		];
+		const kept = [
+			/* This process, or another live one, may still be writing it. */
+			join(state, `config.json.${process.pid}.0a1b2c3d`),
+			join(state, `config.json.${process.ppid}.0a1b2c3d`),
+			/* Not a name the sandbox writes. */
+			join(state, `notes.${gone}.txt`),
+			join(paths.root, `chat.jsonl.${gone}.tmp`),
+		];
+		for (const path of [...stale, ...kept])
+			await writeFile(path, 'leftover', { mode: 0o600 });
+		const directory = join(state, `cache.${gone}.0a1b2c3d`);
+		await mkdir(directory);
+
+		await removeCrashLeftovers(root);
+
+		for (const path of stale)
+			await expect(stat(path), path).rejects.toMatchObject({ code: 'ENOENT' });
+		for (const path of [...kept, directory])
+			await expect(stat(path), path).resolves.toBeDefined();
+		expect((await readSession(root, session.id)).id).toBe(session.id);
 	});
 });
 

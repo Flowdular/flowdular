@@ -49,7 +49,7 @@ async function readLockHolder(path: string): Promise<LockHolder | null> {
 	}
 }
 
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;

@@ -18,6 +18,7 @@ const [
 	{ findRunningPlatformUrl, startPlatformProcess },
 	{ collectProvisionedCredential, recordPlatformAddress },
 	{ acquireWorkspaceLock },
+	{ removeCrashLeftovers },
 	{ flowdularStateDirectory },
 	{ createServer },
 	{
@@ -36,6 +37,7 @@ const [
 	import('../src/server/platform-process.ts'),
 	import('../src/server/provision-local.ts'),
 	import('../src/server/workspace-lock.ts'),
+	import('../src/server/sessions.ts'),
 	import('@flowdular/kernel/runtime-config'),
 	import('vite'),
 	import('@flowdular/dev-console'),
@@ -431,6 +433,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		/* Taken before anything writes the workspace's sandbox state, and held
 		   until this process exits, however it exits. */
 		workspaceLock = await acquireWorkspaceLock(options.workspace);
+		await removeCrashLeftovers(options.workspace);
 		const resolvedPlatform = await resolvePlatform(options);
 		/* Set before the child is spawned: the application reads it to decide
 		   whether to prepare a credential at boot, and a child inherits the

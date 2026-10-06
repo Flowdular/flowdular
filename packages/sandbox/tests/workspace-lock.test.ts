@@ -268,8 +268,18 @@ async function launcher(root: string): Promise<ChildProcess> {
 describe('sandbox launcher', () => {
 	it('refuses a second launcher on the same workspace and releases the lock when stopped', async () => {
 		const root = await workspace();
+		await mkdir(stateDirectory(root), { recursive: true });
+		/* A temporary file a crashed writer left before its rename. */
+		const leftover = join(
+			stateDirectory(root),
+			'config.json.2147483647.0a1b2c3d',
+		);
+		await writeFile(leftover, '{}', { mode: 0o600 });
 		const first = await launcher(root);
 		await printed(first, 'FLOWDULAR SANDBOX');
+		expect(await readdir(stateDirectory(root))).not.toContain(
+			'config.json.2147483647.0a1b2c3d',
+		);
 
 		const second = await launcher(root);
 		const secondOutput = outputOf(second);

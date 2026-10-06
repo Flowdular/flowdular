@@ -6,6 +6,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { createSandboxRuntime } from '../server/runtime.ts';
+import { removeCrashLeftovers } from '../server/sessions.ts';
 import { hashSpec } from '../server/spec.ts';
 import {
 	acquireWorkspaceLock,
@@ -183,6 +184,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 		return 1;
 	}
 	try {
+		await removeCrashLeftovers(options.workspace);
 		const runtime = await createSandboxRuntime(options.workspace);
 		const suite = await runSuite(
 			{

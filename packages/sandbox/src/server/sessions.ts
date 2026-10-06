@@ -19,7 +19,7 @@ import {
 	sealSessionRecord,
 	verifySessionRecord,
 } from './config.ts';
-import { replaceLocalFile } from './local-file.ts';
+import { removeStaleTemporaryFiles, replaceLocalFile } from './local-file.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -696,6 +696,28 @@ export async function listSessions(
 		}
 	}
 	return sessions.sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+/* A writer that died between its flush and its rename left its temporary
+   file beside the target: the configuration and key in the sandbox
+   directory, and a session's record, transcript, delivery record and preview
+   credentials. */
+export async function removeCrashLeftovers(
+	workspaceRoot: string,
+): Promise<void> {
+	await removeStaleTemporaryFiles(sandboxDirectory(workspaceRoot));
+	let entries: readonly string[];
+	try {
+		entries = await readdir(sessionsRoot(workspaceRoot));
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (!isSessionId(entry)) continue;
+		const paths = sessionPaths(workspaceRoot, entry, '');
+		await removeStaleTemporaryFiles(paths.root);
+		await removeStaleTemporaryFiles(paths.data);
+	}
 }
 
 type SessionPatch = Partial<Omit<SandboxSession, 'id' | 'createdAt'>>;
