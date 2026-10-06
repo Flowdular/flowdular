@@ -518,6 +518,82 @@ createServer((request, response) => {
 	}
 }, 90_000);
 
+it('cancels startup while the platform has not answered its first request', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-unanswered-'));
+	temporaryDirectories.push(root);
+	const pidFile = join(root, 'child.pid');
+	const asked = join(root, 'asked');
+	await writeFile(
+		join(root, 'package.json'),
+		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
+	);
+	await writeFile(
+		join(root, 'child.mjs'),
+		`import { writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const args = process.argv;
+const port = Number(args[args.indexOf('--port') + 1]);
+const host = args[args.indexOf('--host') + 1];
+createServer(() => writeFileSync(${JSON.stringify(asked)}, 'asked')).listen(port, host);
+`,
+	);
+	const controller = new AbortController();
+	const startup = startPlatformProcess({
+		workspaceRoot: root,
+		port: await freePort(),
+		quiet: true,
+		signal: controller.signal,
+	});
+	void startup.catch(() => undefined);
+	try {
+		await waitUntil(async () => {
+			try {
+				await readFile(asked);
+				return true;
+			} catch {
+				return false;
+			}
+		}, 600);
+		controller.abort();
+		await expect(startup).rejects.toBeInstanceOf(PlatformStartAbortedError);
+		const pid = Number(await readFile(pidFile, 'utf8'));
+		await waitUntil(() => processGone(pid));
+	} finally {
+		controller.abort();
+		await startup.catch(() => undefined);
+	}
+}, 60_000);
+
+it('stops waiting for an already-serving platform that has not answered when cancelled', async () => {
+	let asked = () => {};
+	const requested = new Promise<void>((resolve) => {
+		asked = resolve;
+	});
+	const server = createHttpServer(() => asked());
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	try {
+		const address = server.address();
+		if (!address || typeof address === 'string') throw new Error('No TCP port');
+		const controller = new AbortController();
+		const ready: boolean[] = [];
+		const startup = startPlatformProcess({
+			workspaceRoot: '/unused',
+			port: address.port,
+			signal: controller.signal,
+			onReady: (state) => {
+				ready.push(state.setup);
+			},
+		});
+		await requested;
+		controller.abort();
+		expect((await startup).url).toBe(`http://127.0.0.1:${address.port}`);
+	} finally {
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+}, 30_000);
+
 it('stops a platform child when startup is cancelled', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-start-'));
 	temporaryDirectories.push(root);
