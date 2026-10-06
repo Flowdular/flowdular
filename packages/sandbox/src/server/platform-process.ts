@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
+const STARTUP_TIMEOUT_MS = 180_000;
+
 export interface PlatformProcess {
 	readonly url: string;
 	stop(): Promise<void>;
@@ -163,14 +165,15 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 async function platformMode(
 	url: string,
 	signal?: AbortSignal,
+	timeoutMs = 2_000,
 ): Promise<'setup' | 'application' | null> {
 	try {
 		const response = await fetch(new URL('/setup', url), {
 			headers: { accept: 'text/html' },
 			redirect: 'manual',
 			signal: signal
-				? AbortSignal.any([signal, AbortSignal.timeout(2_000)])
-				: AbortSignal.timeout(2_000),
+				? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+				: AbortSignal.timeout(timeoutMs),
 		});
 		await response.body?.cancel();
 		if (
@@ -185,8 +188,16 @@ async function platformMode(
 	}
 }
 
-async function platformServesSetup(url: string): Promise<boolean> {
-	return (await platformMode(url)) === 'setup';
+/* The socket opens before the platform has evaluated its configuration, and
+   the first request waits for that evaluation, which a cold first-run boot
+   can take tens of seconds to finish. Its answer decides whether this boot is
+   setup, so the probe is bounded by the startup budget, not a short poll. */
+async function platformServesSetup(
+	url: string,
+	signal: AbortSignal | undefined,
+	timeoutMs: number,
+): Promise<boolean> {
+	return (await platformMode(url, signal, timeoutMs)) === 'setup';
 }
 
 async function waitForApplicationTransition(
@@ -238,7 +249,11 @@ export async function startPlatformProcess(
 		try {
 			await options.onReady?.({
 				url: existingUrl,
-				setup: await platformServesSetup(existingUrl),
+				setup: await platformServesSetup(
+					existingUrl,
+					options.signal,
+					STARTUP_TIMEOUT_MS,
+				),
 			});
 		} catch {
 			options.log?.('platform ready callback failed');
@@ -274,13 +289,14 @@ export async function startPlatformProcess(
 		if (lifetime.signal.aborted) throw new PlatformStartAbortedError();
 		const owned = spawnPlatform(options);
 		current = owned;
+		const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 		const startup = new AbortController();
 		const abortStartup = () => startup.abort();
 		lifetime.signal.addEventListener('abort', abortStartup, { once: true });
 		try {
 			const outcome = await Promise.race([
-				waitForPlatform(url, 180_000, startup.signal).then((ready) =>
-					ready ? 'ready' : 'timeout',
+				waitForPlatform(url, STARTUP_TIMEOUT_MS, startup.signal).then(
+					(ready) => (ready ? 'ready' : 'timeout'),
 				),
 				owned.closed.then(() => 'exited'),
 			]);
@@ -294,7 +310,11 @@ export async function startPlatformProcess(
 			startup.abort();
 			lifetime.signal.removeEventListener('abort', abortStartup);
 		}
-		const setup = await platformServesSetup(url);
+		const setup = await platformServesSetup(
+			url,
+			lifetime.signal,
+			Math.max(deadline - Date.now(), 2_000),
+		);
 		if (lifetime.signal.aborted) {
 			await owned.stop();
 			throw new PlatformStartAbortedError();

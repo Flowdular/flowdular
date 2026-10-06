@@ -347,6 +347,84 @@ createServer((request, response) => {
 	}
 }, 40_000);
 
+it('recognizes setup behind a slow first answer and restarts into the application on the setup exit code', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-cold-'));
+	temporaryDirectories.push(root);
+	const marker = join(root, 'configured');
+	const pidFile = join(root, 'children.txt');
+	await writeFile(
+		join(root, 'package.json'),
+		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
+	);
+	/* Like the development server, the socket opens before the configuration
+	   is evaluated, and every request waits for that evaluation. A cold
+	   first-run boot takes far longer than a quick probe would wait. */
+	await writeFile(
+		join(root, 'child.mjs'),
+		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
+const args = process.argv;
+const port = Number(args[args.indexOf('--port') + 1]);
+const host = args[args.indexOf('--host') + 1];
+const setup = !existsSync(${JSON.stringify(marker)});
+const evaluated = new Promise((resolve) => setTimeout(resolve, setup ? 4000 : 0));
+createServer(async (request, response) => {
+  await evaluated;
+  if (request.url === '/setup' && setup) {
+    if (request.method === 'POST') {
+      writeFileSync(${JSON.stringify(marker)}, 'configured');
+      response.writeHead(204).end();
+      setTimeout(() => process.exit(Number(process.env.FD_SETUP_RESTART_EXIT_CODE)), 100);
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html', 'x-flowdular-setup': 'first-run' }).end('<h1>Setup</h1>');
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/html' }).end('<h1>Application</h1>');
+}).listen(port, host);
+`,
+	);
+	const ready: { url: string; setup: boolean }[] = [];
+	const logs: string[] = [];
+	let applicationReady = () => {};
+	const restarted = new Promise<void>((resolve) => {
+		applicationReady = resolve;
+	});
+	const platform = await startPlatformProcess({
+		workspaceRoot: root,
+		port: await freePort(),
+		quiet: true,
+		onReady: (state) => {
+			ready.push(state);
+			if (!state.setup) applicationReady();
+		},
+		log: (line) => logs.push(line),
+	});
+	try {
+		expect(ready).toEqual([{ url: platform.url, setup: true }]);
+		expect(
+			(await fetch(`${platform.url}/setup`, { method: 'POST' })).status,
+		).toBe(204);
+		await restarted;
+		expect(ready).toEqual([
+			{ url: platform.url, setup: true },
+			{ url: platform.url, setup: false },
+		]);
+		expect(logs).toContain('setup finished; restarting the platform');
+		const application = await fetch(`${platform.url}/setup`);
+		expect(application.headers.get('x-flowdular-setup')).toBeNull();
+		expect(await application.text()).toContain('Application');
+	} finally {
+		await platform.stop();
+		const pids = (await readFile(pidFile, 'utf8'))
+			.trim()
+			.split('\n')
+			.map(Number);
+		for (const pid of pids) await waitUntil(() => processGone(pid));
+	}
+}, 90_000);
+
 it('stops a platform child when startup is cancelled', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-start-'));
 	temporaryDirectories.push(root);
