@@ -173,8 +173,9 @@ new keys against an old database will make encrypted content unreadable.
 The runtime image contains `platform/dist`, `platform/package.json`, and a small
 entrypoint that URL-encodes PostgreSQL passwords before starting the server.
 Its only `node_modules` content, in an application built on `@flowdular/sdk`, is
-the `module.json` and `spec/module.yaml` of each module the SDK ships, which the
-platform reads to list its modules.
+the SDK's module index with the `module.json` and `spec/module.yaml` of each
+module it lists, and a `package.json` exporting that index. The platform reads
+them to list its modules.
 
 ## Published image
 

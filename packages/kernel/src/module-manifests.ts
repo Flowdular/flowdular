@@ -84,8 +84,8 @@ export function moduleRootDirectories(
 
 /**
  * The manifests @flowdular/sdk ships, by real path, with the SDK export each
- * module is imported through. Empty when platform/ cannot resolve the SDK,
- * which is also the case in a deployed image that ships no node_modules.
+ * module is imported through. Empty when platform/ cannot resolve the SDK. A
+ * deployment resolves the copy infra/sdk-module-manifests.mjs ships.
  */
 export function sdkModuleManifests(
 	workspaceRoot: string,

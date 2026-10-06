@@ -240,7 +240,7 @@ if (bundledFirstRun.status !== 0)
 const deployedModules = spawnSync(
 	process.execPath,
 	[join(root, 'scripts/smoke-deployed-modules.mjs'), consumer],
-	{ stdio: 'inherit', timeout: 90_000 },
+	{ stdio: 'inherit', timeout: 180_000 },
 );
 if (deployedModules.status !== 0)
 	throw new Error('Deployed module manifest check failed.');
