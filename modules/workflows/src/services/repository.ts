@@ -250,11 +250,12 @@ export interface WorkflowsRepository {
 		afterSequence: number,
 		limit: number,
 	): Promise<readonly WorkflowRunEventV1[]>;
+	/** Null when the run takes no new attempt: it settled or a cancellation was requested. */
 	startAttempt(
 		write: StartAttemptWrite,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
-	): Promise<WorkflowNodeAttempt>;
+	): Promise<WorkflowNodeAttempt | null>;
 	/**
 	 * Parks an attempt on a child. `recheckAt` applies to the `approval` kind
 	 * only: it is when the run, which leaves the claim queue entirely, looks at

@@ -592,6 +592,11 @@ const SQL = Object.freeze({
 	findRunByIdempotency: `SELECT * FROM workflow_runs
 		 WHERE tenant_id = $1 AND idempotency_key = $2`,
 	getRun: `SELECT * FROM workflow_runs WHERE tenant_id = $1 AND id = $2`,
+	/* The lock an update of the run takes. A cancellation writes its request
+		   and event under it, so a transition that holds it commits wholly
+		   before or wholly after the request. */
+	lockRun: `SELECT status FROM workflow_runs WHERE tenant_id = $1 AND id = $2
+		 FOR NO KEY UPDATE`,
 	/* The one cross-tenant read. It returns routing columns only; the claim
 		   itself re-reads and re-checks the run under the tenant it named. */
 	claimCandidates: `SELECT tenant_id, id FROM workflow_runs
@@ -698,15 +703,18 @@ const SQL = Object.freeze({
 		 AND status IN ('pending', 'ready')`,
 	countNodeSkipped: `UPDATE workflow_runs SET completed_nodes = completed_nodes + 1
 		 WHERE tenant_id = $1 AND id = $2`,
+	/* $9 is the status the settle read, so a cancellation committed since then
+		   is never overwritten. */
 	settleRun: `UPDATE workflow_runs SET status = $1, failure_code = $2,
 		 output_evidence_json = $3, usage_json = $4, cost_json = $5,
 		 completed_at = $6, lease_owner = NULL, lease_expires_at = NULL
-		 WHERE tenant_id = $7 AND id = $8`,
+		 WHERE tenant_id = $7 AND id = $8 AND status = $9`,
 	expireRunPayloads: `UPDATE workflow_payloads SET expires_at = $1
 		 WHERE tenant_id = $2 AND run_id = $3 AND kind = 'execution'`,
 	requestCancellation: `UPDATE workflow_runs SET status = 'cancel-requested',
 		 cancellation_requested_at = $1, lease_owner = NULL, lease_expires_at = NULL
-		 WHERE tenant_id = $2 AND id = $3`,
+		 WHERE tenant_id = $2 AND id = $3
+		 AND status NOT IN ('cancel-requested', 'succeeded', 'failed', 'refused', 'cancelled')`,
 	readExecutionPayload: `SELECT ciphertext FROM workflow_payloads
 		 WHERE tenant_id = $1 AND run_id = $2 AND id = $3 AND kind = 'execution'`,
 	readEdgePayloadId: `SELECT payload_id FROM workflow_edge_transfers
@@ -1874,8 +1882,23 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		write: StartAttemptWrite,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
-	): Promise<WorkflowNodeAttempt> {
+	): Promise<WorkflowNodeAttempt | null> {
 		return this.#tx(write.tenantId, 'write', async (transaction) => {
+			const run = (
+				await this.#query<{ status: WorkflowRunStatus }>(
+					transaction,
+					SQL.lockRun,
+					[write.tenantId, write.runId],
+				)
+			)[0];
+			/* A requested cancellation prevents new nodes. */
+			if (
+				!run ||
+				run.status === 'cancel-requested' ||
+				TERMINAL_RUNS.has(run.status)
+			) {
+				return null;
+			}
 			const payloadId = await this.#storePayload(
 				transaction,
 				write.tenantId,
@@ -2017,6 +2040,10 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				runId,
 				nodeId,
 			]);
+			/* The child already exists. Without the run's lock, a cancellation
+			   appending beside this event takes the same sequence and fails this
+			   write, and the cancellation never learns of the child. */
+			await this.#query(transaction, SQL.lockRun, [tenantId, runId]);
 			if (childKind === 'agent') {
 				await this.#exec(transaction, SQL.markRunWaitingAgent, [
 					tenantId,
@@ -2360,7 +2387,12 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			const before = await this.#runIn(transaction, tenantId, runId);
 			if (!before) return null;
 			if (TERMINAL_RUNS.has(before.status)) return before;
-			await this.#exec(transaction, SQL.settleRun, [
+			/* A requested cancellation settles only as cancelled, once the worker
+			   has stopped the run's children. */
+			if (before.status === 'cancel-requested' && status !== 'cancelled') {
+				return before;
+			}
+			const changed = await this.#exec(transaction, SQL.settleRun, [
 				status,
 				failureCode,
 				JSON.stringify(outputEvidence),
@@ -2369,7 +2401,9 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				recordedAt,
 				tenantId,
 				runId,
+				before.status,
 			]);
+			if (changed !== 1) return this.#runIn(transaction, tenantId, runId);
 			await this.#exec(transaction, SQL.expireRunPayloads, [
 				recordedAt + this.#payloadRetentionMs,
 				tenantId,
@@ -2422,11 +2456,16 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			if (TERMINAL_RUNS.has(run.status) || run.status === 'cancel-requested') {
 				return { run, requested: false };
 			}
-			await this.#exec(transaction, SQL.requestCancellation, [
+			const changed = await this.#exec(transaction, SQL.requestCancellation, [
 				recordedAt,
 				tenantId,
 				runId,
 			]);
+			/* The run settled, or another request won, after the read above. */
+			if (changed !== 1) {
+				const current = await this.#runIn(transaction, tenantId, runId);
+				return current ? { run: current, requested: false } : null;
+			}
 			await this.#appendEvent(
 				transaction,
 				tenantId,

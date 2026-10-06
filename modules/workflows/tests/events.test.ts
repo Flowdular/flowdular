@@ -89,6 +89,85 @@ describe('workflow event projection', () => {
 		);
 	});
 
+	it('keeps a requested cancellation over a child or a retry recorded after it', async () => {
+		const started = [
+			...successfulEvents.slice(0, 2),
+			event(3, 'node.ready', { nodeId: 'agent.process' }),
+			event(4, 'node.attempt.started', {
+				nodeId: 'agent.process',
+				attempt: 1,
+				semanticGroup: 'run-a:agent.process',
+				input: { state: 'redacted' },
+			}),
+		];
+		const child = {
+			nodeId: 'agent.process',
+			attempt: 1,
+			childKind: 'agent',
+			childId: 'child-1',
+			observationDeadlineAt: 100,
+		};
+		const settled = (status: string, failureCode: string | null) => ({
+			nodeId: 'agent.process',
+			attempt: 1,
+			status,
+			outcomePort: null,
+			output: { state: 'redacted' },
+			failureCode,
+			retryClassification: failureCode ? 'retryable' : null,
+		});
+		const childAfterCancel = [
+			...started,
+			event(5, 'run.cancel.requested', { requestedAt: 5 }),
+			event(6, 'node.child.waiting', child),
+		];
+		expect(projectWorkflowRunEvents(childAfterCancel)).toMatchObject({
+			status: 'cancel-requested',
+			nodeStatuses: { 'agent.process': 'waiting-child' },
+		});
+		expect(
+			projectWorkflowRunEvents([
+				...childAfterCancel,
+				event(7, 'node.attempt.settled', settled('cancelled', null)),
+				event(8, 'run.cancelled', successfulEvents[5].payload),
+			]).status,
+		).toBe('cancelled');
+
+		const retryAfterCancel = [
+			...started,
+			event(5, 'node.child.waiting', child),
+			event(6, 'run.cancel.requested', { requestedAt: 6 }),
+			event(7, 'node.attempt.settled', settled('failed', 'PROVIDER_FAILED')),
+			event(8, 'node.retry.scheduled', {
+				nodeId: 'agent.process',
+				attempt: 1,
+				classification: 'retryable',
+				backoffMs: 1,
+				nextAttemptAt: 9,
+			}),
+		];
+		expect(projectWorkflowRunEvents(retryAfterCancel)).toMatchObject({
+			status: 'cancel-requested',
+			nodeStatuses: { 'agent.process': 'waiting-retry' },
+		});
+		expect(
+			projectWorkflowRunEvents([
+				...retryAfterCancel,
+				event(9, 'run.cancelled', successfulEvents[5].payload),
+			]).status,
+		).toBe('cancelled');
+		expect(() =>
+			projectWorkflowRunEvents([
+				...retryAfterCancel,
+				event(9, 'node.ready', { nodeId: 'agent.process' }),
+			]),
+		).toThrowError(
+			expect.objectContaining<Partial<WorkflowEventProjectionError>>({
+				code: 'WORKFLOW_EVENT_TRANSITION_INVALID',
+			}),
+		);
+	});
+
 	it('refuses a transition after a terminal event', async () => {
 		const illegal = [
 			...successfulEvents,

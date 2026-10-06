@@ -4393,7 +4393,12 @@ describe('workflow persistence boundary', () => {
 /* Holds the next runtime write transaction after its reads and before its first
    write, so the test can commit another transaction in between. */
 function writeGatedProvider(databases: DatabaseProvider) {
-	let held: (() => Promise<void>) | undefined;
+	let held:
+		| {
+				readonly matches: (text: string) => boolean;
+				readonly hold: () => Promise<void>;
+		  }
+		| undefined;
 	let runtime: DatabaseHandle | undefined;
 	const gated = (transaction: DatabaseTransaction): DatabaseTransaction =>
 		new Proxy(transaction, {
@@ -4402,9 +4407,11 @@ function writeGatedProvider(databases: DatabaseProvider) {
 					return async (
 						...args: Parameters<DatabaseTransaction['execute']>
 					) => {
-						const hold = held;
-						held = undefined;
-						await hold?.();
+						const next = held;
+						if (next?.matches(args[0].text)) {
+							held = undefined;
+							await next.hold();
+						}
 						return target.execute(...args);
 					};
 				}
@@ -4444,14 +4451,18 @@ function writeGatedProvider(databases: DatabaseProvider) {
 	};
 	return {
 		provider,
-		holdNextWrite() {
+		/** Holds the next write statement, or the next one `matches` accepts. */
+		holdNextWrite(matches: (text: string) => boolean = () => true) {
 			let arrive!: () => void;
 			let release!: () => void;
 			const arrived = new Promise<void>((resolve) => (arrive = resolve));
 			const released = new Promise<void>((resolve) => (release = resolve));
-			held = async () => {
-				arrive();
-				await released;
+			held = {
+				matches,
+				hold: async () => {
+					arrive();
+					await released;
+				},
 			};
 			return { arrived, release };
 		},
@@ -4464,7 +4475,10 @@ function writeGatedProvider(databases: DatabaseProvider) {
 				() => (settled = true),
 				() => (settled = true),
 			);
-			while (!settled) {
+			await this.untilOrBlocked(async () => settled);
+		},
+		async untilOrBlocked(reached: () => Promise<boolean>): Promise<void> {
+			while (!(await reached())) {
 				const waiting = await runtime!.transaction(
 					(transaction) =>
 						transaction.query<{ waiting: number }>({
@@ -4478,6 +4492,154 @@ function writeGatedProvider(databases: DatabaseProvider) {
 		},
 	};
 }
+
+/* A worker over a test repository whose next call to a method can be wrapped,
+   so a cancellation can commit just before or inside that call. */
+async function cancellationRace(
+	graph: WorkflowGraphV1,
+	agents: (
+		fake: AgentRevisionExecutionCapability,
+	) => AgentRevisionExecutionCapability = (fake) => fake,
+) {
+	const result: { current: JsonValue | null } = { current: null };
+	const actionResult: { current: ActionExecutionResult | null } = {
+		current: null,
+	};
+	const fake = dependencies(result);
+	const registry = createPlatformCapabilityRegistry();
+	registry.register(AGENT_RUN_EXECUTION_CAPABILITY, agents(fake.agents));
+	registry.register(
+		AGENT_ACTION_EXECUTION_CAPABILITY_V2,
+		actionDependencies(actionResult).actions,
+	);
+	const executionPermissions = [...permissions, 'catalog.items.manage'];
+	const gate = writeGatedProvider(createWorkflowsTestProvider());
+	const database = await openWorkflowsTestRepository({
+		databases: gate.provider,
+	});
+	const wrapped = new Map<
+		PropertyKey,
+		{
+			readonly wrap: (call: () => Promise<unknown>) => Promise<unknown>;
+			readonly matches: (args: readonly unknown[]) => boolean;
+		}
+	>();
+	const repository = new Proxy(database.repository, {
+		get(target, property) {
+			const value = Reflect.get(target, property, target) as unknown;
+			if (typeof value !== 'function') return value;
+			return (...args: unknown[]) => {
+				const call = () => value.apply(target, args) as Promise<unknown>;
+				const next = wrapped.get(property);
+				if (!next?.matches(args)) return call();
+				wrapped.delete(property);
+				return next.wrap(call);
+			};
+		},
+	});
+	const runtime = createWorkflowsRuntime({
+		databases: gate.provider,
+		repository,
+		capabilities: registry,
+		cursorKey: Buffer.alloc(32, 76),
+		worker: { pollMs: 250, leaseMs: 1_000 },
+	});
+	const service = await runtime.service();
+	const definition = await service.create(
+		'tenant-a',
+		{ key: 'cancel-race', name: 'Cancel race', description: '' },
+		actor,
+	);
+	await service.update(
+		'tenant-a',
+		{
+			workflowId: definition.definition.id,
+			expectedRevision: 1,
+			name: 'Cancel race',
+			description: '',
+			graph,
+		},
+		actor,
+	);
+	await service.publish(
+		'tenant-a',
+		definition.definition.id,
+		2,
+		actor,
+		executionPermissions,
+	);
+	return {
+		result,
+		actionResult,
+		gate,
+		runtime,
+		service,
+		enqueues: fake.enqueues,
+		/** Runs `wrap` around the next matching call to `method` instead of it. */
+		wrapNext(
+			method: keyof typeof database.repository,
+			wrap: (call: () => Promise<unknown>) => Promise<unknown>,
+			matches: (args: readonly unknown[]) => boolean = () => true,
+		) {
+			wrapped.set(method, { wrap, matches });
+		},
+		async enqueue() {
+			return (
+				await service.enqueue(
+					{
+						workflowKey: 'cancel-race',
+						input: { name: 'Ada' },
+						idempotencyKey: 'cancel-race:1',
+					},
+					{ ...context(), permissionSnapshot: executionPermissions },
+				)
+			).runId;
+		},
+		/* Reads the detail on every poll, so a run whose events stop agreeing
+		   with its rows fails here rather than timing out. */
+		async settled(runId: string) {
+			let detail: WorkflowRunDetail | undefined;
+			await waitFor(async () => {
+				detail = await service.getRunDetail('tenant-a', runId);
+				return ['succeeded', 'failed', 'refused', 'cancelled'].includes(
+					detail.run.status,
+				);
+			});
+			return detail!;
+		},
+		async dispose() {
+			await runtime.dispose();
+			await database.dispose();
+		},
+	};
+}
+
+const cancelRequests = (detail: WorkflowRunDetail) =>
+	detail.events.filter((event) => event.type === 'run.cancel.requested').length;
+
+/* Every agent child fails with a code agentGraph retries after 1 ms. */
+const failingAgents = (
+	fake: AgentRevisionExecutionCapability,
+): AgentRevisionExecutionCapability => ({
+	...fake,
+	getResult: async (runId) => ({
+		runId,
+		status: 'failed',
+		output: null,
+		structuredOutput: null,
+		usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+		failureCode: 'PROVIDER_FAILED',
+		completedAt: Date.now(),
+	}),
+});
+
+const agentAttempts = (detail: WorkflowRunDetail) =>
+	detail.nodes.find((node) => node.nodeId === 'agent.process')?.attempts;
+
+const lateIgnoredChildren = (detail: WorkflowRunDetail) =>
+	detail.events
+		.filter((event) => event.type === 'node.result.late-ignored')
+		.map((event) => event.payload.childId);
 
 /* A claim and a cancellation interleave only on separate connections; the
    embedded engine runs one transaction at a time. */
@@ -4579,6 +4741,347 @@ describe.skipIf(process.env.FD_TEST_DATABASE_ADAPTER !== 'postgresql')(
 			} finally {
 				await runtime.dispose();
 				await gate.provider.dispose();
+			}
+		});
+	},
+);
+
+describe('workflow worker transitions after a cancellation', () => {
+	it('starts no node once a cancellation has committed', async () => {
+		const race = await cancellationRace(agentGraph());
+		try {
+			let runId = '';
+			race.wrapNext(
+				'startAttempt',
+				async (call) => {
+					await race.service.cancel('tenant-a', runId, actor);
+					return call();
+				},
+				([write]) => (write as { nodeId: string }).nodeId === 'agent.process',
+			);
+			await race.runtime.start();
+			runId = await race.enqueue();
+			const detail = await race.settled(runId);
+			expect(detail.run.status).toBe('cancelled');
+			expect(
+				detail.nodes.find((node) => node.nodeId === 'agent.process')?.attempts,
+			).toEqual([]);
+			expect(race.enqueues()).toBe(0);
+			expect(cancelRequests(detail)).toBe(1);
+		} finally {
+			await race.dispose();
+		}
+	});
+
+	it('settles a run as cancelled when the cancellation committed before its settle', async () => {
+		const race = await cancellationRace(directGraph());
+		try {
+			let runId = '';
+			race.wrapNext('settleRun', async (call) => {
+				await race.service.cancel('tenant-a', runId, actor);
+				return call();
+			});
+			await race.runtime.start();
+			runId = await race.enqueue();
+			const detail = await race.settled(runId);
+			expect(detail.run.status).toBe('cancelled');
+			expect(detail.events.map((event) => event.type)).not.toContain(
+				'run.succeeded',
+			);
+			expect(cancelRequests(detail)).toBe(1);
+		} finally {
+			await race.dispose();
+		}
+	});
+
+	it('observes a child accepted after the cancellation and discards its result', async () => {
+		const race = await cancellationRace(agentGraph());
+		try {
+			let runId = '';
+			race.wrapNext('markChildWaiting', async (call) => {
+				await race.service.cancel('tenant-a', runId, actor);
+				return call();
+			});
+			await race.runtime.start();
+			runId = await race.enqueue();
+			await waitFor(async () =>
+				(await race.service.getRunDetail('tenant-a', runId)).events.some(
+					(event) => event.type === 'node.cancel.acknowledged',
+				),
+			);
+			race.result.current = { name: 'must not be routed' };
+			const detail = await race.settled(runId);
+			expect(detail.run.status).toBe('cancelled');
+			expect(race.enqueues()).toBe(1);
+			expect(lateIgnoredChildren(detail)).toEqual(['child-run-1']);
+			expect(agentAttempts(detail)?.map((attempt) => attempt.status)).toEqual([
+				'cancelled',
+			]);
+			expect(detail.edges.map((edge) => edge.edgeId)).not.toContain(
+				'edge.success',
+			);
+			expect(cancelRequests(detail)).toBe(1);
+		} finally {
+			await race.dispose();
+		}
+	});
+
+	it('never starts a retry scheduled after the cancellation', async () => {
+		const race = await cancellationRace(agentGraph(), failingAgents);
+		try {
+			let runId = '';
+			race.wrapNext(
+				'settleAttempt',
+				async (call) => {
+					await race.service.cancel('tenant-a', runId, actor);
+					return call();
+				},
+				([write]) =>
+					(write as { nextAttemptAt: number | null }).nextAttemptAt !== null,
+			);
+			await race.runtime.start();
+			runId = await race.enqueue();
+			const detail = await race.settled(runId);
+			expect(detail.run.status).toBe('cancelled');
+			expect(detail.events.map((event) => event.type)).toContain(
+				'node.retry.scheduled',
+			);
+			expect(agentAttempts(detail)).toHaveLength(1);
+			expect(race.enqueues()).toBe(1);
+			expect(cancelRequests(detail)).toBe(1);
+		} finally {
+			await race.dispose();
+		}
+	});
+
+	it('never starts a due retry once a cancellation has committed', async () => {
+		const race = await cancellationRace(agentGraph(), failingAgents);
+		try {
+			let runId = '';
+			race.wrapNext(
+				'startAttempt',
+				async (call) => {
+					await race.service.cancel('tenant-a', runId, actor);
+					return call();
+				},
+				([write]) => (write as { attempt: number }).attempt === 2,
+			);
+			await race.runtime.start();
+			runId = await race.enqueue();
+			/* Claiming a due retry moves the row to running before any event does,
+			   so the detail is read only once the run settled. */
+			await waitFor(async () =>
+				['succeeded', 'failed', 'refused', 'cancelled'].includes(
+					(await race.service.getRun('tenant-a', runId))?.status ?? '',
+				),
+			);
+			const detail = await race.service.getRunDetail('tenant-a', runId);
+			expect(detail.run.status).toBe('cancelled');
+			expect(detail.events.map((event) => event.type)).not.toContain(
+				'node.retry.started',
+			);
+			expect(agentAttempts(detail)).toHaveLength(1);
+			expect(race.enqueues()).toBe(1);
+			expect(cancelRequests(detail)).toBe(1);
+		} finally {
+			await race.dispose();
+		}
+	});
+});
+
+/* These cancellations commit inside the worker's own transaction, which needs
+   a second connection; the embedded engine runs one transaction at a time. */
+describe.skipIf(process.env.FD_TEST_DATABASE_ADAPTER !== 'postgresql')(
+	'workflow worker transitions racing a cancellation',
+	() => {
+		it('orders a node start and a cancellation that lands inside it', async () => {
+			const race = await cancellationRace(directGraph());
+			try {
+				let runId = '';
+				let cancellation: Promise<unknown> | undefined;
+				race.wrapNext('startAttempt', async (call) => {
+					const hold = race.gate.holdNextWrite();
+					const started = call();
+					await hold.arrived;
+					cancellation = race.service.cancel('tenant-a', runId, actor);
+					await race.gate.settledOrBlocked(cancellation);
+					hold.release();
+					return started;
+				});
+				await race.runtime.start();
+				runId = await race.enqueue();
+				const detail = await race.settled(runId);
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				expect(detail.run.status).toBe('cancelled');
+				expect(
+					detail.nodes.find((node) => node.nodeId === 'output.done')?.attempts,
+				).toEqual([]);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('settles once with the cancellation that lands inside a settle', async () => {
+			const race = await cancellationRace(directGraph());
+			try {
+				let runId = '';
+				let cancellation: Promise<{ requested: boolean }> | undefined;
+				race.wrapNext('settleRun', async (call) => {
+					const hold = race.gate.holdNextWrite();
+					const settling = call();
+					await hold.arrived;
+					cancellation = race.service.cancel('tenant-a', runId, actor);
+					await race.gate.settledOrBlocked(cancellation);
+					hold.release();
+					return settling;
+				});
+				await race.runtime.start();
+				runId = await race.enqueue();
+				const detail = await race.settled(runId);
+				const { requested } = (await cancellation)!;
+				expect(detail.run.status).toBe(requested ? 'cancelled' : 'succeeded');
+				expect(cancelRequests(detail)).toBe(requested ? 1 : 0);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('refuses a cancellation whose write lands after the run settled', async () => {
+			const race = await cancellationRace(agentGraph());
+			try {
+				await race.runtime.start();
+				const runId = await race.enqueue();
+				await waitFor(
+					async () =>
+						(await race.service.getRun('tenant-a', runId))?.status ===
+						'waiting-agent',
+				);
+				await race.runtime.stop();
+				const hold = race.gate.holdNextWrite();
+				const cancellation = race.service.cancel('tenant-a', runId, actor);
+				await hold.arrived;
+				race.result.current = { name: 'Ada' };
+				await race.runtime.start();
+				await race.gate.untilOrBlocked(
+					async () =>
+						(await race.service.getRun('tenant-a', runId))?.status ===
+						'succeeded',
+				);
+				hold.release();
+				const { requested } = await cancellation;
+				const detail = await race.settled(runId);
+				expect(detail.run.status).toBe(requested ? 'cancelled' : 'succeeded');
+				expect(cancelRequests(detail)).toBe(requested ? 1 : 0);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('observes a child whose wait a cancellation lands inside', async () => {
+			const race = await cancellationRace(agentGraph());
+			try {
+				let runId = '';
+				let cancellation: Promise<unknown> | undefined;
+				race.wrapNext('markChildWaiting', async (call) => {
+					const hold = race.gate.holdNextWrite();
+					const waiting = call();
+					await hold.arrived;
+					cancellation = race.service.cancel('tenant-a', runId, actor);
+					await race.gate.settledOrBlocked(cancellation);
+					hold.release();
+					return waiting;
+				});
+				await race.runtime.start();
+				runId = await race.enqueue();
+				await waitFor(async () =>
+					(await race.service.getRunDetail('tenant-a', runId)).events.some(
+						(event) => event.type === 'node.cancel.acknowledged',
+					),
+				);
+				race.result.current = { name: 'must not be routed' };
+				const detail = await race.settled(runId);
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				expect(detail.run.status).toBe('cancelled');
+				expect(lateIgnoredChildren(detail)).toEqual(['child-run-1']);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('never starts a retry whose schedule a cancellation lands inside', async () => {
+			const race = await cancellationRace(agentGraph(), failingAgents);
+			try {
+				let runId = '';
+				let cancellation: Promise<unknown> | undefined;
+				race.wrapNext(
+					'settleAttempt',
+					async (call) => {
+						const hold = race.gate.holdNextWrite();
+						const settling = call();
+						await hold.arrived;
+						cancellation = race.service.cancel('tenant-a', runId, actor);
+						await race.gate.settledOrBlocked(cancellation);
+						hold.release();
+						return settling;
+					},
+					([write]) =>
+						(write as { nextAttemptAt: number | null }).nextAttemptAt !== null,
+				);
+				await race.runtime.start();
+				runId = await race.enqueue();
+				const detail = await race.settled(runId);
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				expect(detail.run.status).toBe('cancelled');
+				expect(agentAttempts(detail)).toHaveLength(1);
+				expect(race.enqueues()).toBe(1);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('observes an action child whose event a cancellation is appended beside', async () => {
+			const race = await cancellationRace(actionGraph());
+			try {
+				let runId = '';
+				let cancellation: Promise<unknown> | undefined;
+				race.wrapNext('markChildWaiting', async (call) => {
+					/* The event's sequence is read by now and not yet written. */
+					const hold = race.gate.holdNextWrite((text) =>
+						text.startsWith('INSERT INTO workflow_run_events'),
+					);
+					const waiting = call();
+					await hold.arrived;
+					cancellation = race.service.cancel('tenant-a', runId, actor);
+					await race.gate.settledOrBlocked(cancellation);
+					hold.release();
+					return waiting;
+				});
+				await race.runtime.start();
+				runId = await race.enqueue();
+				await waitFor(async () => {
+					const detail = await race.service.getRunDetail('tenant-a', runId);
+					return (
+						detail.run.status === 'cancelled' ||
+						detail.events.some(
+							(event) => event.type === 'node.cancel.acknowledged',
+						)
+					);
+				});
+				race.actionResult.current = {
+					actionInvocationId: 'replaced-by-fake',
+					status: 'succeeded',
+					output: { name: 'must not be routed' },
+				};
+				const detail = await race.settled(runId);
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				expect(detail.run.status).toBe('cancelled');
+				expect(lateIgnoredChildren(detail)).toEqual(['action-1']);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
 			}
 		});
 	},
