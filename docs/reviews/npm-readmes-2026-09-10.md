@@ -8,7 +8,7 @@ Evidence: scoped Prettier check passed. node scripts/package-sdk.mjs /tmp/flowdu
 
 Compatibility/security/lifecycle: package names, versions, imports and executable behavior are unchanged by this documentation scope. No auth, tenant, database, migrations or background-work implementation changed. Packing adds a constant number of asset copies and retains owned staging cleanup. No runtime regression tests were added for prose and copied assets.
 
-Presentation: the existing banner was visually inspected. Official Modules uses a separate existing SVG with generic blocks, reviewed and pushed in 9ed131b. Both remote CI jobs passed in run 34518254032, including 147 PostgreSQL tests. Package banner URLs use jsDelivr npm paths so they do not depend on private GitHub raw files. They become available only after a new npm release includes the assets. Repository links still require access while private.
+Presentation: the existing banner was visually inspected. The module repository uses a separate existing SVG with generic blocks, reviewed and pushed in 9ed131b. Both remote CI jobs passed in run 34518254032, including 147 PostgreSQL tests. Package banner URLs use jsDelivr npm paths so they do not depend on private GitHub raw files. They become available only after a new npm release includes the assets. Repository links still require access while private.
 
 Release limitation: npm version 0.1.0 is already published and immutable. This review does not publish packages or change versions; updated README/artwork needs a subsequent release. Temporary verification packs must not replace the published release manifest or be republished as 0.1.0.
 

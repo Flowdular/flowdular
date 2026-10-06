@@ -1235,7 +1235,7 @@ describe('delivery configuration and policies', () => {
 			resolveDeliveryConfiguration({ git: { remote: '--upload-pack=x' } }),
 		).toThrow(/git.remote/);
 		expect(() =>
-			resolveDeliveryConfiguration({ targets: ['official-modules'] }),
+			resolveDeliveryConfiguration({ targets: ['registry'] }),
 		).toThrow(/targets must list workspace or git-pr/);
 		expect(() => resolveDeliveryConfiguration({ maxChangedFiles: 0 })).toThrow(
 			/positive integer/,

@@ -8,8 +8,8 @@ The working tree contains concurrent work; findings describe the inspected snaps
 ## Repository ownership
 
 The operator confirmed that [Flowdular/flowdular](https://github.com/Flowdular/flowdular)
-is the official core repository. [Flowdular/official-modules](https://github.com/Flowdular/official-modules)
-is the intended official module repository. Both repositories were empty when
+is the official core repository. A separate module repository was intended for
+business modules. Both repositories were empty when
 queried. The local Git remote still points to `moxxy-ai/coreloom`; its 22 issues
 are all open. The two Flowdular repositories returned no issues.
 
@@ -74,7 +74,7 @@ validation skips `node_modules`. Enablement adds platform dependencies using
 A plain package-manager install therefore does not provide the desired module
 workflow. The proposed MVP installs reviewed source artifacts into the consumer's
 `modules/` workspace, then uses the existing explicit enablement path. See
-[RFC 0003](../rfc/0003-official-modules.md).
+[RFC 0003](../rfc/0003-external-modules.md).
 
 ### A3. Moving reference modules would break agent preparation
 
@@ -111,7 +111,7 @@ or document that package-level coupling before attempting to externalize either.
 | Core baseline                                                | `system`, `auth`                                                                     | Platform composition, identity, permissions and settings            |
 | Bundled product defaults                                     | `users`, `profile`                                                                   | Account administration and personal settings                        |
 | Optional first-party platform preset, initially in core repo | `agents`, `workflows`, `automations`, `automations-workflows-integration`, `sandbox` | Platform features with shared contracts and lifecycle dependencies  |
-| Official modules repository                                  | `expenses`, `parties`, `catalog`                                                     | Business modules suitable for an independent installation lifecycle |
+| Separate module repository                                   | `expenses`, `parties`, `catalog`                                                     | Business modules suitable for an independent installation lifecycle |
 
 Preserve module IDs, permission names, SQL namespaces and migration history when
 moving repositories. A `.core` suffix is not a reason to rename a deployed module.
@@ -126,7 +126,7 @@ treated as proof of implementation.
 | Issue                                                                                    | Audit disposition and next action                                                                                                                                                                          |
 | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [#1 Retention and adjacent controls](https://github.com/moxxy-ai/coreloom/issues/1)      | Roadmap epic. Backup/restore, legal hold and audit retention rules precede erasure. Separate platform invariants from optional administration UI.                                                          |
-| [#2 Enterprise modules](https://github.com/moxxy-ai/coreloom/issues/2)                   | Roadmap epic. Good future official modules: delivery, documents, approvals and directory integration, after their core contracts exist.                                                                    |
+| [#2 Enterprise modules](https://github.com/moxxy-ai/coreloom/issues/2)                   | Roadmap epic. Good future external modules: delivery, documents, approvals and directory integration, after their core contracts exist.                                                                    |
 | [#3 Production invite/reset delivery](https://github.com/moxxy-ai/coreloom/issues/3)     | Confirmed production gap: development-only delivery; invitations fail without mail and password reset has no delivery. Prioritize a production delivery port/provider.                                     |
 | [#4 Automation credential key deployment](https://github.com/moxxy-ai/coreloom/issues/4) | Confirmed required production key with no matching deployment manifest configuration. Document/provision the secret and test production boot.                                                              |
 | [#5 OIDC verification](https://github.com/moxxy-ai/coreloom/issues/5)                    | Confirmed email-based sign-in path without ID-token validation in the inspected implementation. High priority before production SSO claims: signature, issuer, audience, nonce and stable subject binding. |
@@ -140,7 +140,7 @@ treated as proof of implementation.
 | [#13 External-effect approval](https://github.com/moxxy-ai/coreloom/issues/13)           | Confirmed external/destructive execution refusal. Implement verifier/approval flow before connectors and outbound business actions; do not weaken the default denial.                                      |
 | [#14 Boot preflight migration lease](https://github.com/moxxy-ai/coreloom/issues/14)     | Confirmed read uses migration purpose. Use the appropriate tenant-aware runtime read contract.                                                                                                             |
 | [#15 Legacy database state copy](https://github.com/moxxy-ai/coreloom/issues/15)         | Confirmed old module SQLite filenames in state migration. Distinguish transferable secrets from unsupported database migration and report it accurately.                                                   |
-| [#16 SDK publication](https://github.com/moxxy-ai/coreloom/issues/16)                    | Direct blocker for independent official modules and the standalone starter. See A4.                                                                                                                        |
+| [#16 SDK publication](https://github.com/moxxy-ai/coreloom/issues/16)                    | Direct blocker for independent external modules and the standalone starter. See A4.                                                                                                                        |
 | [#17 Enterprise marketing claims](https://github.com/moxxy-ai/coreloom/issues/17)        | Confirmed EN/PL SSO, SCIM and audit-export claims. Align copy with shipped capabilities.                                                                                                                   |
 | [#18 Async settings contract](https://github.com/moxxy-ai/coreloom/issues/18)            | Confirmed synchronous kernel persistence shape. Evolve the contract with lifecycle/consumer tests.                                                                                                         |
 | [#19 Workflows success-route tests](https://github.com/moxxy-ai/coreloom/issues/19)      | Inspected HTTP tests lack the requested successful POST coverage. Add handler-reaching authenticated and CSRF-valid cases.                                                                                 |
@@ -157,7 +157,7 @@ treated as proof of implementation.
 3. Implement the registry artifact contract, installer and its failure tests.
 4. Release/install `expenses` end to end before removing its bundled copy. Then
    move `parties`; move `catalog` after replacing agent reference preparation.
-5. Add safe updates and module presets; build further official business modules
+5. Add safe updates and module presets; build further external business modules
    against the public platform capabilities from #2.
 
 The auto-review gate added in the preceding work is useful delivery evidence.

@@ -39,7 +39,7 @@ proposes them as generic ERP blocks, each with the verticals it serves.
 
 The verdicts follow RFC 0002 to 0005: **module** (its own tables,
 permissions, screens, an approved spec), **platform capability** (a seam in
-`packages/*` or `platform/*`), **distribution** (the official module
+`packages/*` or `platform/*`), **distribution** (the separate module
 repository and the registry) or **documentation**.
 
 ## What exists today, read out of the tree

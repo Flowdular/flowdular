@@ -1,19 +1,19 @@
-# RFC 0003: Official module distribution
+# RFC 0003: External module distribution
 
 Status: Superseded by [Module Studio](../module-distribution.md) on 2026-10-03. The sections below retain the original proposal and its implementation history. Module Studio replaces the special publisher and direct install commands with named sources and pinned plans.
 
 Core repository: [Flowdular/flowdular](https://github.com/Flowdular/flowdular).
-Module repository: [Flowdular/official-modules](https://github.com/Flowdular/official-modules).
+Module repository: a separate module repository.
 Evidence and backlog: [system audit](../reviews/system-audit-2026-09-10.md).
 
 ## Outcome
 
-An operator can discover an official module, preview installation, download a
+An operator can discover an external module, preview installation, download a
 specific reviewed version into their workspace and explicitly enable it using
 the existing CLI. Installed source remains editable by the operator and sandbox.
 Updates detect local edits and cannot silently overwrite them.
 
-The official repository holds source, a generated catalog and immutable release
+The module repository holds source, a generated catalog and immutable release
 artifacts. It does not need a custom registry server initially. Core SDK packages
 have their own supported publication contract. The first release proves the
 whole path using `expenses`, followed by `parties` and then `catalog`.
@@ -34,7 +34,7 @@ or installation permission for sandbox agents.
 ## Repository layout
 
 ```text
-official-modules/
+module-repository/
   README.md
   LICENSE
   AGENTS.md
@@ -158,7 +158,7 @@ same dependency semantics.
 ## Agent review and acceptance evidence
 
 Use the existing sandbox auto-review gate for edited module deliveries. Add the
-same evidence requirements to official-module release CI, independently of an
+same evidence requirements to the module repository's release CI, independently of an
 agent's final message. The report covers requirements, public contracts, tenant
 isolation/permissions, migrations, UI states where applicable, and regression
 tests. Any edit after review invalidates that review. Tests cannot prove that
@@ -187,8 +187,8 @@ Required executable cases before the first external module replaces its bundled 
    semver validation and platform API compatibility. Prove today's invalid ranges
    fail with regression tests.
 2. Publishable SDK/starter contract and isolated consumer smoke tests (existing
-   issue #16); decide official repository/backlog migration.
-3. Registry schema, official-module repository skeleton and reproducible source
+   issue #16); decide the module repository and backlog migration.
+3. Registry schema, module repository skeleton and reproducible source
    release pipeline; first artifact is expenses.
 4. CLI search/info/install with lock, safe extraction and recovery tests. Use
    existing enablement and generation instead of a second composition system.
