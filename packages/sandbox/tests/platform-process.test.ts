@@ -844,12 +844,38 @@ it('stops every process in the platform group, including one that ignores SIGTER
 	const recorded = await recordedFixtures(workspace.ledger, 2);
 	expect(survivors(recorded)).toHaveLength(4);
 	await platform.stop();
+	/* stop() can return while killed members wait to be reaped. */
+	await waitUntil(async () => survivors(recorded).length === 0, 40).catch(
+		() => undefined,
+	);
 	expect(survivors(recorded)).toEqual([]);
 }, 30_000);
 
-it.each(['SIGKILL', 'SIGHUP'] as const)(
-	'stops the platform tree when the launcher dies by %s without stopping it',
-	async (signal) => {
+it('reports a platform command that cannot be started', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-missing-');
+	const path = process.env.PATH;
+	/* The guard starts by absolute path; pnpm is looked up in an empty PATH. */
+	process.env.PATH = workspace.root;
+	try {
+		await expect(
+			startTrackedPlatform({
+				workspaceRoot: workspace.root,
+				port: await freePort(),
+				quiet: true,
+			}),
+		).rejects.toThrow('spawn pnpm ENOENT');
+	} finally {
+		process.env.PATH = path;
+	}
+});
+
+it.each([
+	['SIGKILL', 'worker'],
+	['SIGHUP', 'worker'],
+	['SIGKILL', 'server'],
+] as const)(
+	'stops the platform tree when the launcher dies by %s and its %s ignores SIGTERM',
+	async (signal, stubborn) => {
 		const workspace = await platformWorkspace('flowdular-launcher-abrupt-');
 		await writeFile(
 			join(workspace.root, 'flowdular.json'),
@@ -857,7 +883,7 @@ it.each(['SIGKILL', 'SIGHUP'] as const)(
 		);
 		await writePlatformChild(
 			workspace,
-			stubbornPlatformSource(workspace.ledger),
+			stubbornPlatformSource(workspace.ledger, stubborn),
 		);
 		const { child: launcher, output } = spawnLauncher(workspace, {
 			sandbox: await freePort(),
@@ -882,6 +908,35 @@ it.each(['SIGKILL', 'SIGHUP'] as const)(
 	60_000,
 );
 
+it('stops the platform tree when a second Ctrl+C ends the launcher during shutdown', async () => {
+	const workspace = await platformWorkspace('flowdular-launcher-interrupt-');
+	await writeFile(
+		join(workspace.root, 'flowdular.json'),
+		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
+	);
+	await writePlatformChild(workspace, stubbornPlatformSource(workspace.ledger));
+	const { child: launcher, output } = spawnLauncher(workspace, {
+		sandbox: await freePort(),
+		platform: await freePort(),
+	});
+	const recorded = await recordedFixtures(workspace.ledger, 2).catch(
+		(error: Error) => {
+			throw new Error(`${error.message}\n${output()}`);
+		},
+	);
+	launcher.kill('SIGINT');
+	/* Printed once the platform's stop has begun. */
+	await waitUntil(async () => output().includes('Sandbox stopped.'));
+	launcher.kill('SIGINT');
+	await waitUntil(
+		async () => launcher.exitCode !== null || launcher.signalCode !== null,
+	);
+	await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
+		() => undefined,
+	);
+	expect(survivors(recorded)).toEqual([]);
+}, 60_000);
+
 it('leaves no process behind when a launcher test fails or times out', async () => {
 	const workspace = await platformWorkspace('flowdular-abandoned-run-');
 	const ledger = join(workspace.root, 'abandoned.txt');
@@ -904,7 +959,7 @@ beforeEach(async () => {
   await writePlatformChild(workspace, stubbornPlatformSource(ledger));
   spawnLauncher(workspace, { sandbox: await freePort(), platform: await freePort() });
   platforms += 2;
-  await recordedFixtures(ledger, platforms);
+  await recordedFixtures(ledger, platforms, 45_000);
 }, 60_000);
 it('fails while its platform runs', () => {
   throw new Error('deliberate failure');

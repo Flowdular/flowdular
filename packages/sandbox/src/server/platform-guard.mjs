@@ -5,12 +5,47 @@ import { spawn } from 'node:child_process';
    launcher stops the group on every path it runs; the channel covers the ones
    it never reaches (SIGKILL, SIGHUP from a closed terminal, a crash, a test
    runner torn down). The operating system closes the channel however the
-   launcher ends, and the guard then stops the group it leads. */
+   launcher ends, and the guard then stops the group it leads.
+
+   The channel is this process's stdin. The child gets its own stdin, because
+   Linux would otherwise pass the channel's descriptor down to every platform
+   process and keep it open after the guard exits. */
 const STOP_GRACE_MS = 3_000;
 
 const [command, ...args] = process.argv.slice(2);
-const child = spawn(command, args, { stdio: 'inherit' });
+const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
 let stopping = false;
+
+function signalGroup(signal) {
+	try {
+		process.kill(-process.pid, signal);
+	} catch {
+		/* No group of its own to signal. */
+	}
+}
+
+/* Once a stop has begun the guard outlives the SIGTERM and owns the SIGKILL,
+   so the group is stopped even if the launcher dies before it is. */
+function stop() {
+	if (stopping) return;
+	stopping = true;
+	setTimeout(() => signalGroup('SIGKILL'), STOP_GRACE_MS);
+}
+
+function launcherGone() {
+	if (process.platform === 'win32') {
+		/* No process groups: end the child's whole tree. */
+		if (child.pid !== undefined)
+			spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+				stdio: 'ignore',
+				windowsHide: true,
+			}).once('error', () => undefined);
+		return;
+	}
+	if (stopping) return;
+	stop();
+	signalGroup('SIGTERM');
+}
 
 child.once('error', (error) => {
 	const exit = () => process.exit(1);
@@ -18,18 +53,14 @@ child.once('error', (error) => {
 	process.send({ type: 'spawn-error', message: error.message }, exit);
 });
 child.once('exit', (code) => {
-	if (!stopping) process.exit(code ?? 1);
+	/* pnpm exits after its script, so whatever is left of a stopping group
+	   has outlived the platform. */
+	if (stopping) signalGroup('SIGKILL');
+	process.exit(code ?? 1);
 });
 
-process.once('disconnect', () => {
-	if (process.platform === 'win32') {
-		/* No process groups: stop the direct child and exit with it. */
-		child.kill();
-		return;
-	}
-	stopping = true;
-	/* The guard is a member of the group it signals and stays to escalate. */
-	process.on('SIGTERM', () => undefined);
-	process.kill(0, 'SIGTERM');
-	setTimeout(() => process.kill(0, 'SIGKILL'), STOP_GRACE_MS);
-});
+/* stop() in the launcher signals the whole group, this guard included. */
+process.on('SIGTERM', stop);
+process.once('disconnect', launcherGone);
+/* The channel can close while this module is still loading. */
+if (process.send && !process.connected) launcherGone();

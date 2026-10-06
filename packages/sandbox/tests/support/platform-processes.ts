@@ -25,7 +25,6 @@ import {
 const LAUNCHER = fileURLToPath(
 	new URL('../../bin/flowdular-sandbox.mjs', import.meta.url),
 );
-const ownProcessGroup = processGroupOf(process.pid);
 
 const directories: string[] = [];
 const ledgers = new Set<string>();
@@ -51,12 +50,15 @@ export async function freePort(): Promise<number> {
 	return address.port;
 }
 
+/* Darwin answers EPERM for a group that holds only unreaped zombies, and a
+   process a test started never belongs to another user, so EPERM is gone. */
 export function processAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
 		return true;
 	} catch (error) {
-		return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+		const code = (error as NodeJS.ErrnoException).code;
+		return code !== 'ESRCH' && code !== 'EPERM';
 	}
 }
 
@@ -95,14 +97,19 @@ recordFixtureProcess(${JSON.stringify(ledger)}, process.pid + ' ' + fixtureProce
 }
 
 /** A serving platform with a worker that ignores SIGTERM, so only SIGKILL to
-    its whole process group stops every process. Both record themselves. */
-export function stubbornPlatformSource(ledger: string): string {
-	const worker = `${recordProcessSource(ledger)}process.on('SIGTERM', () => {});
-setInterval(() => {}, 1000);
+    its whole process group stops every process. With `server`, the serving
+    process ignores SIGTERM too and pnpm never exits on its own. Both record
+    themselves. */
+export function stubbornPlatformSource(
+	ledger: string,
+	stubborn: 'worker' | 'server' = 'worker',
+): string {
+	const ignoreTerm = "process.on('SIGTERM', () => {});\n";
+	const worker = `${recordProcessSource(ledger)}${ignoreTerm}setInterval(() => {}, 1000);
 `;
 	return `import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(worker)}], { stdio: 'ignore' });
+${stubborn === 'server' ? ignoreTerm : ''}spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(worker)}], { stdio: 'ignore' });
 const args = process.argv;
 createServer((request, response) => response.writeHead(404).end()).listen(Number(args[args.indexOf('--port') + 1]), args[args.indexOf('--host') + 1]);
 `;
@@ -194,7 +201,7 @@ export function spawnLauncher(
 export async function recordedFixtures(
 	ledger: string,
 	count: number,
-	boundMs = 60_000,
+	boundMs = 20_000,
 ): Promise<RecordedProcess[]> {
 	const deadline = Date.now() + boundMs;
 	for (;;) {
@@ -214,6 +221,7 @@ export async function stopRecordedProcesses(
 	boundMs = 10_000,
 ): Promise<void> {
 	const recorded = await readLedger(ledger);
+	const ownProcessGroup = processGroupOf(process.pid);
 	/* A group equal to ours would mean the platform was never isolated; killing
 	   it would kill the test runner, so only the processes are signalled. */
 	const groups = new Set(

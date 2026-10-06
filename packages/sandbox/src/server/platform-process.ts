@@ -123,7 +123,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 			FD_SETUP_AUTO_RESTART: 'true',
 			FD_SETUP_RESTART_EXIT_CODE: '75',
 		},
-		stdio: [output, output, output, 'ipc'],
+		stdio: ['ipc', output, output],
 		detached: process.platform !== 'win32',
 	});
 	let spawnError: Error | null = null;
@@ -167,8 +167,15 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 				try {
 					if (process.platform !== 'win32' && child.pid)
 						process.kill(-child.pid, signal);
-					else if (child.exitCode === null && child.signalCode === null)
-						child.kill(signal);
+					else if (child.exitCode === null && child.signalCode === null) {
+						/* No process groups: end the guard's whole tree. */
+						if (process.platform === 'win32' && child.pid)
+							spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+								stdio: 'ignore',
+								windowsHide: true,
+							}).once('error', () => undefined);
+						else child.kill(signal);
+					}
 				} catch (error) {
 					if (!groupGone(error)) throw error;
 				}
