@@ -1309,6 +1309,9 @@ export function defaultVercelHost(): VercelLaunchHost {
 				application_name: 'flowdular-deploy',
 				connectionTimeoutMillis: 15_000,
 			});
+			/* A dropped connection fails the next query, which the launch reports
+			   as a resumable failure; unheard, the event would end the process. */
+			client.on('error', () => {});
 			await client.connect();
 			return {
 				query: (text) => client.query(text),
