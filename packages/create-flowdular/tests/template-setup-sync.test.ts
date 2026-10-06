@@ -38,6 +38,10 @@ function sdkImports(source: string): string {
 		.replaceAll(
 			'@flowdular/kernel/runtime-config',
 			'@flowdular/sdk/kernel/runtime-config',
+		)
+		.replaceAll(
+			'@flowdular/kernel/module-manifests',
+			'@flowdular/sdk/kernel/module-manifests',
 		);
 }
 

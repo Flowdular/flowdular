@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import { parse as parseYaml } from 'yaml';
 
 export interface ModuleCatalogEntry {
@@ -55,38 +56,34 @@ function readJson<T>(path: string): T | null {
 }
 
 /* The workspace's module manifests and specs are the only source of module
-   display names and versions; nothing in the composition carries them. The
+   display names and versions; nothing in the composition carries them. They
+   are found where the CLI finds them when it composes the application, so a
+   module @flowdular/sdk ships is listed beside the workspace's own. The
    result is metadata for administration screens, never module code. */
 export function readModuleCatalog(
 	workspaceRoot: string,
 ): readonly ModuleCatalogEntry[] {
-	const enabled = new Set(
-		strings(
-			readJson<{ modules?: { enabled?: unknown } }>(
-				join(workspaceRoot, 'flowdular.json'),
-			)?.modules?.enabled,
-		),
-	);
-	const modulesRoot = join(workspaceRoot, 'modules');
-	let directories: string[];
+	const project = readJson<{
+		modules?: { enabled?: unknown; roots?: unknown };
+	}>(join(workspaceRoot, 'flowdular.json'));
+	const enabled = new Set(strings(project?.modules?.enabled));
+	let manifests: readonly string[];
 	try {
-		directories = readdirSync(modulesRoot, { withFileTypes: true })
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => entry.name)
-			.sort();
+		manifests = findModuleManifests(workspaceRoot, project?.modules?.roots);
 	} catch {
+		/* A workspace the CLI refuses to compose lists nothing rather than
+		   failing the activation reads that depend on this catalog. */
 		return [];
 	}
 	const entries: ModuleCatalogEntry[] = [];
-	for (const directory of directories) {
-		const manifest = readJson<Manifest>(
-			join(modulesRoot, directory, 'module.json'),
-		);
+	for (const path of manifests) {
+		const manifest = readJson<Manifest>(path);
 		if (!manifest || typeof manifest.id !== 'string') continue;
+		const moduleRoot = dirname(path);
 		let spec: Spec | null = null;
 		try {
 			spec = parseYaml(
-				readFileSync(join(modulesRoot, directory, 'spec/module.yaml'), 'utf8'),
+				readFileSync(join(moduleRoot, 'spec/module.yaml'), 'utf8'),
 			) as Spec;
 		} catch {
 			spec = null;
@@ -118,7 +115,7 @@ export function readModuleCatalog(
 				client: manifest.platform?.client === true,
 			},
 			enabled: enabled.has(manifest.id),
-			directory,
+			directory: basename(moduleRoot),
 			dependencies: strings(
 				(Array.isArray(manifest.dependencies) ? manifest.dependencies : []).map(
 					(dependency) => dependency?.id,
@@ -132,5 +129,11 @@ export function readModuleCatalog(
 			),
 		});
 	}
-	return entries;
+	return entries.sort((left, right) =>
+		left.directory < right.directory
+			? -1
+			: left.directory > right.directory
+				? 1
+				: 0,
+	);
 }

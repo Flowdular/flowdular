@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -81,6 +82,25 @@ try {
 			`Demo owner needs ${scope}`,
 		);
 	assert.ok(login.headers.get('set-cookie'));
+	/* The platform modules of a generated application ship in @flowdular/sdk,
+	   and the shell hides every module this list leaves out. */
+	const cookie = login.headers
+		.getSetCookie()
+		.map((value) => value.split(';')[0])
+		.join('; ');
+	const active = await fetch(`${origin}/api/system/modules/active`, {
+		headers: { cookie },
+		signal: AbortSignal.timeout(30000),
+	});
+	assert.equal(active.status, 200, logs);
+	const { enabled } = JSON.parse(
+		await readFile(join(root, 'flowdular.json'), 'utf8'),
+	).modules;
+	assert.deepEqual(
+		(await active.json()).modules,
+		[...enabled].sort(),
+		'A fresh workspace has every enabled module active',
+	);
 	console.log(
 		'Freshly initialized application serves its login page and authenticates the seeded administrator.',
 	);
