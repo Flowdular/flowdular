@@ -77,7 +77,10 @@ maximum.
 
 With the `pglite` adapter the data directory is the only setting that applies.
 Under `NODE_ENV=test` the directory is ignored and the database is held in
-memory.
+memory. A directory is open once per process: every provider on it in that
+process shares the one embedded database (a development server composes more
+than one), and another process is refused with `LOCAL_DATABASE_LOCKED` until
+the last of them closes it.
 
 ## Three roles
 

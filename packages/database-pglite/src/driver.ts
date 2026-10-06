@@ -6,7 +6,7 @@ import type {
 } from '@flowdular/database';
 import { PGlite } from '@electric-sql/pglite';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export interface PgliteDriverPoolOptions {
 	/** Omit for an in-memory database. A path keeps the data across restarts. */
@@ -143,71 +143,159 @@ function result(rows: unknown[], affected: number): PostgresDriverResult {
 	};
 }
 
+async function openDatabase(
+	directory: string | undefined,
+	bootstrap: string | undefined,
+): Promise<PGlite> {
+	if (directory) {
+		await mkdir(directory, { recursive: true, mode: 0o700 });
+		await claimDirectory(directory);
+	}
+	let created: PGlite;
+	try {
+		created = directory
+			? await PGlite.create({
+					dataDir: directory,
+					parsers: SERVER_PARSERS,
+				})
+			: await PGlite.create({ parsers: SERVER_PARSERS });
+	} catch (error) {
+		if (!directory) throw error;
+		await releaseDirectory(directory);
+		throw new LocalDatabaseUnreadableError(directory, error);
+	}
+	try {
+		if (bootstrap) await created.exec(bootstrap);
+	} catch (error) {
+		try {
+			await created.close();
+		} catch (closeError) {
+			throw new AggregateError(
+				[error, closeError],
+				'PGlite bootstrap failed and cleanup also failed.',
+			);
+		}
+		throw error;
+	}
+	return created;
+}
+
+/* Each PGlite instance is a PostgreSQL backend with its own buffers and its
+   own write-ahead position, so two instances on one directory lose each
+   other's writes even inside one process, and the first to close removes the
+   lock the other still needs. A development server composes its runtime more
+   than once per process, so every cluster on a directory shares one instance
+   and one session queue. The last holder closes the instance and releases the
+   lock, and the next open waits for that close. */
+interface OpenDatabase {
+	readonly queue: ConnectionQueue;
+	readonly instance: Promise<PGlite>;
+	holders: number;
+}
+
+interface OpenDirectories {
+	readonly open: Map<string, OpenDatabase>;
+	readonly closing: Map<string, Promise<void>>;
+}
+
+/* Held on globalThis because a development server can evaluate this module
+   once per module runner, and the directory is one per process. */
+const OPEN_DIRECTORIES = Symbol.for('flowdular.database-pglite.directories');
+
+function openDirectories(): OpenDirectories {
+	const host = globalThis as { [OPEN_DIRECTORIES]?: OpenDirectories };
+	host[OPEN_DIRECTORIES] ??= { open: new Map(), closing: new Map() };
+	return host[OPEN_DIRECTORIES];
+}
+
+function attachDatabase(
+	directory: string | undefined,
+	bootstrap: string | undefined,
+): OpenDatabase {
+	if (!directory) {
+		return {
+			queue: new ConnectionQueue(),
+			instance: openDatabase(undefined, bootstrap),
+			holders: 1,
+		};
+	}
+	const key = resolve(directory);
+	const directories = openDirectories();
+	let database = directories.open.get(key);
+	if (!database) {
+		const previousClose = directories.closing.get(key) ?? Promise.resolve();
+		const opening: OpenDatabase = {
+			queue: new ConnectionQueue(),
+			instance: previousClose.then(() => openDatabase(directory, bootstrap)),
+			holders: 0,
+		};
+		/* A failed open is not shared: the next cluster tries again. */
+		opening.instance.catch(() => {
+			if (directories.open.get(key) === opening) directories.open.delete(key);
+		});
+		directories.open.set(key, opening);
+		database = opening;
+	}
+	database.holders += 1;
+	return database;
+}
+
+async function detachDatabase(
+	directory: string | undefined,
+	database: OpenDatabase,
+): Promise<void> {
+	database.holders -= 1;
+	if (database.holders > 0) return;
+	const directories = openDirectories();
+	const key = directory ? resolve(directory) : undefined;
+	const current = key ? directories.open.get(key) : undefined;
+	if (key && current === database) directories.open.delete(key);
+	/* After a failed open another cluster may already hold the directory
+	   again, and the lock is then its to release. */
+	const ownsDirectory =
+		directory !== undefined && (current === undefined || current === database);
+	const closed = (async () => {
+		// A failed initialization has no database to close; its caller already
+		// received the original error. Do not replace it during disposal.
+		const instance = await database.instance.catch(() => undefined);
+		await instance?.close();
+		if (ownsDirectory) await releaseDirectory(directory);
+	})();
+	if (key && ownsDirectory) {
+		const settled = closed.catch(() => undefined);
+		directories.closing.set(key, settled);
+		void settled.then(() => {
+			if (directories.closing.get(key) === settled)
+				directories.closing.delete(key);
+		});
+	}
+	await closed;
+}
+
 /**
  * Runs the PostgreSQL adapter against an embedded PostgreSQL build. It speaks
  * the same SQL, enforces the same row-level security, and needs no server, so a
  * local run and a module suite exercise the production dialect.
+ *
+ * Clusters on the same `dataDirectory` in one process share one database and
+ * one session; the first to open it runs its `bootstrap`.
  */
 export function createPgliteCluster(
 	options: PgliteDriverPoolOptions = {},
 ): PgliteCluster {
-	const queue = new ConnectionQueue();
-	let databasePromise: Promise<PGlite> | undefined;
-	let closePromise: Promise<void> | undefined;
+	let database: OpenDatabase | undefined;
+	let closing: Promise<void> | undefined;
 	/* Every pool shares one embedded database, and each adapter ends its own
 	   pool on disposal. The database closes when the last of them is done. */
 	let issued = 0;
 	let ended = 0;
 
 	const close = (): Promise<void> => {
-		closePromise ??= (async () => {
-			if (!databasePromise) return;
-			// A failed initialization has no database to close; its caller already
-			// received the original error. Do not replace it during disposal.
-			const instance = await databasePromise.catch(() => undefined);
-			databasePromise = undefined;
-			await instance?.close();
-			if (options.dataDirectory) await releaseDirectory(options.dataDirectory);
-		})();
-		return closePromise;
-	};
-
-	const database = async (): Promise<PGlite> => {
-		databasePromise ??= (async () => {
-			const directory = options.dataDirectory;
-			if (directory) {
-				await mkdir(directory, { recursive: true, mode: 0o700 });
-				await claimDirectory(directory);
-			}
-			let created: PGlite;
-			try {
-				created = directory
-					? await PGlite.create({
-							dataDir: directory,
-							parsers: SERVER_PARSERS,
-						})
-					: await PGlite.create({ parsers: SERVER_PARSERS });
-			} catch (error) {
-				if (!directory) throw error;
-				await releaseDirectory(directory);
-				throw new LocalDatabaseUnreadableError(directory, error);
-			}
-			try {
-				if (options.bootstrap) await created.exec(options.bootstrap);
-			} catch (error) {
-				try {
-					await created.close();
-				} catch (closeError) {
-					throw new AggregateError(
-						[error, closeError],
-						'PGlite bootstrap failed and cleanup also failed.',
-					);
-				}
-				throw error;
-			}
-			return created;
-		})();
-		return databasePromise;
+		const attached = database;
+		if (!attached) return closing ?? Promise.resolve();
+		database = undefined;
+		closing = detachDatabase(options.dataDirectory, attached);
+		return closing;
 	};
 
 	const pool = (role?: string): PostgresDriverPool => {
@@ -218,10 +306,12 @@ export function createPgliteCluster(
 		return {
 			cancellation: 'before-start',
 			async connect(): Promise<PostgresDriverClient> {
-				const release = await queue.acquire();
+				database ??= attachDatabase(options.dataDirectory, options.bootstrap);
+				const attached = database;
+				const release = await attached.queue.acquire();
 				let instance: PGlite;
 				try {
-					instance = await database();
+					instance = await attached.instance;
 					if (role) await instance.exec(`SET ROLE ${role}`);
 				} catch (error) {
 					release();
