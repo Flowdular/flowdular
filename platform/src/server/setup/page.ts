@@ -304,12 +304,15 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 const WORKSPACE_SLUG_INPUT_PATTERN =
 	'(?!.*--)[a-z0-9][a-z0-9\\-]{1,46}[a-z0-9]';
 
-/* What the address field keeps of typed or pasted text. A short value and a
+/* What the address field keeps of typed or pasted text. Accented letters fold
+   to their base letter: NFD splits the accent off and the drop below removes
+   it, and the map covers letters that do not decompose. A short value and a
    trailing hyphen pass, because typing goes through both; the pattern and the
-   server refuse them on submit. Every step reads left to right, so filtering
-   the text up to the end of an edit tells what that edit may insert. The page
-   ships this source and tests evaluate the same source. */
-export const WORKSPACE_SLUG_TYPING_FILTER = String.raw`function(value){return value.toLowerCase().replace(/\s/g,'-').replace(/[^a-z0-9-]/g,'').replace(/-{2,}/g,'-').replace(/^-/,'').slice(0,48);}`;
+   server refuse them on submit. Every step reads left to right, one character
+   at a time, so filtering the text up to the end of an edit tells what that
+   edit may insert. The page ships this source and tests evaluate it. */
+export const WORKSPACE_SLUG_TYPING_FILTER = String.raw`(function(){var fold={'ł':'l','Ł':'l','ø':'o','Ø':'o','đ':'d','Đ':'d','ð':'d','Ð':'d','þ':'th','Þ':'th','æ':'ae','Æ':'ae','œ':'oe','Œ':'oe','ß':'ss','ẞ':'ss','ı':'i'};
+return function(value){return value.normalize('NFD').replace(/[^\x00-\x7f]/g,function(c){return fold[c]||c;}).toLowerCase().replace(/\s/g,'-').replace(/[^a-z0-9-]/g,'').replace(/-{2,}/g,'-').replace(/^-/,'').slice(0,48);};})()`;
 
 /* An insertion at the selection that the page may cancel is filtered before
    the browser applies it and replayed as an editing command, so undo, redo,
