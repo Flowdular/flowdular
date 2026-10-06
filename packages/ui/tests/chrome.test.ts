@@ -215,6 +215,21 @@ it('still fails a call fast once Chrome has started', async () => {
 	);
 });
 
+it('stops a Chrome that does not close once the close budget runs out', async () => {
+	const chrome = fakeChrome({ silent: 'Browser.close' });
+	const opened = track(
+		openInChrome('about:blank', (page) => page.evaluate<string>('1')),
+	);
+	await chrome.received('Browser.close');
+	await vi.advanceTimersByTimeAsync(9_000);
+	expect(opened.settled).toBe(false);
+	await vi.advanceTimersByTimeAsync(2_000);
+	await until(() => opened.settled);
+	expect(opened.error).toBeUndefined();
+	expect(opened.value).toBe('ready');
+	expect(node.existsSync(chrome.directory())).toBe(false);
+});
+
 it('removes the profile only after every Chrome process is done with it', async () => {
 	const chrome = fakeChrome({ service: true });
 	const opened = track(
