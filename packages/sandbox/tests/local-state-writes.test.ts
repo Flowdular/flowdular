@@ -602,6 +602,27 @@ describe('sandbox configuration writes', () => {
 		expect(await openSecret(root, sealed)).toBe('mine');
 		expect(await readdir(stateDirectory(root))).toEqual(['secret.key']);
 	});
+
+	it('serves the stored configuration after refusing an update', async () => {
+		const root = await workspace();
+		const platform = await bootingPlatform();
+		/* Loaded before the launcher collects its credential. */
+		const runtime = await createSandboxRuntime(root);
+		await prepareLauncherInbox(root);
+		await collectProvisionedCredential({
+			workspaceRoot: root,
+			platformUrl: platform.url,
+		});
+
+		await expect(
+			runtime.update({ platformUrl: 'http://127.0.0.1:5999' }),
+		).rejects.toMatchObject({ code: 'PLATFORM_TOKEN_REQUIRED' });
+
+		expect(runtime.configuration().platformUrl).toBe(platform.url);
+		expect(await openSecret(root, runtime.configuration().platformToken!)).toBe(
+			LAUNCHER_TOKEN,
+		);
+	});
 });
 
 function newSession(root: string, title = 'Rotation'): Promise<SandboxSession> {
