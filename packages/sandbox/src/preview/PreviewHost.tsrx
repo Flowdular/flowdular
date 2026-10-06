@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'octane';
 import {
 	ApplicationShell,
+	shellLocationFromUrl,
 	type ModuleClientContribution,
 } from '@flowdular/client';
 import { Alert, EmptyState, Tag } from '@flowdular/ui';
@@ -9,6 +10,7 @@ import { Head } from '@octanejs/seo';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
 import type { SessionView } from '../client/api.ts';
 import { signalReady } from '../client/state.ts';
+import { PREVIEW_COOKIE, readPreviewAddress } from './address.ts';
 import { importDraftModule } from './load-module.ts';
 import {
 	registerSandboxTranslations,
@@ -82,7 +84,7 @@ async function signInPreview(sessionId: string): Promise<{
 	readonly modules: readonly PreviewModuleInfo[];
 	readonly error: string | null;
 }> {
-	document.cookie = `flowdular_preview=${sessionId}; path=/; samesite=strict`;
+	document.cookie = `${PREVIEW_COOKIE}=${sessionId}; path=/; samesite=strict`;
 	const info = await (await fetch(
 		'/sandbox/api/sessions/' + encodeURIComponent(sessionId) + '/preview',
 		{
@@ -136,13 +138,6 @@ function clientEntry(
 	}/${encodeURIComponent(sessionId)}/${encodeURIComponent(
 		directory,
 	)}/src/client/index.ts`;
-}
-
-function sessionIdFromLocation(url: string): string {
-	const segments = new URL(url, 'http://sandbox.local').pathname.split(
-		'/',
-	).filter(Boolean);
-	return segments[0] === 'preview' ? segments[1] ?? '' : '';
 }
 
 function identityFor(
@@ -250,7 +245,8 @@ export function PreviewHost(props?: RenderRouteProps) @{
 	useEffect(() => {
 		restoreSandboxLocale();
 		const url = props?.url ?? window.location.href;
-		const sessionId = sessionIdFromLocation(url);
+		const address = readPreviewAddress(url, document.cookie);
+		const sessionId = address.sessionId;
 		const parameters = new URL(url, 'http://sandbox.local').searchParams;
 		const selecting = parameters.has('select');
 		/* The workbench opens the preview on one module of the session; every
@@ -260,6 +256,11 @@ export function PreviewHost(props?: RenderRouteProps) @{
 
 		void (async () => {
 			try {
+				if (!sessionId) {
+					setMessage(t('sandbox.preview.sessionUnavailable'));
+					setStatus('failed');
+					return;
+				}
 				const response = await fetch(
 					'/sandbox/api/sessions/' + encodeURIComponent(sessionId),
 					{ headers: { accept: 'application/json' } },
@@ -304,6 +305,28 @@ export function PreviewHost(props?: RenderRouteProps) @{
 					) {
 						opening = entry;
 					}
+				}
+				/* A reload or a deep link inside the shell reopens the view its
+   address names: the dashboard, or a screen a draft module still has. */
+				const linked = address.inShell
+					? shellLocationFromUrl(
+							url,
+							identityFor(
+								identity.principal,
+								created,
+								view.session.moduleId,
+							).tenants.map((tenant) => tenant.slug),
+						).view
+					: '';
+				if (
+					linked === 'overview' ||
+						created.some(
+							(contribution) => contribution.navigation?.some(
+								(item) => item.viewId === linked,
+							),
+						)
+				) {
+					opening = linked;
 				}
 				if (created.length === 0) {
 					setMessage(

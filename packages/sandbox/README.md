@@ -783,7 +783,10 @@ navigation entry and dashboard widgets each module contributes. Every draft with
 a client entry composes into the same shell, so the navigation shows all of
 them; the module selector in the preview head opens the preview on one module's
 first screen (`/preview/<session>?module=<directory>`), and the same selection
-filters the diff.
+filters the diff. Once open, the shell moves the address to its own routes
+(`/app/<workspace>/<view>`). The sandbox answers those with the preview too, so
+a reload or a deep link reopens that view for the session the preview cookie
+names, the same cookie that binds the preview's API requests to the session.
 
 The preview API is composed, not stubbed. A request from a preview screen is
 answered in this order:
