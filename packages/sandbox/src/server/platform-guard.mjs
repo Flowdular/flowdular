@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 
 /* platform-process.ts starts the platform through this guard, and
    process-command.ts every bounded command. The guard leads the command's
@@ -23,6 +23,29 @@ function signalGroup(signal) {
 	} catch {
 		/* No group of its own to signal. */
 	}
+}
+
+/* Whether a process besides this guard (and the ps it runs) is left in the
+   group it leads. Without a listing it assumes so, and the SIGKILL timer
+   ends the group. */
+function othersInGroup() {
+	return new Promise((resolve) => {
+		const lister = execFile(
+			'ps',
+			['-A', '-o', 'pid=,pgid='],
+			(error, stdout) => {
+				if (error) return resolve(true);
+				resolve(
+					stdout.split('\n').some((line) => {
+						const [pid, group] = line.trim().split(/\s+/).map(Number);
+						return (
+							group === process.pid && pid !== process.pid && pid !== lister.pid
+						);
+					}),
+				);
+			},
+		);
+	});
 }
 
 /* Once a stop has begun the guard outlives the SIGTERM and owns the SIGKILL,
@@ -60,10 +83,17 @@ child.once('error', (error) => {
 	process.send({ type: 'spawn-error', message: error.message }, exit);
 });
 child.once('exit', (code) => {
-	/* pnpm exits after its script, so whatever is left of a stopping group
-	   has outlived the platform. */
-	if (stopping) signalGroup('SIGKILL');
-	process.exit(code ?? 1);
+	const exit = () => process.exit(code ?? 1);
+	if (!stopping) return exit();
+	/* pnpm can exit while the platform still drains: when sh does not exec
+	   the script, the shell between them dies on the group's SIGTERM and pnpm
+	   follows it. The guard waits for the rest of its group; the SIGKILL timer
+	   that stop() armed ends whatever outlasts the grace. */
+	const awaitGroup = () =>
+		void othersInGroup().then((left) =>
+			left ? setTimeout(awaitGroup, 100) : exit(),
+		);
+	awaitGroup();
 });
 
 process.once('disconnect', launcherGone);

@@ -136,14 +136,16 @@ export function trackLedger(ledger: string): void {
 	ledgers.add(ledger);
 }
 
-/** Makes `pnpm dev` in the workspace run `source` as child.mjs, recorded. */
+/** Makes `pnpm dev` in the workspace run `source` as child.mjs, recorded.
+    `dev` is the script that starts it. */
 export async function writePlatformChild(
 	workspace: PlatformWorkspace,
 	source: string,
+	dev = 'node child.mjs',
 ): Promise<void> {
 	await writeFile(
 		join(workspace.root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
+		JSON.stringify({ private: true, scripts: { dev } }),
 	);
 	await writeFile(
 		join(workspace.root, 'child.mjs'),

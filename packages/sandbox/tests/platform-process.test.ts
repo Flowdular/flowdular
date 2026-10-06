@@ -854,17 +854,28 @@ it('stops every process in the platform group, including one that ignores SIGTER
 	expect(survivors(recorded)).toEqual([]);
 }, 30_000);
 
-it('lets the platform drain past three seconds within its shutdown budget', async () => {
-	const workspace = await platformWorkspace('flowdular-platform-drain-');
-	const drained = join(workspace.root, 'drained');
-	const shutdown = pathToFileURL(
-		createRequire(import.meta.url).resolve('@flowdular/dev-console/shutdown'),
-	).href;
-	/* pnpm delivers the stop's SIGTERM twice; the drain outlasts the old
-	   three-second SIGKILL and ends a second before the budget. */
-	await writePlatformChild(
-		workspace,
-		`import { writeFileSync } from 'node:fs';
+/* pnpm delivers the stop's SIGTERM twice; the drain outlasts the old
+   three-second SIGKILL and ends a second before the budget. A shell that does
+   not exec the script dies on the SIGTERM, and pnpm exits with it while the
+   platform still drains. */
+it.each([
+	['directly', 'node child.mjs'],
+	['through a shell that stays', 'sh run.sh'],
+])(
+	'lets the platform drain past three seconds within its shutdown budget, started %s',
+	async (_, dev) => {
+		const workspace = await platformWorkspace('flowdular-platform-drain-');
+		const drained = join(workspace.root, 'drained');
+		const shutdown = pathToFileURL(
+			createRequire(import.meta.url).resolve('@flowdular/dev-console/shutdown'),
+		).href;
+		await writeFile(
+			join(workspace.root, 'run.sh'),
+			'node child.mjs "$@"\nexit $?\n',
+		);
+		await writePlatformChild(
+			workspace,
+			`import { writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { stopOnSignals } from ${JSON.stringify(shutdown)};
 const args = process.argv;
@@ -877,15 +888,21 @@ stopOnSignals(() => {
 	}, ${PLATFORM_SHUTDOWN_BUDGET_MS - 1_000});
 });
 `,
-	);
-	const platform = await startTrackedPlatform({
-		workspaceRoot: workspace.root,
-		port: await freePort(),
-		quiet: true,
-	});
-	await platform.stop();
-	expect(await readFile(drained, 'utf8')).toBe('drained');
-}, 30_000);
+			dev,
+		);
+		const platform = await startTrackedPlatform({
+			workspaceRoot: workspace.root,
+			port: await freePort(),
+			quiet: true,
+		});
+		const stopping = Date.now();
+		await platform.stop();
+		expect(await readFile(drained, 'utf8')).toBe('drained');
+		/* The stop ends with the drain, not with the SIGKILL after the grace. */
+		expect(Date.now() - stopping).toBeLessThan(PLATFORM_STOP_ESCALATION_MS);
+	},
+	30_000,
+);
 
 it('reports a platform command that cannot be started', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-missing-');
