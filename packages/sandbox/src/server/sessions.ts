@@ -19,7 +19,11 @@ import {
 	sealSessionRecord,
 	verifySessionRecord,
 } from './config.ts';
-import { removeStaleTemporaryFiles, replaceLocalFile } from './local-file.ts';
+import {
+	removeStaleTemporaryFiles,
+	replaceLocalFile,
+	withLocalFileLock,
+} from './local-file.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -979,10 +983,16 @@ export async function appendChatEntry(
 		at: Date.now(),
 	};
 	lastSequence.set(session.id, record.sequence);
-	await rotateChatLogIfLarge(paths.chatLog);
-	await appendFile(paths.chatLog, `${JSON.stringify(redactEntry(record))}\n`, {
-		encoding: 'utf8',
-		mode: 0o600,
+	/* A rotation reads the log and renames a shortened copy over it, so an
+	   entry appended in between would be lost: appends and rotations of one
+	   log take turns. */
+	await withLocalFileLock(paths.chatLog, async () => {
+		await rotateChatLogIfLarge(paths.chatLog);
+		await appendFile(
+			paths.chatLog,
+			`${JSON.stringify(redactEntry(record))}\n`,
+			{ encoding: 'utf8', mode: 0o600 },
+		);
 	});
 	notifySessionChanged(session.id);
 	return record;

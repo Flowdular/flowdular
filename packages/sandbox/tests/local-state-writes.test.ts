@@ -579,39 +579,28 @@ function newSession(root: string, title = 'Rotation'): Promise<SandboxSession> {
 	});
 }
 
+/* Past the 32 MiB rotation threshold and past the 2,000 lines a rotation
+   keeps, so a finished rotation would be visible. */
+async function writeLongTranscript(chatLog: string): Promise<void> {
+	const text = 'x'.repeat(16_000);
+	const lines = Array.from({ length: 2_200 }, (_, index) =>
+		JSON.stringify({
+			sequence: index + 1,
+			at: index + 1,
+			kind: 'user',
+			role: 'operator',
+			text,
+		}),
+	);
+	await writeFile(chatLog, `${lines.join('\n')}\n`, { mode: 0o600 });
+}
+
 describe('transcript rotation', () => {
 	it('keeps the whole transcript when its rotation stops before the rename', async () => {
 		const root = await workspace();
-		const session = await createSession({
-			workspaceRoot: root,
-			owner: {
-				platformUrl: 'https://business.example',
-				accountId: 'alice',
-				tenantId: 'tenant-a',
-			},
-			kind: 'new-module',
-			moduleId: 'booking.core',
-			title: 'Rotation',
-			brief: 'Rotate a long transcript',
-			blueprint: 'new-module@1.0.0',
-			role: 'business-manager',
-			driver: 'fake',
-			install: false,
-		});
+		const session = await newSession(root);
 		const paths = sessionPaths(root, session.id, session.moduleSuffix);
-		/* Past the 32 MiB rotation threshold and past the 2,000 lines a
-		   rotation keeps, so a finished rotation would be visible. */
-		const text = 'x'.repeat(16_000);
-		const lines = Array.from({ length: 2_200 }, (_, index) =>
-			JSON.stringify({
-				sequence: index + 1,
-				at: index + 1,
-				kind: 'user',
-				role: 'operator',
-				text,
-			}),
-		);
-		await writeFile(paths.chatLog, `${lines.join('\n')}\n`, { mode: 0o600 });
+		await writeLongTranscript(paths.chatLog);
 		setLocalFileTestHooks({
 			beforeRename: async (target) => {
 				if (target === paths.chatLog) throw new Error('process died');
@@ -632,6 +621,50 @@ describe('transcript rotation', () => {
 				name.startsWith('chat.jsonl.'),
 			),
 		).toEqual([]);
+	});
+
+	it('keeps an entry appended while a rotation is between its read and its rename', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await writeLongTranscript(paths.chatLog);
+		const held = deferred();
+		const queued = deferred();
+		const release = deferred();
+		let rotations = 0;
+		setLocalFileTestHooks({
+			beforeRename: async (target) => {
+				if (target !== paths.chatLog || ++rotations > 1) return;
+				held.resolve();
+				await release.promise;
+			},
+			queued: (target) => {
+				if (target === paths.chatLog) queued.resolve();
+			},
+		});
+
+		const rotating = appendChatEntry(root, session, {
+			kind: 'user',
+			role: 'operator',
+			text: 'rotating',
+		});
+		await held.promise;
+		const appending = appendChatEntry(root, session, {
+			kind: 'user',
+			role: 'operator',
+			text: 'during the rotation',
+		});
+		/* The append either waits for the rotation or lands beside it. */
+		await Promise.race([queued.promise, appending]);
+		release.resolve();
+		await Promise.all([rotating, appending]);
+
+		const entries = await readChat(root, session);
+		expect(entries.map((entry) => entry.text).slice(-2)).toEqual([
+			'rotating',
+			'during the rotation',
+		]);
+		expect(entries.length).toBeLessThan(2_200);
 	});
 });
 
