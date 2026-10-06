@@ -1,7 +1,6 @@
 import {
 	holdsLauncherCredential,
-	loadSandboxConfiguration,
-	saveSandboxConfiguration,
+	updateSandboxConfiguration,
 	type SandboxConfiguration,
 } from './config.ts';
 import { withSessionLock } from './session-lock.ts';
@@ -97,13 +96,12 @@ export async function completeSessionMove(options: {
 		});
 		/* Read again: the operator may have saved settings while the sessions
 		   moved, and only the addresses finished here are this step's to drop. */
-		const latest = await loadSandboxConfiguration(options.workspaceRoot);
-		await saveSandboxConfiguration(options.workspaceRoot, {
+		await updateSandboxConfiguration(options.workspaceRoot, (latest) => ({
 			...latest,
 			pendingSessionMoveFrom: latest.pendingSessionMoveFrom.filter(
 				(url) => !pending.includes(url),
 			),
-		});
+		}));
 		if (moved > 0)
 			options.log(
 				`moved ${moved} sandbox session${moved === 1 ? '' : 's'} from ${pending.join(', ')} to ${configuration.platformUrl}`,

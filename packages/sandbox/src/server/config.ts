@@ -15,6 +15,7 @@ import type {
 	AiProviderKind,
 	DecisionProviderKind,
 } from '@flowdular/ai-provider';
+import { replaceLocalFile, withLocalFileLock } from './local-file.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
 export const SANDBOX_DIRECTORY = '.flowdular/sandbox';
@@ -280,28 +281,29 @@ async function readLocalFile(path: string): Promise<string> {
 	}
 }
 
-async function writeLocalFile(path: string, value: string): Promise<void> {
-	const handle = await open(
-		path,
-		constants.O_WRONLY |
-			constants.O_CREAT |
-			constants.O_TRUNC |
-			constants.O_NOFOLLOW,
-		0o600,
-	);
-	try {
-		await handle.chmod(0o600);
-		await handle.writeFile(value, 'utf8');
-	} finally {
-		await handle.close();
-	}
-}
-
 /* Secrets stay on the machine that runs the sandbox: encrypted at rest with a
    permission-restricted local key, never written to the workspace repository
    and never returned to the browser. */
 async function localKey(workspaceRoot: string): Promise<Buffer> {
 	const path = keyPath(workspaceRoot);
+	const stored = await readLocalKey(workspaceRoot, path);
+	if (stored) return stored;
+	/* Two first uses must agree on one key: whatever one of them sealed would
+	   not open under a key the other left on disk. */
+	return withLocalFileLock(path, async () => {
+		const created = await readLocalKey(workspaceRoot, path);
+		if (created) return created;
+		await assertSafeLocalPath(workspaceRoot, path, true);
+		const key = randomBytes(32);
+		await replaceLocalFile(path, key.toString('base64'));
+		return key;
+	});
+}
+
+async function readLocalKey(
+	workspaceRoot: string,
+	path: string,
+): Promise<Buffer | null> {
 	try {
 		await assertSafeLocalPath(workspaceRoot, path, false);
 		const encoded = await readLocalFile(path);
@@ -310,10 +312,7 @@ async function localKey(workspaceRoot: string): Promise<Buffer> {
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 	}
-	await assertSafeLocalPath(workspaceRoot, path, true);
-	const key = randomBytes(32);
-	await writeLocalFile(path, key.toString('base64'));
-	return key;
+	return null;
 }
 
 export async function sealSecret(
@@ -475,9 +474,37 @@ export async function saveSandboxConfiguration(
 	workspaceRoot: string,
 	configuration: SandboxConfiguration,
 ): Promise<SandboxConfiguration> {
+	return withLocalFileLock(configPath(workspaceRoot), () =>
+		writeSandboxConfiguration(workspaceRoot, configuration),
+	);
+}
+
+/* Every change derived from the stored configuration goes through here: the
+   load, the change and the write hold the file's queue, so a save from the
+   launcher, the runtime or another request cannot land in between and be
+   overwritten. Returning current itself writes nothing. */
+export async function updateSandboxConfiguration(
+	workspaceRoot: string,
+	change: (current: SandboxConfiguration) => SandboxConfiguration,
+): Promise<SandboxConfiguration> {
+	return withLocalFileLock(configPath(workspaceRoot), async () => {
+		const current = await loadSandboxConfiguration(workspaceRoot);
+		const next = change(current);
+		if (next === current) return current;
+		return writeSandboxConfiguration(workspaceRoot, next);
+	});
+}
+
+async function writeSandboxConfiguration(
+	workspaceRoot: string,
+	configuration: SandboxConfiguration,
+): Promise<SandboxConfiguration> {
 	const path = configPath(workspaceRoot);
 	await assertSafeLocalPath(workspaceRoot, path, true);
-	await writeLocalFile(path, `${JSON.stringify(configuration, null, '\t')}\n`);
+	await replaceLocalFile(
+		path,
+		`${JSON.stringify(configuration, null, '\t')}\n`,
+	);
 	return configuration;
 }
 
