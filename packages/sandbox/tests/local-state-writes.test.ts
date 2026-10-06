@@ -823,3 +823,74 @@ describe('local file replacement', () => {
 		expect(await readdir(directory)).toEqual(['state.json']);
 	});
 });
+
+describe('local file replacement on Windows', () => {
+	function onWindows(): void {
+		const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+		Object.defineProperty(process, 'platform', {
+			...platform,
+			value: 'win32',
+		});
+		cleanup.push(async () => {
+			Object.defineProperty(process, 'platform', platform);
+		});
+	}
+
+	/* The rename fails with code the first count times, as it does while a
+	   scanner holds the file. */
+	function blockRenames(count: number, code = 'EBUSY'): void {
+		let blocked = 0;
+		setLocalFileTestHooks({
+			beforeRename: async () => {
+				if (blocked >= count) return;
+				blocked += 1;
+				throw Object.assign(new Error('held by another process'), { code });
+			},
+		});
+	}
+
+	async function target(): Promise<string> {
+		const directory = await temporaryDirectory('flowdular-local-state-win-');
+		const path = join(directory, 'state.json');
+		await writeFile(path, 'before', { mode: 0o600 });
+		return path;
+	}
+
+	it.each(['EPERM', 'EBUSY', 'EACCES'])(
+		'retries a rename that %s blocks for a moment',
+		async (code) => {
+			onWindows();
+			const path = await target();
+			blockRenames(2, code);
+
+			await replaceLocalFile(path, 'after');
+
+			expect(await readFile(path, 'utf8')).toBe('after');
+			expect(await readdir(join(path, '..'))).toEqual(['state.json']);
+		},
+	);
+
+	it('gives up on a rename that stays blocked', async () => {
+		onWindows();
+		const path = await target();
+		blockRenames(Number.POSITIVE_INFINITY);
+
+		await expect(replaceLocalFile(path, 'after')).rejects.toMatchObject({
+			code: 'EBUSY',
+		});
+
+		expect(await readFile(path, 'utf8')).toBe('before');
+		expect(await readdir(join(path, '..'))).toEqual(['state.json']);
+	});
+
+	it('does not retry a refused rename on other platforms', async (context) => {
+		context.skip(process.platform === 'win32', 'this is the Windows case');
+		const path = await target();
+		blockRenames(1);
+
+		await expect(replaceLocalFile(path, 'after')).rejects.toMatchObject({
+			code: 'EBUSY',
+		});
+		expect(await readFile(path, 'utf8')).toBe('before');
+	});
+});

@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, lstat, open, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { processAlive } from './disk-lock.ts';
 
 export interface LocalFileTestHooks {
 	/* The new bytes are flushed to the temporary file and not yet renamed or
 	   linked to the target. Throwing here stands in for the process dying at
-	   that point; an error with an errno code stands in for the link failing
-	   with it. */
+	   that point; an error with an errno code stands in for the rename or the
+	   link failing with it. */
 	readonly beforeRename?: (target: string) => Promise<void>;
 	/* A withLocalFileLock caller is waiting for an earlier one on the target. */
 	readonly queued?: (target: string) => void;
@@ -109,8 +110,7 @@ export async function publishLocalFile(
 
 async function moveIntoPlace(temporary: string, path: string): Promise<void> {
 	try {
-		await testHooks?.beforeRename?.(path);
-		await rename(temporary, path);
+		await renameOver(temporary, path);
 	} catch (error) {
 		/* The write's own failure is what the caller needs; a leftover that
 		   cannot be removed is owner-only and never read. */
@@ -145,6 +145,32 @@ async function writeTemporaryFile(
 		throw error;
 	}
 	return temporary;
+}
+
+/* Windows refuses to replace a file that another process holds open, and
+   antivirus scanners and indexers open new files for a moment. Those
+   refusals pass, so there, and only there, the rename is retried for about
+   two seconds. Elsewhere the same codes mean a real permission problem. */
+const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320, 640, 800];
+const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+async function renameOver(temporary: string, path: string): Promise<void> {
+	for (let attempt = 0; ; attempt += 1) {
+		try {
+			await testHooks?.beforeRename?.(path);
+			await rename(temporary, path);
+			return;
+		} catch (error) {
+			const wait = RENAME_RETRY_DELAYS_MS[attempt];
+			if (
+				process.platform !== 'win32' ||
+				wait === undefined ||
+				!TRANSIENT_RENAME_CODES.has((error as NodeJS.ErrnoException).code ?? '')
+			)
+				throw error;
+			await delay(wait);
+		}
+	}
 }
 
 const TEMPORARY_FILE = /^.+\.(\d+)\.[0-9a-f]{8}$/;
