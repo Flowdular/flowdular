@@ -273,9 +273,10 @@ async function createPlatformConfig() {
 					windowMs: workerTick.windowMs,
 				})
 			: null;
-		/* Registered after the module stops, so retirement closes the open
-		   window before those stops run again. */
-		if (ticker) lifecycle.addQuiesce(() => ticker.close());
+		/* An open window holds its tick request, and retirement waits for
+		   requests before any quiesce runs, so the window closes as soon as
+		   retirement begins and the module stops then run again. */
+		if (ticker) lifecycle.addInterrupt(() => ticker.close());
 		agentDefinitions.seal();
 		/* Sealed here rather than in a module: every composition has run, which
 		   is exactly when the declarations are final and before any start hook
