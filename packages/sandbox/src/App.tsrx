@@ -41,6 +41,7 @@ import {
 	streamTurn,
 	submitAnswers,
 	uploadAttachment,
+	watchSession,
 	type EjectPlanView,
 	type EjectTargetId,
 	type SubmittedAnswer,
@@ -246,6 +247,43 @@ export function App(props?: RenderRouteProps) @{
 		}
 	};
 
+	/* Another tab or browser changed the open session. Reload what it shows and
+   follow a turn it started as if this tab had started it. Calls that overlap
+   a reload collapse into one more, for the session asked last, so switching
+   sessions mid-reload never drops the new session's first event. */
+	const sync = useMemo(
+		() => ({ loading: false, next: null as string | null }),
+		[],
+	);
+	const resync = async (id: string) => {
+		sync.next = id;
+		if (sync.loading) return;
+		sync.loading = true;
+		try {
+			while (sync.next !== null) {
+				const target = sync.next;
+				sync.next = null;
+				const loaded = await loadSession(target).catch(() => null);
+				if (
+					!loaded ||
+						sandbox.store.get(sandbox.state.activeSessionId) !== target ||
+						turn.controller !== null
+				) continue;
+				sandbox.store.act((transaction) => {
+					transaction.set(sandbox.state.view, loaded);
+					transaction.set(sandbox.state.liveEntries, loaded.chat);
+				}, 'sandbox/sync');
+				if (loaded.running) {
+					setRunning(true);
+					void follow(target);
+					return;
+				}
+			}
+		} finally {
+			sync.loading = false;
+		}
+	};
+
 	const openSession = async (id: string) => {
 		setBusy(true);
 		try {
@@ -338,6 +376,14 @@ export function App(props?: RenderRouteProps) @{
 			clearTimeout(timer);
 		};
 	}, [retryLocalConnection, sandbox]);
+
+	/* While no turn stream is attached here, the session's change feed is how
+   this view learns what another tab or browser did. A turn stream carries
+   everything itself, so the feed closes while one runs. */
+	useEffect(() => {
+		if (!activeSessionId || running) return;
+		return watchSession(activeSessionId, () => void resync(activeSessionId));
+	}, [activeSessionId, running]);
 
 	/* One turn, wherever it came from: an operator message or a handoff the
    operator confirmed. Automatic handoffs are chained by the server on the
@@ -486,17 +532,20 @@ export function App(props?: RenderRouteProps) @{
 		dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 	};
 
-	const approveAndContinue = async (handoff: HandoffPlan) => {
+	const approveAndContinue = async (handoff: HandoffPlan, specHash: string) => {
 		const session = currentSession();
 		if (!session || running) return;
 		setBusy(true);
 		setError('');
 		try {
-			await approveSpecification(session.id, handoff.module);
+			await approveSpecification(session.id, handoff.module, specHash);
 			await openSession(session.id);
 			dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 		} catch (approveError) {
 			setError(message(approveError, t('sandbox.app.error.approveSpec')));
+			/* A refused approval usually means the text changed: show the
+   current one, with its hash, for the next review. */
+			void refreshView(session.id);
 		} finally {
 			setBusy(false);
 		}
@@ -1013,7 +1062,10 @@ export function App(props?: RenderRouteProps) @{
 									pendingBrief={startingPoint(view.session, entries)}
 									onStart={() => send(startingPoint(view.session, entries))}
 									onContinue={continueWith}
-									onApprove={(handoff) => void approveAndContinue(handoff)}
+									onApprove={(handoff, specHash) => void approveAndContinue(
+										handoff,
+										specHash,
+									)}
 									onRequestChanges={(module, comment) => void askForSpecChanges(
 										module,
 										comment,

@@ -500,9 +500,15 @@ next step:
   up to four chained turns per operator message (`chainDepth` in the record).
   With it off, the transcript shows a `Continue with <role>` button instead.
 - **approval**: every new or edited module stops before implementation until
-  the operator approves its current specification. The approval route moves
-  the `status` line to `approved` and records the SHA-256 hash of that exact
-  text in the session. An `approved` line written by an agent is not authority.
+  the operator approves its current specification. The review card shows the
+  SHA-256 of the text it renders, and `POST /sandbox/api/sessions/:id/approve`
+  with `{ "module", "specHash" }` names that hash: when the document changed
+  since the review the route answers `409 SPEC_CHANGED` and records nothing,
+  and while the module has unanswered questions it answers
+  `409 QUESTIONS_PENDING`. An accepted approval moves the `status` line to
+  `approved`, records the SHA-256 hash of that exact text in the session and
+  the reviewed hash on the transcript. An `approved` line written by an agent
+  is not authority.
   Editing the specification or requesting changes makes the recorded hash
   stale and opens the approval gate again. In a multi-module session each
   affected module needs its own current approved hash.
@@ -527,7 +533,10 @@ block tagged `questions` holding
 The sandbox parses and bounds it (at most 12 questions with unique `Q-n` ids, a
 question of 1 to 400 characters, at most 8 options of 1 to 120 characters, a
 recommendation that is one of them) and stores it on the session as
-`pendingQuestions`; a block it cannot read is a turn warning, not a failed turn.
+`pendingQuestions`; a turn that asks always stops for the answers, never for
+approval. A block it cannot read is not a failed turn: the transcript says why,
+and the specialist gets the reason and the limits for one repair turn. A second
+refusal in a row stops for the operator.
 The transcript lists the questions instead of showing JSON, and the session view
 offers a form with the recommendation preselected.
 
@@ -553,6 +562,13 @@ and closing it only unsubscribes; stopping is an explicit action. The session
 reports whether a turn is still running (`running` in the session view and
 `running` ids in the state), and a browser that reopens it attaches to the live
 stream (`GET /sandbox/api/sessions/:id/turn/stream`) until the chain ends.
+While no turn stream is attached, an open session view listens on
+`GET /sandbox/api/sessions/:id/events`, which sends `ready` on connect and
+`changed` whenever the session record or transcript changes or a turn starts
+or ends. The events carry the session id and whether a turn is running; the
+view reloads the rest through the session route, so another tab or browser
+starting a turn, approving or finishing shows up without a reload. At most 32
+views follow one session.
 
 A new turn on a session that already has one supersedes it, and waits for the
 old process to exit before it starts. Coding agents keep one writer per

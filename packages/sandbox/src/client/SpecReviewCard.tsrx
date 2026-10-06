@@ -32,6 +32,10 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
 	acceptanceScenarios: 'scenario',
 };
 
+/* The hash shown is a prefix long enough to compare by eye; the copy button
+   carries the full value. */
+const HASH_PREFIX = 12;
+
 const IDENTIFIER_FIELDS = new Set([
 	'id',
 	'specVersion',
@@ -81,6 +85,14 @@ export function SpecReviewCard(props: SpecReviewCardProps) @{
 		: null;
 	const [asking, setAsking] = useState(false);
 	const [comment, setComment] = useState('');
+	/* Keyed by the hash, so a newer text never shows as already copied. */
+	const [copiedHash, setCopiedHash] = useState<string | null>(null);
+	const copyHash = () => {
+		const hash = review.hash;
+		const clipboard = globalThis.navigator?.clipboard;
+		if (!hash || clipboard === undefined) return;
+		clipboard.writeText(hash).then(() => setCopiedHash(hash), () => {});
+	};
 
 	<section class="spec-review">
 		<header class="spec-review__head">
@@ -263,6 +275,25 @@ export function SpecReviewCard(props: SpecReviewCardProps) @{
 			</>
 		}
 
+		@if (review.hash) {
+			<p class="spec-review__hash">
+				<span>{t('sandbox.spec.hash.label')}</span>
+				<code class="ui-mono" title={review.hash}>{review.hash.slice(
+					0,
+					HASH_PREFIX,
+				)}</code>
+				<Button size="sm" variant="ghost" onClick={copyHash}>
+					<Icon
+						name={copiedHash === review.hash ? 'check' : 'copy'}
+						size={14}
+					/>
+					{copiedHash === review.hash
+						? t('sandbox.spec.hash.copied')
+						: t('sandbox.spec.hash.copy')}
+				</Button>
+			</p>
+		}
+
 		@if (asking) {
 			<div class="spec-review__ask">
 				<textarea
@@ -296,7 +327,7 @@ export function SpecReviewCard(props: SpecReviewCardProps) @{
 				<Button
 					size="sm"
 					variant="primary"
-					disabled={props.busy || !draft}
+					disabled={props.busy || !draft || !review.hash}
 					onClick={props.onApprove}
 				>
 					<Icon name="check" size={14} />
