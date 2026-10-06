@@ -1476,7 +1476,7 @@
    colgroup, so one-action and two-action tables stay stable in every state. */
 .ui-table th.ui-table__actions,
 .ui-table td.ui-table__actions {
-	position: sticky;
+	position: var(--ui-table-actions-position, sticky);
 	right: 0;
 	white-space: nowrap;
 	text-align: right;
