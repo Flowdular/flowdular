@@ -7,6 +7,8 @@ const PLATFORM_GUARD = fileURLToPath(
 	new URL('./platform-guard.mjs', import.meta.url),
 );
 
+const STARTUP_TIMEOUT_MS = 180_000;
+
 export interface PlatformProcess {
 	readonly url: string;
 	stop(): Promise<void>;
@@ -142,6 +144,14 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 	const stop = (): Promise<void> => {
 		if (stopPromise) return stopPromise;
 		stopPromise = (async () => {
+			/* Darwin answers EPERM, not ESRCH, for a group whose members have all
+			   exited but are not reaped yet, the state right after the wizard's
+			   restart exit. The other cause of EPERM, a member running as another
+			   user, does not occur in a group this launcher spawned. */
+			const groupGone = (error: unknown) => {
+				const code = (error as NodeJS.ErrnoException).code;
+				return code === 'ESRCH' || code === 'EPERM';
+			};
 			const active = () => {
 				if (process.platform === 'win32' || !child.pid)
 					return child.exitCode === null && child.signalCode === null;
@@ -149,7 +159,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 					process.kill(-child.pid, 0);
 					return true;
 				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+					if (groupGone(error)) return false;
 					throw error;
 				}
 			};
@@ -160,7 +170,7 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 					else if (child.exitCode === null && child.signalCode === null)
 						child.kill(signal);
 				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+					if (!groupGone(error)) throw error;
 				}
 			};
 			kill('SIGTERM');
@@ -178,14 +188,15 @@ function spawnPlatform(options: StartPlatformOptions): OwnedPlatform {
 async function platformMode(
 	url: string,
 	signal?: AbortSignal,
+	timeoutMs = 2_000,
 ): Promise<'setup' | 'application' | null> {
 	try {
 		const response = await fetch(new URL('/setup', url), {
 			headers: { accept: 'text/html' },
 			redirect: 'manual',
 			signal: signal
-				? AbortSignal.any([signal, AbortSignal.timeout(2_000)])
-				: AbortSignal.timeout(2_000),
+				? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+				: AbortSignal.timeout(timeoutMs),
 		});
 		await response.body?.cancel();
 		if (
@@ -200,8 +211,16 @@ async function platformMode(
 	}
 }
 
-async function platformServesSetup(url: string): Promise<boolean> {
-	return (await platformMode(url)) === 'setup';
+/* The socket opens before the platform has evaluated its configuration, and
+   the first request waits for that evaluation, which a cold first-run boot
+   can take tens of seconds to finish. Its answer decides whether this boot is
+   setup, so the probe is bounded by the startup budget, not a short poll. */
+async function platformServesSetup(
+	url: string,
+	signal: AbortSignal | undefined,
+	timeoutMs: number,
+): Promise<boolean> {
+	return (await platformMode(url, signal, timeoutMs)) === 'setup';
 }
 
 async function waitForApplicationTransition(
@@ -253,7 +272,11 @@ export async function startPlatformProcess(
 		try {
 			await options.onReady?.({
 				url: existingUrl,
-				setup: await platformServesSetup(existingUrl),
+				setup: await platformServesSetup(
+					existingUrl,
+					options.signal,
+					STARTUP_TIMEOUT_MS,
+				),
 			});
 		} catch {
 			options.log?.('platform ready callback failed');
@@ -289,13 +312,14 @@ export async function startPlatformProcess(
 		if (lifetime.signal.aborted) throw new PlatformStartAbortedError();
 		const owned = spawnPlatform(options);
 		current = owned;
+		const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 		const startup = new AbortController();
 		const abortStartup = () => startup.abort();
 		lifetime.signal.addEventListener('abort', abortStartup, { once: true });
 		try {
 			const outcome = await Promise.race([
-				waitForPlatform(url, 180_000, startup.signal).then((ready) =>
-					ready ? 'ready' : 'timeout',
+				waitForPlatform(url, STARTUP_TIMEOUT_MS, startup.signal).then(
+					(ready) => (ready ? 'ready' : 'timeout'),
 				),
 				owned.closed.then(() => 'exited'),
 			]);
@@ -309,7 +333,11 @@ export async function startPlatformProcess(
 			startup.abort();
 			lifetime.signal.removeEventListener('abort', abortStartup);
 		}
-		const setup = await platformServesSetup(url);
+		const setup = await platformServesSetup(
+			url,
+			lifetime.signal,
+			Math.max(deadline - Date.now(), 2_000),
+		);
 		if (lifetime.signal.aborted) {
 			await owned.stop();
 			throw new PlatformStartAbortedError();

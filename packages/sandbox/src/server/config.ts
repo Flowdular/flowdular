@@ -79,6 +79,10 @@ export interface SandboxConfiguration {
 	   local development server or a remote deployment. */
 	readonly platformUrl: string;
 	readonly platformToken: SealedSecret | null;
+	/* Fingerprint of the sealed token the launcher collected from the platform
+	   it started. A token connected later seals differently, so the launcher
+	   never takes an operator's credential for its own. */
+	readonly launcherTokenFingerprint: string | null;
 	readonly driver: string;
 	readonly driverModel: string | null;
 	readonly previewData: PreviewDataMode;
@@ -107,6 +111,7 @@ export const DEFAULT_CONFIGURATION: SandboxConfiguration = {
 	mode: 'loopback',
 	platformUrl: 'http://localhost:4310',
 	platformToken: null,
+	launcherTokenFingerprint: null,
 	driver: 'claude-code',
 	driverModel: null,
 	previewData: 'fixtures',

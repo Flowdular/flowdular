@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
 	findRunningPlatformUrl,
 	PlatformStartAbortedError,
@@ -26,7 +26,10 @@ import {
 	writePlatformChild,
 } from './support/platform-processes.ts';
 
-afterEach(cleanupPlatformTests);
+afterEach(async () => {
+	vi.restoreAllMocks();
+	await cleanupPlatformTests();
+});
 
 async function waitUntil(
 	check: () => Promise<boolean>,
@@ -329,6 +332,240 @@ createServer((request, response) => {
 	}
 }, 40_000);
 
+it('recognizes setup behind a slow first answer and restarts into the application on the setup exit code', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-cold-');
+	const root = workspace.root;
+	const marker = join(root, 'configured');
+	const pidFile = join(root, 'children.txt');
+	/* Like the development server, the socket opens before the configuration
+	   is evaluated, and every request waits for that evaluation. A cold
+	   first-run boot takes far longer than a quick probe would wait. */
+	await writePlatformChild(
+		workspace,
+		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
+const args = process.argv;
+const port = Number(args[args.indexOf('--port') + 1]);
+const host = args[args.indexOf('--host') + 1];
+const setup = !existsSync(${JSON.stringify(marker)});
+const evaluated = new Promise((resolve) => setTimeout(resolve, setup ? 4000 : 0));
+createServer(async (request, response) => {
+  await evaluated;
+  if (request.url === '/setup' && setup) {
+    if (request.method === 'POST') {
+      writeFileSync(${JSON.stringify(marker)}, 'configured');
+      response.writeHead(204).end();
+      setTimeout(() => process.exit(Number(process.env.FD_SETUP_RESTART_EXIT_CODE)), 100);
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html', 'x-flowdular-setup': 'first-run' }).end('<h1>Setup</h1>');
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/html' }).end('<h1>Application</h1>');
+}).listen(port, host);
+`,
+	);
+	const ready: { url: string; setup: boolean }[] = [];
+	const logs: string[] = [];
+	let applicationReady = () => {};
+	const restarted = new Promise<void>((resolve) => {
+		applicationReady = resolve;
+	});
+	const platform = await startTrackedPlatform({
+		workspaceRoot: root,
+		port: await freePort(),
+		quiet: true,
+		onReady: (state) => {
+			ready.push(state);
+			if (!state.setup) applicationReady();
+		},
+		log: (line) => logs.push(line),
+	});
+	try {
+		expect(ready).toEqual([{ url: platform.url, setup: true }]);
+		expect(
+			(await fetch(`${platform.url}/setup`, { method: 'POST' })).status,
+		).toBe(204);
+		await restarted;
+		expect(ready).toEqual([
+			{ url: platform.url, setup: true },
+			{ url: platform.url, setup: false },
+		]);
+		expect(logs).toContain('setup finished; restarting the platform');
+		const application = await fetch(`${platform.url}/setup`);
+		expect(application.headers.get('x-flowdular-setup')).toBeNull();
+		expect(await application.text()).toContain('Application');
+	} finally {
+		await platform.stop();
+		const pids = (await readFile(pidFile, 'utf8'))
+			.trim()
+			.split('\n')
+			.map(Number);
+		for (const pid of pids) await waitUntil(() => processGone(pid));
+	}
+}, 90_000);
+
+it('restarts after setup when the exited process group answers EPERM', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-eperm-');
+	const root = workspace.root;
+	const marker = join(root, 'configured');
+	const pidFile = join(root, 'children.txt');
+	await writePlatformChild(
+		workspace,
+		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
+const args = process.argv;
+const port = Number(args[args.indexOf('--port') + 1]);
+const host = args[args.indexOf('--host') + 1];
+const setup = !existsSync(${JSON.stringify(marker)});
+createServer((request, response) => {
+  if (request.url === '/setup' && setup) {
+    if (request.method === 'POST') {
+      writeFileSync(${JSON.stringify(marker)}, 'configured');
+      response.writeHead(204).end();
+      setTimeout(() => process.exit(Number(process.env.FD_SETUP_RESTART_EXIT_CODE)), 100);
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html', 'x-flowdular-setup': 'first-run' }).end('<h1>Setup</h1>');
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/html' }).end('<h1>Application</h1>');
+}).listen(port, host);
+`,
+	);
+	/* Darwin reports a process group whose members have exited but are not
+	   reaped yet as EPERM rather than ESRCH. */
+	const signal = process.kill.bind(process);
+	const kill = vi
+		.spyOn(process, 'kill')
+		.mockImplementation((pid: number, name?: string | number) => {
+			try {
+				return signal(pid, name);
+			} catch (error) {
+				if (pid < 0 && (error as NodeJS.ErrnoException).code === 'ESRCH')
+					throw Object.assign(new Error('kill EPERM'), {
+						code: 'EPERM',
+						syscall: 'kill',
+					});
+				throw error;
+			}
+		});
+	const ready: boolean[] = [];
+	const logs: string[] = [];
+	let settle = () => {};
+	const settled = new Promise<void>((resolve) => {
+		settle = resolve;
+	});
+	try {
+		const platform = await startTrackedPlatform({
+			workspaceRoot: root,
+			port: await freePort(),
+			quiet: true,
+			onReady: (state) => {
+				ready.push(state.setup);
+				if (!state.setup) settle();
+			},
+			log: (line) => {
+				logs.push(line);
+				if (/restart failed|did not restart|process stopped/.test(line))
+					settle();
+			},
+		});
+		try {
+			expect(ready).toEqual([true]);
+			expect(
+				(await fetch(`${platform.url}/setup`, { method: 'POST' })).status,
+			).toBe(204);
+			await settled;
+			expect(logs).not.toContain('the platform restart failed: kill EPERM');
+			expect(ready).toEqual([true, false]);
+		} finally {
+			await platform.stop();
+		}
+	} finally {
+		kill.mockRestore();
+		const pids = (await readFile(pidFile, 'utf8'))
+			.trim()
+			.split('\n')
+			.map(Number);
+		for (const pid of pids) await waitUntil(() => processGone(pid));
+	}
+}, 90_000);
+
+it('cancels startup while the platform has not answered its first request', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-unanswered-');
+	const root = workspace.root;
+	const pidFile = join(root, 'child.pid');
+	const asked = join(root, 'asked');
+	await writePlatformChild(
+		workspace,
+		`import { writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const args = process.argv;
+const port = Number(args[args.indexOf('--port') + 1]);
+const host = args[args.indexOf('--host') + 1];
+createServer(() => writeFileSync(${JSON.stringify(asked)}, 'asked')).listen(port, host);
+`,
+	);
+	const controller = new AbortController();
+	const startup = startTrackedPlatform({
+		workspaceRoot: root,
+		port: await freePort(),
+		quiet: true,
+		signal: controller.signal,
+	});
+	void startup.catch(() => undefined);
+	try {
+		await waitUntil(async () => {
+			try {
+				await readFile(asked);
+				return true;
+			} catch {
+				return false;
+			}
+		}, 600);
+		controller.abort();
+		await expect(startup).rejects.toBeInstanceOf(PlatformStartAbortedError);
+		const pid = Number(await readFile(pidFile, 'utf8'));
+		await waitUntil(() => processGone(pid));
+	} finally {
+		controller.abort();
+		await startup.catch(() => undefined);
+	}
+}, 60_000);
+
+it('stops waiting for an already-serving platform that has not answered when cancelled', async () => {
+	let asked = () => {};
+	const requested = new Promise<void>((resolve) => {
+		asked = resolve;
+	});
+	const server = createHttpServer(() => asked());
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	try {
+		const address = server.address();
+		if (!address || typeof address === 'string') throw new Error('No TCP port');
+		const controller = new AbortController();
+		const ready: boolean[] = [];
+		const startup = startPlatformProcess({
+			workspaceRoot: '/unused',
+			port: address.port,
+			signal: controller.signal,
+			onReady: (state) => {
+				ready.push(state.setup);
+			},
+		});
+		await requested;
+		controller.abort();
+		expect((await startup).url).toBe(`http://127.0.0.1:${address.port}`);
+	} finally {
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+}, 30_000);
+
 it('stops a platform child when startup is cancelled', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-start-');
 	const root = workspace.root;
@@ -418,6 +655,65 @@ it('waits for a starting platform child to stop before the launcher exits', asyn
 		);
 	});
 }, 30_000);
+
+it('reports the address of the platform it starts before that platform answers', async () => {
+	const workspace = await platformWorkspace('flowdular-launcher-address-');
+	const root = workspace.root;
+	const childPidFile = join(root, 'child.pid');
+	await writeFile(
+		join(root, 'flowdular.json'),
+		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
+	);
+	/* A first-run platform is still booting when the banner prints. */
+	await writePlatformChild(
+		workspace,
+		`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(childPidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
+	);
+	const sandboxPort = await freePort();
+	const platformPort = await freePort();
+	const started = `http://127.0.0.1:${platformPort}`;
+	const { child: launcher, output } = spawnLauncher(workspace, {
+		sandbox: sandboxPort,
+		platform: platformPort,
+	});
+	const plain = () => output().replace(/\x1b\[[0-9;]*m/g, '');
+	const bannerPrinted = new Promise<void>((resolve, reject) => {
+		for (const stream of [launcher.stdout, launcher.stderr])
+			stream.on('data', () => {
+				if (/^\s*diagnostics\s/m.test(plain())) resolve();
+			});
+		launcher.once('exit', () => reject(new Error(output())));
+	});
+	try {
+		await bannerPrinted;
+		expect(/^\s*platform\s+(\S+) · /m.exec(plain())?.[1]).toBe(started);
+		const state = await fetch(
+			`http://127.0.0.1:${sandboxPort}/sandbox/api/state`,
+		).then((response) => response.json());
+		expect(state.configuration.platformUrl).toBe(started);
+		const stored = JSON.parse(
+			await readFile(
+				join(root, '.flowdular', 'sandbox', 'config.json'),
+				'utf8',
+			),
+		);
+		expect(stored.platformUrl).toBe(started);
+	} finally {
+		launcher.kill('SIGTERM');
+		if (launcher.exitCode === null)
+			await Promise.race([
+				once(launcher, 'exit'),
+				delay(8_000).then(() => {
+					throw new Error(`Launcher did not exit: ${output()}`);
+				}),
+			]);
+		const childPid = await readFile(childPidFile, 'utf8').then(
+			Number,
+			() => null,
+		);
+		if (childPid !== null) await waitUntil(() => processGone(childPid));
+	}
+}, 90_000);
 
 it('shows the private setup token once in the launcher terminal without putting it in HTTP state', async () => {
 	const workspace = await platformWorkspace('flowdular-launcher-setup-');

@@ -1,9 +1,14 @@
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import {
+	execFileSync,
+	spawn,
+	type ChildProcessByStdio,
+} from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
@@ -154,7 +159,7 @@ export function startTrackedPlatform(
 }
 
 export interface Launcher {
-	readonly child: ChildProcess;
+	readonly child: ChildProcessByStdio<null, Readable, Readable>;
 	output(): string;
 }
 
