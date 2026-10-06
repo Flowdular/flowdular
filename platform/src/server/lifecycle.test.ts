@@ -240,6 +240,27 @@ describe('platform runtime lifecycle', () => {
 		expect(next).not.toHaveBeenCalled();
 	});
 
+	it('keeps an event source reconnecting after retirement instead of refusing it', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		const next = vi.fn(async () => new Response('unsafe'));
+		await lifecycle.retire();
+
+		const response = await lifecycle.middleware(
+			{
+				request: new Request('https://test/events', {
+					headers: { accept: 'text/event-stream' },
+				}),
+			} as never,
+			next,
+		);
+
+		/* Any other answer ends an EventSource for good. */
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toMatch(/^text\/event-stream/);
+		expect(await response.text()).toBe('retry: 1000\n\n');
+		expect(next).not.toHaveBeenCalled();
+	});
+
 	it('retires the previous activated generation', async () => {
 		const previous = createPlatformRuntimeLifecycle();
 		const released = vi.fn();

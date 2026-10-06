@@ -38,6 +38,28 @@ function isEventStream(response: Response): boolean {
 	return type?.trim().toLowerCase() === 'text/event-stream';
 }
 
+/* EventSource stops reconnecting for good on any answer but a 200 event
+	stream, and a production server keeps listening while it retires. A stream
+	request to a retired generation gets an empty stream that ends at once, so
+	the client keeps reconnecting until the next process answers. */
+function retiredResponse(request: Request | undefined): Response {
+	if (
+		request?.method === 'GET' &&
+		request.headers.get('accept')?.includes('text/event-stream')
+	) {
+		return new Response('retry: 1000\n\n', {
+			headers: {
+				'content-type': 'text/event-stream; charset=utf-8',
+				'cache-control': 'no-store',
+			},
+		});
+	}
+	return new Response(null, {
+		status: 503,
+		headers: { 'retry-after': '1' },
+	});
+}
+
 /* Vite evaluates octane.config.ts again when one of its SSR dependencies is
 	invalidated. A generation owns every resource created by that evaluation.
 	Retirement interrupts what would hold a request open, waits for requests
@@ -114,12 +136,7 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 
 	const lifecycle: PlatformRuntimeLifecycle = {
 		middleware: async (context, next) => {
-			if (retired) {
-				return new Response(null, {
-					status: 503,
-					headers: { 'retry-after': '1' },
-				});
-			}
+			if (retired) return retiredResponse(context.request);
 			activeRequests += 1;
 			let endStream: (() => void) | undefined;
 			const release = () => {
