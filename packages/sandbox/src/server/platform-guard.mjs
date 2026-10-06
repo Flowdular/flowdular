@@ -15,7 +15,6 @@ import { spawn } from 'node:child_process';
    The caller passes the delay from SIGTERM to SIGKILL first. */
 const [grace, command, ...args] = process.argv.slice(2);
 const STOP_GRACE_MS = Number(grace);
-const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
 let stopping = false;
 
 function signalGroup(signal) {
@@ -33,6 +32,12 @@ function stop() {
 	stopping = true;
 	setTimeout(() => signalGroup('SIGKILL'), STOP_GRACE_MS);
 }
+
+/* stop() in the launcher signals the whole group, this guard included. A
+   SIGTERM ends the guard until this handler exists, so the handler comes
+   before the child: no child runs without a guard to send its SIGKILL. */
+process.on('SIGTERM', stop);
+const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
 
 function launcherGone() {
 	if (process.platform === 'win32') {
@@ -61,8 +66,6 @@ child.once('exit', (code) => {
 	process.exit(code ?? 1);
 });
 
-/* stop() in the launcher signals the whole group, this guard included. */
-process.on('SIGTERM', stop);
 process.once('disconnect', launcherGone);
 /* The channel can close while this module is still loading. */
 if (process.send && !process.connected) launcherGone();
