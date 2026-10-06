@@ -1,8 +1,5 @@
-import { createRequire } from 'node:module';
-import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { sdkModuleManifests } from '@flowdular/kernel/module-manifests';
 import type { Workspace } from './workspace.ts';
-import { resolveExistingInside } from './workspace.ts';
 
 export const SDK_VERSION = '0.6.0';
 const LIBRARIES = new Set([
@@ -49,41 +46,7 @@ export function npmPackage(specifier: string): string {
 export async function sdkModules(
 	workspace: Workspace,
 ): Promise<ReadonlyMap<string, string>> {
-	const require = createRequire(join(workspace.root, 'platform/package.json'));
-	let indexPath: string;
-	try {
-		indexPath = require.resolve('@flowdular/sdk/modules.json');
-	} catch (error) {
-		if (
-			['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(
-				(error as NodeJS.ErrnoException).code ?? '',
-			)
-		)
-			return new Map();
-		throw error;
-	}
-	const index = JSON.parse(await readFile(indexPath, 'utf8')) as {
-		schemaVersion: number;
-		modules: { manifest: string; import: string }[];
-	};
-	if (
-		index.schemaVersion !== 1 ||
-		!Array.isArray(index.modules) ||
-		index.modules.length > 256
-	)
-		throw new Error('Invalid SDK module index.');
-	const result = new Map<string, string>();
-	for (const entry of index.modules) {
-		if (!/^@flowdular\/sdk\/modules\/[a-z0-9-]+$/.test(entry.import))
-			throw new Error('Invalid SDK module entrypoint.');
-		const path = await resolveExistingInside(
-			dirname(indexPath),
-			entry.manifest,
-		);
-		if (result.has(path)) throw new Error('Duplicate SDK module path.');
-		result.set(path, entry.import);
-	}
-	return result;
+	return sdkModuleManifests(workspace.root);
 }
 export function sdkScaffold(
 	files: ReadonlyMap<string, string>,
