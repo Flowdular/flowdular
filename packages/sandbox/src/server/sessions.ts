@@ -24,7 +24,7 @@ import {
 	replaceLocalFile,
 	withLocalFileLock,
 } from './local-file.ts';
-import type { GateKey, GateSummary } from './gates.ts';
+import type { GateKey, GateResult, GateSummary } from './gates.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -243,10 +243,44 @@ function redactGate<T extends GateSummary>(gate: T): T {
 		: gate;
 }
 
+export function redactGateResult(gate: GateResult): GateResult {
+	return { ...redactGate(gate), output: redactText(gate.output) };
+}
+
+/* Every text field of every event type is named here, so a new event type
+   fails the typecheck until its fields are classified. */
+function redactEvent(event: CodingAgentEvent): CodingAgentEvent {
+	switch (event.type) {
+		case 'assistant.message':
+		case 'reasoning':
+			return { ...event, text: redactText(event.text) };
+		case 'tool.started':
+		case 'tool.completed':
+			return { ...event, detail: redactText(event.detail) };
+		case 'error':
+			return { ...event, message: redactText(event.message) };
+		case 'turn.started':
+		case 'activity':
+		case 'file.changed':
+		case 'turn.completed':
+			return event;
+	}
+}
+
+export function redactHandoff(handoff: HandoffPlan): HandoffPlan {
+	return {
+		...handoff,
+		reason: redactText(handoff.reason),
+		prompt: redactText(handoff.prompt),
+		...(handoff.gates ? { gates: handoff.gates.map(redactGate) } : {}),
+	};
+}
+
 function redactEntry(entry: ChatEntry): ChatEntry {
 	return {
 		...entry,
 		...(entry.text === undefined ? {} : { text: redactText(entry.text) }),
+		...(entry.event ? { event: redactEvent(entry.event) } : {}),
 		...(entry.gate ? { gate: redactGate(entry.gate) } : {}),
 		...(entry.instruction?.gates
 			? {
@@ -256,17 +290,7 @@ function redactEntry(entry: ChatEntry): ChatEntry {
 					},
 				}
 			: {}),
-		...(entry.handoff
-			? {
-					handoff: {
-						...entry.handoff,
-						prompt: redactText(entry.handoff.prompt),
-						...(entry.handoff.gates
-							? { gates: entry.handoff.gates.map(redactGate) }
-							: {}),
-					},
-				}
-			: {}),
+		...(entry.handoff ? { handoff: redactHandoff(entry.handoff) } : {}),
 	};
 }
 
@@ -1029,22 +1053,21 @@ export async function appendChatEntry(
 			lastSequence.delete(lastSequence.keys().next().value!);
 		}
 	}
-	const record: ChatEntry = {
+	const record = redactEntry({
 		...entry,
 		sequence: previous + 1,
 		at: Date.now(),
-	};
+	});
 	lastSequence.set(session.id, record.sequence);
 	/* A rotation reads the log and renames a shortened copy over it, so an
 	   entry appended in between would be lost: appends and rotations of one
 	   log take turns. */
 	await withLocalFileLock(paths.chatLog, async () => {
 		await rotateChatLogIfLarge(paths.chatLog);
-		await appendFile(
-			paths.chatLog,
-			`${JSON.stringify(redactEntry(record))}\n`,
-			{ encoding: 'utf8', mode: 0o600 },
-		);
+		await appendFile(paths.chatLog, `${JSON.stringify(record)}\n`, {
+			encoding: 'utf8',
+			mode: 0o600,
+		});
 	});
 	notifySessionChanged(session.id);
 	return record;

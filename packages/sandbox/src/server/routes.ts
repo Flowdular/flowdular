@@ -72,6 +72,9 @@ import {
 	modulePathOf,
 	readChat,
 	readSession,
+	redactGateResult,
+	redactHandoff,
+	redactText,
 	restoreCheckpoint,
 	restoreSession,
 	sessionPaths,
@@ -930,7 +933,13 @@ export function createSandboxRoutes(
 							}),
 						);
 					}
-					publish(channel, 'completed', outcome);
+					/* The chain below sends the handoff prompt as planned; open
+					   views receive the redacted copy. */
+					publish(channel, 'completed', {
+						...outcome,
+						gates: outcome.gates.map(redactGateResult),
+						handoff: redactHandoff(outcome.handoff),
+					});
 					next = null;
 					if (outcome.handoff.kind === 'continue')
 						repairs = outcome.handoff.repair ? repairs + 1 : 0;
@@ -971,7 +980,10 @@ export function createSandboxRoutes(
 			} catch (error) {
 				publish(channel, 'failed', {
 					code: error instanceof SandboxSetupError ? error.code : 'TURN_FAILED',
-					message: error instanceof Error ? error.message : 'The turn failed.',
+					message:
+						error instanceof Error
+							? redactText(error.message)
+							: 'The turn failed.',
 				});
 			} finally {
 				clearTimeout(timer);

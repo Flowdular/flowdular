@@ -19,6 +19,7 @@ import {
 	createCodexDriver,
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
+	type CodingAgentEvent,
 	type CodingAgentTurnRequest,
 } from '@flowdular/coding-agent';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
@@ -38,6 +39,7 @@ import {
 	readSession,
 	sessionPaths,
 	updateSession,
+	type ChatEntry,
 } from '../src/server/sessions.ts';
 import { MAX_OPTION_LENGTH } from '../src/server/questions.ts';
 import { hashSpec } from '../src/server/spec.ts';
@@ -1955,5 +1957,219 @@ describe('session state after the gates', () => {
 		expect(await state()).toBe('editing');
 		release();
 		await readSse(await turn);
+	});
+});
+
+describe('transcript redaction on the stored and the live path', () => {
+	const PASSWORD = 'fake-pass-0000';
+	const LEAKED = `postgres://app:${PASSWORD}@db.internal:5432/booking`;
+	const REDACTED = 'postgres://[redacted]@db.internal:5432/booking';
+	type Gates = NonNullable<SandboxRouteOptions['executeGates']>;
+
+	const passing: Gates = async ({ session, gates, modules }) =>
+		gates.map((id) => ({
+			id,
+			module: (modules ?? session.modules)[0]!.directory,
+			status: 'passed' as const,
+			durationMs: 1,
+			command: `fake ${id}`,
+			output: '',
+		}));
+
+	/* One approved backend turn through the turn route, read back both ways:
+	   what an open view received and what chat.jsonl holds. */
+	async function turnWith(
+		events: readonly CodingAgentEvent[],
+		executeGates: Gates = passing,
+	): Promise<{
+		readonly stream: { event: string; data: unknown }[];
+		readonly stored: ChatEntry[];
+	}> {
+		const root = await workspace();
+		const driver: CodingAgentDriver = {
+			...fakeDriver({ handoff: '' }),
+			async *run() {
+				yield* events;
+			},
+		};
+		const call = api(fakeRuntime(root, driver), 4320, { executeGates });
+		try {
+			const session = await sessionFor(root);
+			const paths = sessionPaths(root, session.id, session.moduleSuffix);
+			const spec =
+				'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+			await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+			await writeFile(join(paths.modulePath, 'spec', 'module.yaml'), spec);
+			await updateSession(root, session.id, {
+				autoContinue: false,
+				modules: session.modules.map((module) => ({
+					...module,
+					specHash: hashSpec(spec),
+					specApprovedAt: Date.now(),
+				})),
+			});
+			const stream = await readSse(
+				await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+					body: {
+						message: 'Add the endpoint.',
+						role: 'backend-engineer',
+						driver: 'fake',
+					},
+				}),
+			);
+			const raw = await readFile(paths.chatLog, 'utf8');
+			const stored = raw
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => JSON.parse(line) as ChatEntry);
+			expect(raw).not.toContain(PASSWORD);
+			expect(JSON.stringify(stream)).not.toContain(PASSWORD);
+			/* An open view receives each entry exactly as a reload reads it. */
+			expect(
+				stream
+					.filter((item) => item.event === 'entry')
+					.map((item) => item.data),
+			).toEqual(stored);
+			return { stream, stored };
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	}
+
+	const eventsOf = (stored: readonly ChatEntry[]) =>
+		stored.flatMap((entry) => (entry.event ? [entry.event] : []));
+	const completedOf = (stream: { event: string; data: unknown }[]) =>
+		stream.find((item) => item.event === 'completed')?.data as {
+			readonly gates: readonly { id: string; output: string }[];
+			readonly handoff: { reason: string; prompt: string };
+		};
+
+	it('redacts assistant and reasoning text', async () => {
+		const { stored } = await turnWith([
+			{ type: 'reasoning', text: `The tests reach ${LEAKED}.` },
+			{
+				type: 'assistant.message',
+				text: `I used ${LEAKED}.\n\nHANDOFF: none - done`,
+			},
+		]);
+		expect(eventsOf(stored)).toContainEqual({
+			type: 'reasoning',
+			text: `The tests reach ${REDACTED}.`,
+		});
+		expect(
+			stored.find((entry) => entry.event?.type === 'assistant.message'),
+		).toMatchObject({
+			kind: 'agent',
+			text: `I used ${REDACTED}.\n\nHANDOFF: none - done`,
+			event: {
+				type: 'assistant.message',
+				text: `I used ${REDACTED}.\n\nHANDOFF: none - done`,
+			},
+		});
+	});
+
+	it('redacts tool call details', async () => {
+		const { stored } = await turnWith([
+			{
+				type: 'tool.started',
+				callId: 'call-1',
+				tool: 'Bash',
+				detail: `psql ${LEAKED}`,
+			},
+			{
+				type: 'tool.completed',
+				callId: 'call-1',
+				tool: 'Bash',
+				detail: `psql ${LEAKED}`,
+				ok: false,
+			},
+			{ type: 'assistant.message', text: 'Checked.\n\nHANDOFF: none - done' },
+		]);
+		expect(eventsOf(stored)).toContainEqual({
+			type: 'tool.started',
+			callId: 'call-1',
+			tool: 'Bash',
+			detail: `psql ${REDACTED}`,
+		});
+		expect(eventsOf(stored)).toContainEqual({
+			type: 'tool.completed',
+			callId: 'call-1',
+			tool: 'Bash',
+			detail: `psql ${REDACTED}`,
+			ok: false,
+		});
+	});
+
+	it('redacts a driver error message', async () => {
+		const { stored } = await turnWith([
+			{
+				type: 'error',
+				code: 'DRIVER_TURN_FAILED',
+				message: `could not connect to ${LEAKED}`,
+			},
+		]);
+		expect(eventsOf(stored)).toContainEqual({
+			type: 'error',
+			code: 'DRIVER_TURN_FAILED',
+			message: `could not connect to ${REDACTED}`,
+		});
+	});
+
+	it('redacts the gate output on the gate entry and the finished turn', async () => {
+		const output = (url: string) =>
+			`src/services/booking-repository.ts(1,1): error TS2554: cannot reach ${url}`;
+		const { stored, stream } = await turnWith(
+			[{ type: 'assistant.message', text: 'Built.\n\nHANDOFF: none - done' }],
+			async (input) =>
+				(await passing(input)).map((gate) =>
+					gate.id === 'typecheck'
+						? { ...gate, status: 'failed' as const, output: output(LEAKED) }
+						: gate,
+				),
+		);
+		expect(
+			stored.find((entry) => entry.gate?.id === 'typecheck'),
+		).toMatchObject({
+			gate: { id: 'typecheck', status: 'failed' },
+			event: {
+				type: 'error',
+				code: 'GATE_TYPECHECK',
+				message: output(REDACTED),
+			},
+		});
+		const completed = completedOf(stream);
+		expect(
+			completed.gates.find((gate) => gate.id === 'typecheck')?.output,
+		).toBe(output(REDACTED));
+		expect(completed.handoff.prompt).toContain(REDACTED);
+	});
+
+	it('redacts the handoff reason', async () => {
+		const reason = (url: string) => `verified against ${url}`;
+		const { stored, stream } = await turnWith([
+			{
+				type: 'assistant.message',
+				text: `Built.\n\nHANDOFF: none - ${reason(LEAKED)}`,
+			},
+		]);
+		expect(stored.findLast((entry) => entry.handoff)?.handoff).toMatchObject({
+			kind: 'review',
+			role: 'backend-engineer',
+			reason: reason(REDACTED),
+		});
+		expect(completedOf(stream).handoff.reason).toBe(reason(REDACTED));
+	});
+
+	it('redacts a turn failure sent to open views', async () => {
+		const { stream } = await turnWith(
+			[{ type: 'assistant.message', text: 'Built.\n\nHANDOFF: none - done' }],
+			async () => {
+				throw new Error(`gate runner lost ${LEAKED}`);
+			},
+		);
+		expect(stream.find((item) => item.event === 'failed')?.data).toEqual({
+			code: 'TURN_FAILED',
+			message: `gate runner lost ${REDACTED}`,
+		});
 	});
 });
