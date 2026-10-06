@@ -58,6 +58,28 @@
 			}
 		},
 		{
+			"path": ["auth", "operator"],
+			"capability": {
+				"id": "auth.operator.read",
+				"version": 1,
+				"summary": "Show the workspace recorded as this deployment's operator, and whether FD_OPERATOR_TENANT overrides it.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["auth", "operator-set"],
+			"capability": {
+				"id": "auth.operator.set",
+				"version": 1,
+				"summary": "Record a workspace, by id or slug, as this deployment's operator, the one that changes platform settings.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
 			"path": ["auth", "secrets-rotate"],
 			"capability": {
 				"id": "auth.secrets.rotate",

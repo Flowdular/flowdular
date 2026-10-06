@@ -14,6 +14,7 @@ import {
 	DatabaseAuthRepository,
 	migrateAuthDatabase,
 } from '../services/database-repository.ts';
+import { firstWorkspaceOperator } from '../services/auth-service.ts';
 import { hashPassword } from '../services/password.ts';
 import { localDatabaseProvider, MIGRATION_REQUIREMENTS } from './database.ts';
 
@@ -39,6 +40,9 @@ export const GREENFIELD_TENANT_SLUGS = Object.freeze({
 	operations: 'operations-demo',
 	finance: 'finance-demo',
 });
+
+/** Audit label of the reset, the actor of the operator event it writes. */
+export const GREENFIELD_OPERATOR = 'cli:greenfield';
 
 /**
  * Drops every table auth.core owns in this namespace, migrates it back, and
@@ -86,19 +90,29 @@ export async function seedGreenfield(
 		const createdAt = Date.now();
 		const adminAccountId = randomUUID();
 		const operationsTenantId = randomUUID();
-		await repository.createAccountWithTenant({
-			accountId: adminAccountId,
-			tenantId: operationsTenantId,
-			email: GREENFIELD_ACCOUNTS.admin.email,
-			normalizedEmail: GREENFIELD_ACCOUNTS.admin.email,
-			passwordHash: adminPasswordHash,
-			displayName: GREENFIELD_ACCOUNTS.admin.displayName,
-			organizationName: GREENFIELD_TENANTS.operations,
-			organizationSlug: GREENFIELD_TENANT_SLUGS.operations,
-			role: 'owner',
-			scopes: OWNER_SCOPES,
-			createdAt,
-		});
+		/* The reset just emptied the database, so Operations Demo is its first
+		   workspace and its operator, and a local reset can change branding
+		   without FD_OPERATOR_TENANT. */
+		await repository.createAccountWithTenant(
+			{
+				accountId: adminAccountId,
+				tenantId: operationsTenantId,
+				email: GREENFIELD_ACCOUNTS.admin.email,
+				normalizedEmail: GREENFIELD_ACCOUNTS.admin.email,
+				passwordHash: adminPasswordHash,
+				displayName: GREENFIELD_ACCOUNTS.admin.displayName,
+				organizationName: GREENFIELD_TENANTS.operations,
+				organizationSlug: GREENFIELD_TENANT_SLUGS.operations,
+				role: 'owner',
+				scopes: OWNER_SCOPES,
+				createdAt,
+			},
+			firstWorkspaceOperator(
+				operationsTenantId,
+				GREENFIELD_OPERATOR,
+				createdAt,
+			),
+		);
 		await repository.createTenantMembership({
 			accountId: adminAccountId,
 			tenantId: randomUUID(),

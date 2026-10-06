@@ -44,6 +44,7 @@ const MODULE_TABLES = [
 	'auth_identity_providers',
 	'module_settings',
 	'module_settings_changes',
+	'auth_operator_workspace',
 	'auth_accounts',
 	'auth_tenants',
 ].join(', ');
@@ -63,6 +64,7 @@ const TENANT_TABLES: Readonly<Record<string, string>> = {
 	auth_tenant_invitations: 'auth_tenant_invitations_tenant_policy',
 	auth_mfa_challenges: 'auth_mfa_challenges_tenant_policy',
 	auth_identity_providers: 'auth_identity_providers_tenant_policy',
+	auth_operator_workspace: 'auth_operator_workspace_tenant_policy',
 	/* A binding carries a workspace when a tenant-owned provider made it, and
 	   none when a platform provider did; the policy admits both. */
 	auth_external_identities: 'auth_external_identities_tenant_policy',

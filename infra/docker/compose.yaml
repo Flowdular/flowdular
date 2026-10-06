@@ -124,8 +124,9 @@ services:
       FD_APPLICATION_PATH: ${FD_APPLICATION_PATH:-/app}
       FD_SETUP_AUTO_RESTART: 'true'
       FD_AUTH_ALLOW_SIGN_UP: 'false'
-      # Tenant id of the workspace that changes platform settings such as the
-      # branding and the mail relay. Empty, no workspace can.
+      # Tenant id that overrides the operator workspace, the one that changes
+      # platform settings such as the branding and the mail relay. Empty, the
+      # workspace auth.core recorded at first-run setup decides.
       FD_OPERATOR_TENANT: ${FD_OPERATOR_TENANT:-}
       # TLS terminates in front of this container. Only a plain-HTTP run on a
       # workstation may set FD_AUTH_SECURE_COOKIE=false in .env.

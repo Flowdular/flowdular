@@ -22,6 +22,7 @@ const TABLES = [
 	'auth_mfa_challenges',
 	'auth_external_identities',
 	'auth_identity_providers',
+	'auth_operator_workspace',
 	'module_settings',
 	'module_settings_changes',
 ];
