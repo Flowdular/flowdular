@@ -8,7 +8,6 @@ import {
 	readFile,
 	readdir,
 	realpath,
-	rename,
 	rm,
 	stat,
 	writeFile,
@@ -600,17 +599,14 @@ export async function writeSession(
 	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
 	await mkdir(paths.root, { recursive: true, mode: 0o700 });
 	const body = JSON.stringify(session, null, '\t');
-	const staging = `${paths.record}.${process.pid}.${randomUUID().slice(0, 8)}`;
-	await writeFile(
-		staging,
+	await replaceLocalFile(
+		paths.record,
 		`${JSON.stringify(
 			{ seal: await sealSessionRecord(workspaceRoot, body), session },
 			null,
 			'\t',
 		)}\n`,
-		{ encoding: 'utf8', mode: 0o600 },
 	);
-	await rename(staging, paths.record);
 	notifySessionChanged(session.id);
 	return session;
 }

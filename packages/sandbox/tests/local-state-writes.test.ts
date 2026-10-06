@@ -43,12 +43,20 @@ import {
 	createSandboxRuntime,
 	type SandboxRuntime,
 } from '../src/server/runtime.ts';
+import {
+	readDeliveryRecord,
+	writeDeliveryRecord,
+	type DeliveryRecord,
+} from '../src/server/delivery/record.ts';
 import { completeSessionMove } from '../src/server/session-owner.ts';
 import {
 	appendChatEntry,
 	createSession,
 	readChat,
+	readSession,
 	sessionPaths,
+	updateSession,
+	type SandboxSession,
 } from '../src/server/sessions.ts';
 
 const LAUNCHER_TOKEN = 'fd_test_launcher_token';
@@ -551,6 +559,25 @@ describe('sandbox configuration writes', () => {
 	});
 });
 
+function newSession(root: string, title = 'Rotation'): Promise<SandboxSession> {
+	return createSession({
+		workspaceRoot: root,
+		owner: {
+			platformUrl: 'https://business.example',
+			accountId: 'alice',
+			tenantId: 'tenant-a',
+		},
+		kind: 'new-module',
+		moduleId: 'booking.core',
+		title,
+		brief: 'Rotate a long transcript',
+		blueprint: 'new-module@1.0.0',
+		role: 'business-manager',
+		driver: 'fake',
+		install: false,
+	});
+}
+
 describe('transcript rotation', () => {
 	it('keeps the whole transcript when its rotation stops before the rename', async () => {
 		const root = await workspace();
@@ -604,6 +631,60 @@ describe('transcript rotation', () => {
 				name.startsWith('chat.jsonl.'),
 			),
 		).toEqual([]);
+	});
+});
+
+describe('session and delivery records', () => {
+	it('keeps the previous session record when its replacement stops before the rename', async () => {
+		const root = await workspace();
+		const session = await newSession(root, 'before');
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		setLocalFileTestHooks({
+			beforeRename: async (target) => {
+				if (target === paths.record) throw new Error('process died');
+			},
+		});
+
+		await expect(
+			updateSession(root, session.id, { title: 'after' }),
+		).rejects.toThrow('process died');
+
+		setLocalFileTestHooks(null);
+		expect((await readSession(root, session.id)).title).toBe('before');
+		expect(
+			(await readdir(paths.root)).filter((name) =>
+				name.startsWith('session.json.'),
+			),
+		).toEqual([]);
+	});
+
+	it('writes the delivery record owner-only and keeps it when its replacement stops before the rename', async () => {
+		const sessionRoot = await temporaryDirectory('flowdular-delivery-');
+		const delivered: DeliveryRecord = {
+			target: 'workspace',
+			deliveredAt: 1,
+			modules: ['booking.core'],
+			branch: null,
+			pullRequestUrl: null,
+			compareUrl: null,
+		};
+		await writeDeliveryRecord(sessionRoot, delivered);
+		expect((await stat(join(sessionRoot, 'delivery.json'))).mode & 0o777).toBe(
+			0o600,
+		);
+		setLocalFileTestHooks({
+			beforeRename: async (target) => {
+				if (basename(target) === 'delivery.json')
+					throw new Error('process died');
+			},
+		});
+
+		await expect(
+			writeDeliveryRecord(sessionRoot, { ...delivered, deliveredAt: 2 }),
+		).rejects.toThrow('process died');
+
+		expect(await readDeliveryRecord(sessionRoot)).toEqual(delivered);
+		expect(await readdir(sessionRoot)).toEqual(['delivery.json']);
 	});
 });
 
