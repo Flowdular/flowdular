@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
 	chmod,
 	lstat,
 	mkdir,
 	mkdtemp,
+	open,
 	readdir,
 	readFile,
 	rm,
@@ -828,7 +830,7 @@ describe('crash leftovers', () => {
 });
 
 describe('local file replacement', () => {
-	it('reports a replacement that landed when its directory cannot be flushed', async () => {
+	it('reports a replacement that landed when its directory cannot be flushed', async (context) => {
 		const directory = await temporaryDirectory('flowdular-local-state-dir-');
 		const target = join(directory, 'state.json');
 		await writeFile(target, 'before', { mode: 0o600 });
@@ -836,6 +838,17 @@ describe('local file replacement', () => {
 		   the directory to flush it does not. */
 		await chmod(directory, 0o300);
 		cleanup.push(() => chmod(directory, 0o700));
+		const opens = await open(directory, constants.O_RDONLY).then(
+			async (handle) => {
+				await handle.close();
+				return true;
+			},
+			() => false,
+		);
+		context.skip(
+			opens,
+			'this user opens a directory without read permission (root does), so the flush is never refused here',
+		);
 
 		await replaceLocalFile(target, 'after');
 
