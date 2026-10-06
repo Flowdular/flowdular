@@ -136,4 +136,61 @@ describe('agent message Markdown', () => {
 		const flat = parseInline('*a _b [d (e ](f '.repeat(20_000));
 		expect(flat.map((node) => node.kind)).toEqual(['text']);
 	});
+
+	it('reads hostile messages in time that grows with their length', () => {
+		const hostile = {
+			'a heading with a long space run': '# a' + ' '.repeat(100_000) + 'b',
+			'an address ending in punctuation':
+				'http://a' + '.'.repeat(100_000) + 'b',
+			'addresses that are not links': '/http://['.repeat(20_000),
+			'unclosed labels': '['.repeat(1_000_000),
+			'labels without an address': '[a]('.repeat(250_000),
+			'a table with a wide head': [
+				'|' + 'a|'.repeat(6_000),
+				'|' + '-|'.repeat(6_000),
+				...Array.from({ length: 6_000 }, () => '|'),
+			].join('\n'),
+		};
+		for (const [name, text] of Object.entries(hostile)) {
+			const started = performance.now();
+			parseMarkdown(text);
+			expect.soft(performance.now() - started, name).toBeLessThan(1_000);
+		}
+	});
+
+	it('keeps headings, bare addresses and tables an agent writes', () => {
+		expect(parseMarkdown('## Plan ##')).toEqual([
+			{ kind: 'heading', level: 2, inlines: [{ kind: 'text', text: 'Plan' }] },
+		]);
+		expect(parseMarkdown('# C# notes')).toEqual([
+			{
+				kind: 'heading',
+				level: 1,
+				inlines: [{ kind: 'text', text: 'C# notes' }],
+			},
+		]);
+		expect(parseInline('(see https://example.com/a_(b)).')).toEqual([
+			{ kind: 'text', text: '(see ' },
+			{
+				kind: 'link',
+				href: 'https://example.com/a_(b)',
+				children: [{ kind: 'text', text: 'https://example.com/a_(b)' }],
+			},
+			{ kind: 'text', text: ').' },
+		]);
+		expect(parseInline('[docs](https://example.com/a_(b)) next')).toEqual([
+			{
+				kind: 'link',
+				href: 'https://example.com/a_(b)',
+				children: [{ kind: 'text', text: 'docs' }],
+			},
+			{ kind: 'text', text: ' next' },
+		]);
+		const wide = parseMarkdown(
+			['|' + 'a|'.repeat(12), '|' + '-|'.repeat(12), '|' + '1|'.repeat(5)].join(
+				'\n',
+			),
+		);
+		expect(wide[0]?.kind === 'table' && wide[0].rows[0]).toHaveLength(12);
+	});
 });

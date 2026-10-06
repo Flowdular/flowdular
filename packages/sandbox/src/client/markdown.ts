@@ -43,15 +43,17 @@ export type MarkdownBlock =
 	  }
 	| { readonly kind: 'rule' };
 
-/* Nesting past these depths is read as plain text, so a hostile message costs
-   a bounded amount of work and stack. */
+/* Nesting past these depths, and links and tables past these sizes, are read
+   as plain text, so a hostile message costs a bounded amount of work and
+   stack. */
 const MAX_BLOCK_DEPTH = 8;
 const MAX_INLINE_DEPTH = 8;
 const LINK_LABEL_MAX = 1000;
 const LINK_URL_MAX = 2048;
+const MAX_TABLE_COLUMNS = 20;
 
 const FENCE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+const HEADING = /^ {0,3}(#{1,6})(?:[ \t]|$)/;
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const QUOTE = /^ {0,3}> ?/;
 const ITEM = /^( {0,3})([-*+]|\d{1,9}[.)])(?:([ \t]+)(.*))?$/;
@@ -59,7 +61,9 @@ const DELIMITER_CELL = /^:?-+:?$/;
 const ESCAPABLE = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 const WORD = /[\p{L}\p{N}]/u;
 const SPACE = /\s/;
-const AUTOLINK = /https?:\/\/[^\s<>`]+/iy;
+const AUTOLINK = /https?:\/\//iy;
+const ADDRESS_END = /[\s<>`]/;
+const TRAILING_PUNCTUATION = /[.,:;!?'"*_~]/;
 const SAFE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
 export function parseMarkdown(text: string): MarkdownBlock[] {
@@ -133,7 +137,7 @@ function parseBlocks(lines: readonly string[], depth: number): MarkdownBlock[] {
 			blocks.push({
 				kind: 'heading',
 				level: heading[1]!.length,
-				inlines: parseInline(heading[2] ?? ''),
+				inlines: parseInline(headingText(line.slice(heading[0].length))),
 			});
 			index += 1;
 			continue;
@@ -163,6 +167,17 @@ function parseBlocks(lines: readonly string[], depth: number): MarkdownBlock[] {
 		index = paragraph(lines, index, depth, blocks);
 	}
 	return blocks;
+}
+
+/* The heading's text without its optional closing run of hashes. */
+function headingText(rest: string): string {
+	const text = rest.trim();
+	let end = text.length;
+	while (end > 0 && text[end - 1] === '#') end -= 1;
+	if (end === 0) return '';
+	return end < text.length && /[ \t]/.test(text[end - 1]!)
+		? text.slice(0, end).trimEnd()
+		: text;
 }
 
 function codeBlock(
@@ -317,7 +332,11 @@ function tableAt(lines: readonly string[], index: number): boolean {
 	const head = lines[index]!;
 	if (!head.includes('|')) return false;
 	const align = delimiterRow(lines[index + 1]);
-	return align !== null && align.length === splitRow(head).length;
+	return (
+		align !== null &&
+		align.length <= MAX_TABLE_COLUMNS &&
+		align.length === splitRow(head).length
+	);
 }
 
 function table(
@@ -351,10 +370,14 @@ interface InlineContext {
 	readonly spans: ReadonlyMap<number, number>;
 	/* Set at every index inside a code span, so no other syntax closes there. */
 	readonly code: Uint8Array;
+	/* Where the bracket or parenthesis opened at an index closes, or -1. */
+	readonly closers: Int32Array;
 }
 
 export function parseInline(text: string): MarkdownInline[] {
-	return inlineNodes(codeSpans(text), 0, text.length, 0, false);
+	const { spans, code } = codeSpans(text);
+	const context = { text, spans, code, closers: closers(text, code) };
+	return inlineNodes(context, 0, text.length, 0, false);
 }
 
 function runLength(text: string, index: number, ch: string): number {
@@ -363,7 +386,7 @@ function runLength(text: string, index: number, ch: string): number {
 	return end - index;
 }
 
-function codeSpans(text: string): InlineContext {
+function codeSpans(text: string): Pick<InlineContext, 'spans' | 'code'> {
 	const spans = new Map<number, number>();
 	const code = new Uint8Array(text.length);
 	/* Once no closing run of a length follows an index, none follows a later
@@ -391,7 +414,31 @@ function codeSpans(text: string): InlineContext {
 		code.fill(1, index, close + run);
 		index = close + run;
 	}
-	return { text, spans, code };
+	return { spans, code };
+}
+
+/* Each bracket and parenthesis is matched once for the whole text, so trying a
+   link at every bracket stays linear. A label passes over code and escaped
+   characters; an address ends at whitespace or `<`. */
+function closers(text: string, code: Uint8Array): Int32Array {
+	const closes = new Int32Array(text.length).fill(-1);
+	if (!text.includes('](')) return closes;
+	const open: number[] = [];
+	for (let at = 0; at < text.length; at += 1) {
+		if (code[at]) continue;
+		const ch = text[at];
+		if (ch === '\\') at += 1;
+		else if (ch === '[') open.push(at);
+		else if (ch === ']' && open.length > 0) closes[open.pop()!] = at;
+	}
+	open.length = 0;
+	for (let at = 0; at < text.length; at += 1) {
+		const ch = text[at]!;
+		if (ch === '(') open.push(at);
+		else if (ch === ')' && open.length > 0) closes[open.pop()!] = at;
+		else if (ch === '<' || SPACE.test(ch)) open.length = 0;
+	}
+	return closes;
 }
 
 function closingRun(text: string, from: number, run: number): number {
@@ -461,20 +508,19 @@ function inlineNodes(
 			!inLink &&
 			(index === from || !WORD.test(text[index - 1]!))
 		) {
-			const end = autolinkEnd(text, index, to);
-			if (end > 0) {
-				const address = text.slice(index, end);
-				const href = safeHref(address);
-				if (href) {
+			const address = autolinkAt(text, index, to);
+			if (address) {
+				const words = text.slice(index, address.end);
+				if (address.href) {
 					flush();
 					nodes.push({
 						kind: 'link',
-						href,
-						children: [{ kind: 'text', text: address }],
+						href: address.href,
+						children: [{ kind: 'text', text: words }],
 					});
-					index = end;
-					continue;
-				}
+				} else plain += words;
+				index = address.end;
+				continue;
 			}
 		}
 		if ((ch === '*' || ch === '_') && depth < MAX_INLINE_DEPTH) {
@@ -573,39 +619,15 @@ function linkAt(
 	depth: number,
 ): { readonly nodes: readonly MarkdownInline[]; readonly end: number } | null {
 	const { text } = context;
-	let level = 0;
-	let close = -1;
-	const labelLimit = Math.min(to, index + LINK_LABEL_MAX);
-	for (let at = index + 1; at < labelLimit; at += 1) {
-		if (context.code[at]) continue;
-		const ch = text[at];
-		if (ch === '\\') at += 1;
-		else if (ch === '[') level += 1;
-		else if (ch === ']') {
-			if (level === 0) {
-				close = at;
-				break;
-			}
-			level -= 1;
-		}
-	}
-	if (close < 0 || text[close + 1] !== '(') return null;
-	let parens = 0;
-	let end = -1;
-	const urlLimit = Math.min(to, close + 2 + LINK_URL_MAX);
-	for (let at = close + 2; at < urlLimit; at += 1) {
-		const ch = text[at]!;
-		if (SPACE.test(ch) || ch === '<') return null;
-		if (ch === '(') parens += 1;
-		else if (ch === ')') {
-			if (parens === 0) {
-				end = at;
-				break;
-			}
-			parens -= 1;
-		}
-	}
-	if (end < 0) return null;
+	const close = context.closers[index]!;
+	if (
+		close < 0 ||
+		close >= Math.min(to, index + LINK_LABEL_MAX) ||
+		text[close + 1] !== '('
+	)
+		return null;
+	const end = context.closers[close + 1]!;
+	if (end < 0 || end >= Math.min(to, close + 2 + LINK_URL_MAX)) return null;
 	const children = inlineNodes(context, index + 1, close, depth + 1, true);
 	const href = safeHref(text.slice(close + 2, end));
 	/* An address that may not be a link leaves its words, never the address. */
@@ -617,20 +639,33 @@ function linkAt(
 
 /* A bare address ends before trailing punctuation, and before a closing
    parenthesis it did not open, so a sentence or a bracket around it stays
-   outside the link. */
-function autolinkEnd(text: string, index: number, to: number): number {
+   outside the link. One that may not be a link is still taken whole, as text,
+   so no address is read twice. */
+function autolinkAt(
+	text: string,
+	index: number,
+	to: number,
+): { readonly end: number; readonly href: string | null } | null {
 	AUTOLINK.lastIndex = index;
-	const match = AUTOLINK.exec(text);
-	if (!match) return -1;
-	let address = match[0].slice(0, to - index);
-	for (;;) {
-		const trimmed = address.replace(/[.,:;!?'"*_~]+$/, '');
-		const open = trimmed.split('(').length;
-		const shut = trimmed.split(')').length;
-		const next =
-			trimmed.endsWith(')') && shut > open ? trimmed.slice(0, -1) : trimmed;
-		if (next === address) break;
-		address = next;
+	if (!AUTOLINK.test(text) || AUTOLINK.lastIndex >= to) return null;
+	let end = AUTOLINK.lastIndex;
+	let open = 0;
+	let shut = 0;
+	for (; end < to && !ADDRESS_END.test(text[end]!); end += 1) {
+		if (text[end] === '(') open += 1;
+		else if (text[end] === ')') shut += 1;
 	}
-	return /^https?:\/\/[^/?#]/i.test(address) ? index + address.length : -1;
+	for (;;) {
+		const ch = text[end - 1]!;
+		if (TRAILING_PUNCTUATION.test(ch)) end -= 1;
+		else if (ch === ')' && shut > open) {
+			shut -= 1;
+			end -= 1;
+		} else break;
+	}
+	const address = text.slice(index, end);
+	return {
+		end,
+		href: /^https?:\/\/[^/?#]/i.test(address) ? safeHref(address) : null,
+	};
 }
