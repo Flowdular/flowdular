@@ -221,6 +221,7 @@
 	"session.state.validating": "weryfikacja",
 	"session.state.previewing": "podgląd",
 	"session.state.awaiting-approval": "oczekuje na zatwierdzenie",
+	"session.state.awaiting-answers": "oczekuje na odpowiedzi",
 	"session.state.accepted": "zaakceptowano",
 	"session.state.failed": "niepowodzenie",
 	"session.state.blocked": "zablokowano",

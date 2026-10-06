@@ -21,6 +21,7 @@ const SESSION_STATES: Readonly<Record<SandboxSessionState, true>> = {
 	validating: true,
 	previewing: true,
 	'awaiting-approval': true,
+	'awaiting-answers': true,
 	accepted: true,
 	failed: true,
 	blocked: true,
