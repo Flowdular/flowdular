@@ -79,7 +79,7 @@ function sourceFiles(context: CheckContext): [string, string][] {
 	return [...context.files].filter(
 		([path]) =>
 			(path.endsWith('.ts') || path.endsWith('.tsrx')) &&
-			!path.includes('/tests/') &&
+			!/(?:^|\/)tests\//.test(path) &&
 			!path.includes('.test.'),
 	);
 }
@@ -175,6 +175,30 @@ function permissionsDeclared(context: CheckContext): CheckOutcome {
 	};
 }
 
+/* `access` names a permission, as a shorthand property too, or says the
+   endpoint is public; it may also name an access object the same file
+   declares. */
+function declaresAccess(body: string, source: string): boolean {
+	if (/\bpermission\s*:/.test(body)) return true;
+	const access = /\baccess\s*:\s*(?:(\{)|([A-Za-z_$][\w$]*)\s*[,}\n])/.exec(
+		body,
+	);
+	if (!access) return false;
+	let object: string;
+	if (access[1]) {
+		object = callBody(body, access.index + access[0].length - 1);
+	} else {
+		const declaration = new RegExp(
+			`\\bconst\\s+${access[2]!.replace(/\$/g, '\\$')}\\s*(?::[^=]+)?=\\s*\\{`,
+		).exec(source);
+		if (!declaration) return false;
+		object = callBody(source, declaration.index + declaration[0].length - 1);
+	}
+	return /\bpermission\s*:|[{,]\s*permission\s*[,}]|\bkind\s*:\s*['"]public['"]/.test(
+		object,
+	);
+}
+
 function endpointsDeclarePermission(context: CheckContext): CheckOutcome {
 	if (!appliesTo(context, 'api'))
 		return notApplicable(
@@ -189,8 +213,14 @@ function endpointsDeclarePermission(context: CheckContext): CheckOutcome {
 			if (open === -1) continue;
 			endpoints += 1;
 			const body = callBody(source, open);
-			if (!/\bpermission\s*:/.test(body))
+			if (!declaresAccess(body, source))
 				offenders.push(`${path}:${source.slice(0, open).split('\n').length}`);
+		}
+		/* auth.core serves its routes without defineEndpoint, each checking a
+		   scope itself. */
+		for (const match of source.matchAll(/\bnew\s+ServerRoute\s*\(\s*\{/g)) {
+			const open = match.index + match[0].length - 1;
+			if (/\brequireScope\s*\(/.test(callBody(source, open))) endpoints += 1;
 		}
 	}
 	if (endpoints === 0)
@@ -205,20 +235,44 @@ function endpointsDeclarePermission(context: CheckContext): CheckOutcome {
 		passed: offenders.length === 0,
 		detail:
 			offenders.length === 0
-				? `All ${endpoints} endpoints name a permission.`
+				? `All ${endpoints} endpoints declare their access.`
 				: `Endpoints without a permission: ${offenders.join(', ')}.`,
 		...(offenders.length > 0 ? { paths: uniqueFiles(offenders) } : {}),
 	};
 }
 
+/* A body, route parameters or a query string, read directly or through the
+   platform's request readers, as in .ai/examples/bad/tenant-from-body. */
+const REQUEST_TENANT = new RegExp(
+	[
+		String.raw`\b(?:req|body|params)\s*(?:\.|\[['"])\s*tenant(?:Id)?\b`,
+		String.raw`\bsearchParams\s*\.\s*get(?:All)?\s*\(\s*['"]tenant(?:Id)?['"]`,
+		String.raw`\b(?:requiredString|optionalString|requiredInteger)\s*\([^,]+,\s*['"]tenant(?:Id)?['"]`,
+	].join('|'),
+	'i',
+);
+/* These names are also what a service or repository calls its own typed
+   argument (`input`, a `HistoryQuery`, an approval `request`), whose tenant
+   the endpoint took from the principal. They are request input only in code
+   that handles a request. */
+const ARGUMENT_TENANT =
+	/\b(?:request|input|query|payload|search)\s*(?:\.|\[['"])\s*tenant(?:Id)?\b/i;
+
+function handlesRequests(path: string, source: string): boolean {
+	return (
+		path.startsWith('src/api/') ||
+		/\bdefineEndpoint\s*\(|\bnew\s+ServerRoute\s*\(/.test(source)
+	);
+}
+
 function tenantNotFromRequest(context: CheckContext): CheckOutcome {
-	const pattern =
-		/\b(?:request|req|input|body|query|params|payload|search)\s*(?:\.|\[['"])\s*tenant(?:Id)?\b/i;
 	const offenders: string[] = [];
 	for (const [path, source] of sourceFiles(context)) {
+		const endpoint = handlesRequests(path, source);
 		const lines = source.split('\n');
 		lines.forEach((line, index) => {
-			if (pattern.test(line)) offenders.push(`${path}:${index + 1}`);
+			if (REQUEST_TENANT.test(line) || (endpoint && ARGUMENT_TENANT.test(line)))
+				offenders.push(`${path}:${index + 1}`);
 		});
 	}
 	return {
@@ -274,8 +328,12 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 			'migrations-mirrored',
 			'the specification declares no database capability and no entity.',
 		);
+	/* A down script is never registered: the ledger runs up scripts only. */
 	const migrations = [...context.files].filter(
-		([path]) => path.includes('migrations/') && path.endsWith('.sql'),
+		([path]) =>
+			path.includes('migrations/') &&
+			path.endsWith('.sql') &&
+			!path.endsWith('.down.sql'),
 	);
 	if (migrations.length === 0)
 		return {
@@ -297,9 +355,17 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 	/* Whitespace is the one difference the mirror is allowed to carry, because
 	   the formatter owns the TypeScript file and not the .sql one. */
 	const flatten = (text: string) => text.replace(/\s+/g, ' ').trim();
+	/* A template literal holds a backtick, a backslash or `${` escaped, and
+	   evaluates to the same bytes as the file. */
+	const escaped = (text: string) =>
+		text.replace(/[`\\]/g, '\\$&').replace(/\$\{/g, '\\${');
 	const flatSource = flatten(source);
 	const unmirrored = migrations
-		.filter(([, text]) => !flatSource.includes(flatten(text)))
+		.filter(
+			([, text]) =>
+				!flatSource.includes(flatten(text)) &&
+				!flatSource.includes(flatten(escaped(text))),
+		)
 		.map(([path]) => path);
 	return {
 		id: 'migrations-mirrored',
@@ -310,6 +376,28 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 				: `Not mirrored byte for byte: ${unmirrored.join(', ')}.`,
 		...(unmirrored.length > 0 ? { paths: unmirrored } : {}),
 	};
+}
+
+/* Each locale carries the plural categories its own rules select, so a family
+   is compared by its base key. The same folding as `translationKeys` in
+   @flowdular/contracts, restated because this file has no imports. */
+const PLURAL_CATEGORIES = ['zero', 'one', 'two', 'few', 'many', 'other'];
+
+function foldPluralFamilies(keys: ReadonlySet<string>): Set<string> {
+	const folded = new Set<string>();
+	for (const key of keys) {
+		const dot = key.lastIndexOf('.');
+		const base = key.slice(0, dot);
+		const member =
+			dot > 0 &&
+			PLURAL_CATEGORIES.includes(key.slice(dot + 1)) &&
+			keys.has(`${base}.other`) &&
+			PLURAL_CATEGORIES.some(
+				(category) => category !== 'other' && keys.has(`${base}.${category}`),
+			);
+		folded.add(member ? base : key);
+	}
+	return folded;
 }
 
 function localesComplete(context: CheckContext): CheckOutcome {
@@ -341,9 +429,11 @@ function localesComplete(context: CheckContext): CheckOutcome {
 		bundlePaths.set(locale, entry[0]);
 		bundles.set(
 			locale,
-			new Set(
-				[...entry[1].matchAll(/['"]([\w.-]+)['"]\s*:/g)].map(
-					(match) => match[1]!,
+			foldPluralFamilies(
+				new Set(
+					[...entry[1].matchAll(/['"]([\w.-]+)['"]\s*:/g)].map(
+						(match) => match[1]!,
+					),
 				),
 			),
 		);
@@ -377,19 +467,123 @@ function localesComplete(context: CheckContext): CheckOutcome {
 	};
 }
 
+interface TemplateParts {
+	readonly quasis: readonly string[];
+	readonly expressions: readonly string[];
+	readonly end: number;
+}
+
+/* The literal text and the interpolated expressions of a template literal
+   whose opening backtick is just before `start`, up to its closing backtick or
+   the end of `text`. */
+function templateParts(text: string, start: number): TemplateParts {
+	const quasis: string[] = [];
+	const expressions: string[] = [];
+	let literal = '';
+	let cursor = start;
+	while (cursor < text.length && text[cursor] !== '`') {
+		if (text[cursor] === '\\') {
+			literal += text.slice(cursor, cursor + 2);
+			cursor += 2;
+		} else if (text.startsWith('${', cursor)) {
+			let depth = 1;
+			let index = cursor + 2;
+			for (; index < text.length && depth > 0; index += 1) {
+				if (text[index] === '{') depth += 1;
+				else if (text[index] === '}') depth -= 1;
+			}
+			quasis.push(literal);
+			literal = '';
+			expressions.push(text.slice(cursor + 2, index - 1).trim());
+			cursor = index;
+		} else {
+			literal += text[cursor];
+			cursor += 1;
+		}
+	}
+	quasis.push(literal);
+	return { quasis, expressions, end: cursor };
+}
+
+/* Names a file binds at its top level to a string or number literal, or to a
+   template literal that interpolates only such names: a column list, a table
+   name or a default, fixed when the module loads. */
+function literalConstants(source: string): ReadonlySet<string> {
+	const constants = new Set<string>();
+	const declaration =
+		/^(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::\s*(?:string|number)\s*)?=\s*/gm;
+	const literal =
+		/(?:'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|\d[\d_]*(?:\.\d+)?)\s*(?:as\s+const\s*)?;/y;
+	const ending = /\s*(?:as\s+const\s*)?;/y;
+	for (const match of source.matchAll(declaration)) {
+		const start = match.index + match[0].length;
+		if (source[start] === '`') {
+			const parts = templateParts(source, start + 1);
+			ending.lastIndex = parts.end + 1;
+			if (
+				ending.test(source) &&
+				parts.expressions.every((name) => constants.has(name))
+			)
+				constants.add(match[1]!);
+			continue;
+		}
+		literal.lastIndex = start;
+		if (literal.test(source)) constants.add(match[1]!);
+	}
+	return constants;
+}
+
+/* Where an interpolation stands for a value: inside a quoted literal, after a
+   comparison, an assignment or a concatenation, after LIKE, IS, BETWEEN, LIMIT
+   or OFFSET, or in a VALUES, IN, ANY or ALL list. A fragment in a clause
+   position (columns, a table, a predicate after WHERE or AND, an ORDER BY) is
+   composition, and the values inside it are bound where it is built. */
+function valuePosition(before: string): boolean {
+	if ((before.match(/'/g)?.length ?? 0) % 2 === 1) return true;
+	if (/(?:[=<>]|\|\|)\s*$/.test(before)) return true;
+	if (
+		/\b(?:I?LIKE|SIMILAR\s+TO|IS(?:\s+NOT)?(?:\s+DISTINCT\s+FROM)?|BETWEEN(?:\s+\S+\s+AND)?|LIMIT|OFFSET)\s*$/i.test(
+			before,
+		)
+	)
+		return true;
+	const open: number[] = [];
+	for (let index = 0; index < before.length; index += 1) {
+		if (before[index] === '(') open.push(index);
+		else if (before[index] === ')') open.pop();
+	}
+	const innermost = open.at(-1);
+	return (
+		innermost !== undefined &&
+		/\b(?:VALUES|IN|ANY|ALL)\s*$/i.test(before.slice(0, innermost)) &&
+		!/\bSELECT\b/i.test(before.slice(innermost))
+	);
+}
+
 function noSqlInterpolation(context: CheckContext): CheckOutcome {
 	const offenders: string[] = [];
 	for (const [path, source] of sourceFiles(context)) {
+		const constants = literalConstants(source);
 		const lines = source.split('\n');
 		lines.forEach((line, index) => {
-			/* A value interpolated into a statement, rather than bound to it. The
-			   identifier forms a migration builds are allowed nowhere either. */
-			if (
-				/`[^`]*\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|VALUES)\b[^`]*\$\{/i.test(
-					line,
-				)
-			)
-				offenders.push(`${path}:${index + 1}`);
+			/* A value interpolated into a statement, rather than bound to it. */
+			for (let tick = line.indexOf('`'); tick !== -1; ) {
+				const { quasis, expressions } = templateParts(line, tick + 1);
+				if (
+					/\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|VALUES)\b/i.test(
+						quasis.join(' '),
+					) &&
+					expressions.some(
+						(name, at) =>
+							!constants.has(name) &&
+							valuePosition(quasis.slice(0, at + 1).join('_')),
+					)
+				) {
+					offenders.push(`${path}:${index + 1}`);
+					return;
+				}
+				tick = line.indexOf('`', tick + 1);
+			}
 		});
 	}
 	return {

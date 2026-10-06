@@ -34,7 +34,9 @@ import {
    translation keys missing from translations/en.json, and module-rules
    reported tenant identity read from request input, interpolated SQL,
    down migrations without their mirror, and locale drift. Both repair turns
-   went to the frontend engineer, which may write none of those files. */
+   went to the frontend engineer, which may write none of those files. The
+   tenant and down migration findings were false positives; the replay leaves
+   an up migration unmirrored in their place. */
 
 const SPEC = `schemaVersion: 1
 id: equipment.core
@@ -213,11 +215,7 @@ function scriptedDriver(options: {
 									'src/services/database-repository.ts': RECORDED_REPOSITORY,
 									'migrations/0002_equipment_serial.up.sql': UP_0002,
 									'migrations/0002_equipment_serial.down.sql': DOWN_0002,
-									'src/services/migration.ts': mirror([
-										UP_0001,
-										DOWN_0001,
-										UP_0002,
-									]),
+									'src/services/migration.ts': mirror([UP_0001, DOWN_0001]),
 								}
 							: {
 									'src/services/database-repository.ts': CLEAN_REPOSITORY,
@@ -426,7 +424,6 @@ describe('gate repair, replaying the recorded equipment session', () => {
 		expect(rules?.issues?.map((issue) => issue.code).sort()).toEqual([
 			'migrations-mirrored',
 			'no-sql-interpolation',
-			'tenant-not-from-request',
 		]);
 		/* What remains is in the services and the migrations. */
 		expect(translated.handoff).toMatchObject({
@@ -437,7 +434,7 @@ describe('gate repair, replaying the recorded equipment session', () => {
 		for (const path of [
 			'src/services/database-repository.ts',
 			'src/services/migration.ts',
-			'migrations/0002_equipment_serial.down.sql',
+			'migrations/0002_equipment_serial.up.sql',
 		])
 			expect(canWrite(translated.handoff.role, path)).toBe(true);
 

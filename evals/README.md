@@ -68,10 +68,10 @@ suite.
 | ------------------------------ | --------------------------------------------------------- |
 | `module-manifest`              | Nothing was scaffolded, or the id does not match the spec |
 | `permissions-declared`         | A specified permission appears nowhere in the module      |
-| `endpoints-declare-permission` | An endpoint carries no permission                         |
+| `endpoints-declare-permission` | An endpoint names no permission and is not public         |
 | `tenant-not-from-request`      | Tenant identity is read from request input                |
 | `rls-forced`                   | A migration misses ENABLE, FORCE, USING or WITH CHECK     |
-| `migrations-mirrored`          | A `.sql` file is not mirrored in `databaseMigrations`     |
+| `migrations-mirrored`          | An up migration is not mirrored in `databaseMigrations`   |
 | `locales-complete`             | A declared locale has no bundle, or the keys drifted      |
 | `no-sql-interpolation`         | A statement interpolates a value instead of binding it    |
 
