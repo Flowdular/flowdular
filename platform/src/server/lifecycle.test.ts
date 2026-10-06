@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	activatePlatformRuntimeLifecycle,
@@ -5,7 +6,118 @@ import {
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './lifecycle.ts';
 
+/* Far below the development server's 6 s shutdown budget, and far above what
+   a retirement that waits on nothing takes. */
+function settlesSoon(promise: Promise<unknown>): Promise<string> {
+	return Promise.race([
+		promise.then(() => 'settled'),
+		delay(1_000).then(() => 'still waiting'),
+	]);
+}
+
+function eventStream(cancel: () => void): Response {
+	return new Response(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode('retry: 1000\n\n'));
+			},
+			cancel,
+		}),
+		{ headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+	);
+}
+
 describe('platform runtime lifecycle', () => {
+	it('ends an open event stream when it retires instead of waiting for it', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		const disposed = vi.fn();
+		lifecycle.add(disposed);
+		const cancelled = vi.fn();
+		const response = await lifecycle.middleware(
+			{ request: new Request('https://test/events') } as never,
+			async () => eventStream(cancelled),
+		);
+		const reader = response.body!.getReader();
+		expect(new TextDecoder().decode((await reader.read()).value)).toBe(
+			'retry: 1000\n\n',
+		);
+
+		await expect(settlesSoon(lifecycle.retire())).resolves.toBe('settled');
+
+		expect(await reader.read()).toEqual({ done: true, value: undefined });
+		expect(cancelled).toHaveBeenCalledOnce();
+		expect(disposed).toHaveBeenCalledOnce();
+	});
+
+	it('ends an event stream that a request answers after retirement began', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		const cancelled = vi.fn();
+		let answer!: (response: Response) => void;
+		const pending = lifecycle.middleware(
+			{ request: new Request('https://test/events') } as never,
+			() => new Promise<Response>((resolve) => (answer = resolve)),
+		);
+		const retired = lifecycle.retire();
+		answer(eventStream(cancelled));
+
+		await expect(settlesSoon((await pending).text())).resolves.toBe('settled');
+		await expect(settlesSoon(retired)).resolves.toBe('settled');
+		expect(cancelled).toHaveBeenCalledOnce();
+	});
+
+	it('interrupts a producer that holds a request open before the requests drain', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		const events: string[] = [];
+		let endWindow!: () => void;
+		const window = new Promise<void>((resolve) => (endWindow = resolve));
+		lifecycle.add(() => {
+			events.push('dispose');
+		});
+		lifecycle.addQuiesce(() => {
+			events.push('quiesce');
+		});
+		lifecycle.addInterrupt(() => {
+			events.push('interrupt');
+			endWindow();
+		});
+		const sent = Promise.resolve(
+			lifecycle.middleware({} as never, async () => {
+				await window;
+				events.push('answered');
+				return new Response('closed', { status: 503 });
+			}),
+		).then(async (response) => `${response.status} ${await response.text()}`);
+
+		await expect(settlesSoon(lifecycle.retire())).resolves.toBe('settled');
+
+		expect(await sent).toBe('503 closed');
+		expect(events).toEqual(['interrupt', 'answered', 'quiesce', 'dispose']);
+	});
+
+	it('reports a failed interrupt with the teardown failures', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		const disposed = vi.fn();
+		lifecycle.add(disposed);
+		lifecycle.addInterrupt(() => {
+			throw new Error('window did not close');
+		});
+
+		await expect(lifecycle.retire()).rejects.toThrow(
+			'Platform runtime teardown did not release every resource: window did not close',
+		);
+		expect(disposed).toHaveBeenCalledOnce();
+	});
+
+	it('runs an interrupt registered after retirement at once', async () => {
+		const lifecycle = createPlatformRuntimeLifecycle();
+		await lifecycle.retire();
+		const interrupted = vi.fn();
+
+		lifecycle.addInterrupt(interrupted);
+
+		await vi.waitFor(() => expect(interrupted).toHaveBeenCalledOnce());
+	});
+
 	it.each(['close', 'cancel', 'error', 'abort'] as const)(
 		'keeps resources alive until a response stream finishes through %s',
 		async (mode) => {
