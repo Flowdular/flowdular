@@ -4,6 +4,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import {
+	holdsLauncherCredential,
 	loadSandboxConfiguration,
 	saveSandboxConfiguration,
 	sealSecret,
@@ -177,15 +178,20 @@ async function readCredential(path: string): Promise<ProvisionedCredential> {
 	};
 }
 
+/* A credential relaunched on more ports than this without ever connecting
+   leaves the sessions of its oldest addresses where they are. */
+const PENDING_SESSION_MOVE_LIMIT = 8;
+
 /* The dashboard banner, the connection state and the preview bridge all read
    the platform address from the configuration, so the launcher records the
    address it resolved before any of them starts instead of after the platform
    answers, which on a first run is long after the banner.
 
    A credential the launcher collected belongs to this workspace's platform,
-   so it follows the platform the launcher starts to its port. A credential
-   the operator connected, or a platform the launcher only connects to, keeps
-   the connection as configured. */
+   so it follows the platform the launcher starts to its port, and the address
+   it leaves is kept until its sessions follow (completeSessionMove). A
+   credential the operator connected, or a platform the launcher only connects
+   to, keeps the connection as configured. */
 export async function recordPlatformAddress(options: {
 	readonly workspaceRoot: string;
 	readonly platformUrl: string;
@@ -195,16 +201,23 @@ export async function recordPlatformAddress(options: {
 	if (configuration.platformUrl === options.platformUrl) return;
 	if (
 		configuration.platformToken !== null &&
-		!(
-			options.startedByLauncher &&
-			secretFingerprint(configuration.platformToken) ===
-				configuration.launcherTokenFingerprint
-		)
+		!(options.startedByLauncher && holdsLauncherCredential(configuration))
 	)
 		return;
 	await saveSandboxConfiguration(options.workspaceRoot, {
 		...configuration,
 		platformUrl: options.platformUrl,
+		pendingSessionMoveFrom:
+			configuration.platformToken === null
+				? configuration.pendingSessionMoveFrom
+				: [
+						...configuration.pendingSessionMoveFrom.filter(
+							(url) =>
+								url !== configuration.platformUrl &&
+								url !== options.platformUrl,
+						),
+						configuration.platformUrl,
+					].slice(-PENDING_SESSION_MOVE_LIMIT),
 		version: 1,
 	});
 }
