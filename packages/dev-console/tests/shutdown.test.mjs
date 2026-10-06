@@ -56,7 +56,7 @@ console.log('ready');
 }
 
 describe('development server stop signals', () => {
-	it.each(['SIGTERM', 'SIGINT'])(
+	it.each(['SIGTERM', 'SIGINT', 'SIGHUP'])(
 		'finishes the drain when SIGTERM and SIGINT repeat after a %s',
 		async (first) => {
 			const server = startServer();
