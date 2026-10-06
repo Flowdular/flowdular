@@ -181,7 +181,9 @@ package is not linked yet, and regenerates
 grants the scopes declared by each newly enabled module to every workspace owner
 through `auth sync-scopes`; a failed grant is reported as
 `MODULE_SCOPES_SYNC_FAILED`, and when `auth.core` is unavailable the grant is
-skipped with a warning.
+skipped with a warning. That grant reaches only workspaces that already exist,
+so first-run setup grants the permissions of every enabled module to the owner
+it creates.
 
 `disable` refuses while another enabled module depends on the target, then
 removes it and regenerates. `system.core` and `auth.core` are protected.

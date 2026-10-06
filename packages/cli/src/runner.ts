@@ -952,6 +952,8 @@ export async function runCommand(
 						...(report.newlyEnabled.includes(target) ? [] : [target]),
 					];
 					for (const moduleId of modulesToGrant) {
+						/* A grant that cannot reach the database throws. The module is
+						   enabled by now, so the throw is reported as a failed grant. */
 						const granted = await runExtensionCommand(
 							enabledWorkspace,
 							scopeSync,
@@ -962,7 +964,7 @@ export async function runCommand(
 									['apply', true],
 								]),
 							},
-						);
+						).catch(commandFailure);
 						if (!granted.ok) {
 							return failure(
 								'MODULE_SCOPES_SYNC_FAILED',

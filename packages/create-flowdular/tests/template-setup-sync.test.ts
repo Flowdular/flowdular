@@ -34,6 +34,10 @@ function sdkImports(source: string): string {
 			'@flowdular/sdk/modules/auth/server',
 		)
 		.replaceAll('@flowdular/module-auth', '@flowdular/sdk/modules/auth')
+		.replaceAll(
+			'@flowdular/module-system/server',
+			'@flowdular/sdk/modules/system/server',
+		)
 		.replaceAll('@flowdular/database', '@flowdular/sdk/database')
 		.replaceAll(
 			'@flowdular/kernel/runtime-config',

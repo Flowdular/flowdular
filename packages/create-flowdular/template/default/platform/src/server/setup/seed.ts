@@ -3,6 +3,7 @@ import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
 } from '@flowdular/sdk/modules/auth/server';
+import { readModuleCatalog } from '@flowdular/sdk/modules/system/server';
 /* First-run provisioning uses the same audited auth service as the operator
    CLI. The operator chooses the first owner; no demo credentials are shipped. */
 
@@ -26,6 +27,8 @@ export interface FirstRunOwner {
 export interface FirstRunSeed {
 	readonly workspace: { readonly name: string; readonly slug: string };
 	readonly accounts: readonly SeededAccount[];
+	/** Enabled modules whose permissions setup could not grant to the owner. */
+	readonly ungrantedModules: readonly string[];
 }
 
 export class SetupSeedError extends Error {
@@ -38,10 +41,19 @@ export class SetupSeedError extends Error {
 	}
 }
 
+/* A driver message can carry a host or a connection string, so only a code
+   from a fixed alphabet is logged, such as a SQLSTATE or an errno name. */
+function stableCode(error: unknown): string {
+	const code = (error as { code?: unknown } | null)?.code;
+	if (typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code)) return code;
+	return error instanceof Error ? error.name : 'unknown';
+}
+
 /**
- * Migrates auth.core, then creates the chosen workspace and its owner. The
- * database must still have no workspace, so a stale session cannot re-provision
- * an existing installation.
+ * Migrates auth.core, then creates the chosen workspace and its owner, and
+ * grants that owner the permissions the enabled modules declare. The database
+ * must still have no workspace, so a stale session cannot re-provision an
+ * existing installation.
  */
 export async function seedFirstRun(
 	databases: DatabaseProvider,
@@ -49,6 +61,9 @@ export async function seedFirstRun(
 	workspaceRoot: string,
 	owner: FirstRunOwner,
 ): Promise<FirstRunSeed> {
+	const enabled = readModuleCatalog(workspaceRoot).filter(
+		(entry) => entry.enabled,
+	);
 	const runtime = createAuthRuntime({
 		...authRuntimeOptionsFromEnvironment(environment, workspaceRoot),
 		databases,
@@ -72,6 +87,37 @@ export async function seedFirstRun(
 			password: owner.ownerPassword,
 			operator: FIRST_RUN_OPERATOR,
 		});
+		/* An application's own modules declare permissions the owner defaults
+		   cannot carry, and the grant module enable runs found no workspace
+		   before this one. The workspace is committed and first run is over, so
+		   a failed grant is reported with its repair command rather than failing
+		   a setup that cannot run again. */
+		const held = new Set(provisioned.owner.scopes);
+		const pending = enabled.filter((entry) =>
+			entry.permissions.some((permission) => !held.has(permission.id)),
+		);
+		let scopes = provisioned.owner.scopes;
+		let ungrantedModules: readonly string[] = [];
+		if (pending.length > 0) {
+			try {
+				const grants = await service.grantModuleScopes(
+					pending.flatMap((entry) =>
+						entry.permissions.map((permission) => permission.id),
+					),
+				);
+				scopes = [
+					...scopes,
+					...(grants.find(
+						(grant) => grant.accountId === provisioned.owner.accountId,
+					)?.granted ?? []),
+				];
+			} catch (error) {
+				ungrantedModules = pending.map((entry) => entry.id);
+				console.warn(
+					`First-run setup could not grant the owner the permissions of ${ungrantedModules.join(', ')} (${stableCode(error)}).`,
+				);
+			}
+		}
 		return {
 			workspace: {
 				name: provisioned.workspace.name,
@@ -82,9 +128,10 @@ export async function seedFirstRun(
 					email: provisioned.owner.email,
 					displayName: provisioned.owner.displayName,
 					role: provisioned.owner.role,
-					scopes: provisioned.owner.scopes,
+					scopes,
 				},
 			],
+			ungrantedModules,
 		};
 	} finally {
 		await runtime.dispose();
