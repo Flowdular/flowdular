@@ -16,7 +16,7 @@ const [
 	{ cloneGitWorkspace },
 	{ probeCommand },
 	{ findRunningPlatformUrl, startPlatformProcess },
-	{ collectProvisionedCredential },
+	{ collectProvisionedCredential, recordPlatformAddress },
 	{ flowdularStateDirectory },
 	{ createServer },
 	{
@@ -314,12 +314,34 @@ async function resolveWorkspace(options) {
    launcher collects it afterwards. That is what removes the pasted token from
    the business flow without adding a machine-callable endpoint. */
 /* Whether this launcher is about to own the application decides if the
-   application should prepare a credential. Asking separately keeps the decision
-   in one place instead of inferring it from a result. */
-async function willStartPlatform(options) {
-	if (options.platform === 'never') return false;
-	if (options.platform === 'always') return true;
-	return !(await findRunningPlatformUrl(options.platformPort));
+   application should prepare a credential, and where it serves is the address
+   the whole sandbox reads. Asking separately keeps both decisions in one place
+   instead of inferring them from a result. */
+async function resolvePlatform(options) {
+	const started = `http://127.0.0.1:${options.platformPort}`;
+	if (options.platform === 'never') return { owned: false, url: started };
+	/* --platform still uses an application already serving on the port, so
+	   only an empty port means this launcher starts the one it records. */
+	const running = await findRunningPlatformUrl(options.platformPort);
+	return running
+		? { owned: false, url: running }
+		: { owned: true, url: started };
+}
+
+async function recordAddress(options, platform) {
+	try {
+		await recordPlatformAddress({
+			workspaceRoot: options.workspace,
+			platformUrl: platform.url,
+			startedByLauncher: platform.owned,
+		});
+	} catch (error) {
+		console.log(
+			`  could not record the platform address: ${
+				error instanceof Error ? error.message.split('\n')[0] : error
+			}`,
+		);
+	}
 }
 
 async function collectAccess(options, platformUrl) {
@@ -403,11 +425,14 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	const announcedTokenDigests = new Set();
 	try {
 		await resolveWorkspace(options);
-		const ownsPlatform = await willStartPlatform(options);
+		const resolvedPlatform = await resolvePlatform(options);
 		/* Set before the child is spawned: the application reads it to decide
 		   whether to prepare a credential at boot, and a child inherits the
 		   environment as it exists at spawn, not as it ends up. */
-		process.env.FD_SANDBOX_PROVISION = ownsPlatform ? 'true' : 'false';
+		process.env.FD_SANDBOX_PROVISION = resolvedPlatform.owned
+			? 'true'
+			: 'false';
+		await recordAddress(options, resolvedPlatform);
 		bringUpPlatform = async () => {
 			platform = await startPlatform(
 				options,

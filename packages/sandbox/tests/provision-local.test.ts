@@ -11,6 +11,7 @@ import {
 } from '../src/server/config.ts';
 import {
 	collectProvisionedCredential,
+	recordPlatformAddress,
 	writeCredentialForTest,
 } from '../src/server/provision-local.ts';
 
@@ -80,6 +81,91 @@ describe('collecting a provisioned sandbox credential', () => {
 			await expect(readFile(inbox, 'utf8')).rejects.toMatchObject({
 				code: 'ENOENT',
 			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('recording the platform address', () => {
+	async function collected(platformUrl: string): Promise<string> {
+		const { root } = await workspace();
+		await collectProvisionedCredential({ workspaceRoot: root, platformUrl });
+		return root;
+	}
+
+	async function platformUrl(root: string): Promise<string> {
+		return (await loadSandboxConfiguration(root)).platformUrl;
+	}
+
+	it('records the started address for a workspace without a credential', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-address-'));
+		try {
+			await recordPlatformAddress({
+				workspaceRoot: root,
+				platformUrl: 'http://127.0.0.1:4311',
+				startedByLauncher: true,
+			});
+			expect(await platformUrl(root)).toBe('http://127.0.0.1:4311');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('moves a credential the launcher collected to the port it started the platform on', async () => {
+		const root = await collected('http://127.0.0.1:4311');
+		try {
+			await recordPlatformAddress({
+				workspaceRoot: root,
+				platformUrl: 'http://127.0.0.1:4312',
+				startedByLauncher: true,
+			});
+			const stored = await loadSandboxConfiguration(root);
+			expect(stored.platformUrl).toBe('http://127.0.0.1:4312');
+			expect(await openSecret(root, stored.platformToken!)).toBe(
+				'fd_test_recoverable_token',
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('keeps a credential the operator connected', async () => {
+		const connected = await mkdtemp(join(tmpdir(), 'flowdular-address-'));
+		const replaced = await collected('http://127.0.0.1:4311');
+		try {
+			await saveSandboxConfiguration(connected, {
+				...DEFAULT_CONFIGURATION,
+				platformUrl: 'http://127.0.0.1:5000',
+				platformToken: await sealSecret(connected, 'fd_operator_token'),
+			});
+			await saveSandboxConfiguration(replaced, {
+				...(await loadSandboxConfiguration(replaced)),
+				platformToken: await sealSecret(replaced, 'fd_operator_token'),
+			});
+			for (const root of [connected, replaced])
+				await recordPlatformAddress({
+					workspaceRoot: root,
+					platformUrl: 'http://127.0.0.1:4312',
+					startedByLauncher: true,
+				});
+			expect(await platformUrl(connected)).toBe('http://127.0.0.1:5000');
+			expect(await platformUrl(replaced)).toBe('http://127.0.0.1:4311');
+		} finally {
+			await rm(connected, { recursive: true, force: true });
+			await rm(replaced, { recursive: true, force: true });
+		}
+	});
+
+	it('keeps the connection to a platform the launcher did not start', async () => {
+		const root = await collected('http://127.0.0.1:4311');
+		try {
+			await recordPlatformAddress({
+				workspaceRoot: root,
+				platformUrl: 'http://127.0.0.1:4310',
+				startedByLauncher: false,
+			});
+			expect(await platformUrl(root)).toBe('http://127.0.0.1:4311');
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
