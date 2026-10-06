@@ -612,10 +612,14 @@ const SQL = Object.freeze({
 		  OR (status = 'cancel-requested' AND (lease_expires_at IS NULL OR lease_expires_at <= $4))
 		 )
 		 ORDER BY queued_at, id LIMIT $5`,
+	/* $9 is the status the claim read. A cancellation clears the lease, so the
+		   lease predicate alone still matches a run cancelled since that read and
+		   writes the stale status back over the request. */
 	claimRun: `UPDATE workflow_runs SET status = $1, lease_owner = $2, lease_expires_at = $3,
 		 started_at = coalesce(started_at, $4)
 		 WHERE tenant_id = $5 AND id = $6
-		 AND (lease_owner IS NULL OR lease_expires_at <= $7 OR lease_owner = $8)`,
+		 AND (lease_owner IS NULL OR lease_expires_at <= $7 OR lease_owner = $8)
+		 AND status = $9`,
 	renewLease: `UPDATE workflow_runs SET lease_expires_at = $1
 		 WHERE tenant_id = $2 AND id = $3 AND lease_owner = $4
 		 AND status NOT IN ('succeeded', 'failed', 'refused', 'cancelled')`,
@@ -1739,6 +1743,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				runId,
 				now,
 				workerId,
+				row.status,
 			]);
 			if (changed !== 1) return null;
 			const actor = parse<Actor>(row.actor_json);

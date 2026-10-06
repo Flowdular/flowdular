@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import type {
+	DatabaseHandle,
+	DatabaseProvider,
+	DatabaseTransaction,
+	DatabaseTransactionOptions,
+} from '@flowdular/database';
 import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
@@ -4383,3 +4389,197 @@ describe('workflow persistence boundary', () => {
 		}
 	});
 });
+
+/* Holds the next runtime write transaction after its reads and before its first
+   write, so the test can commit another transaction in between. */
+function writeGatedProvider(databases: DatabaseProvider) {
+	let held: (() => Promise<void>) | undefined;
+	let runtime: DatabaseHandle | undefined;
+	const gated = (transaction: DatabaseTransaction): DatabaseTransaction =>
+		new Proxy(transaction, {
+			get(target, property) {
+				if (property === 'execute') {
+					return async (
+						...args: Parameters<DatabaseTransaction['execute']>
+					) => {
+						const hold = held;
+						held = undefined;
+						await hold?.();
+						return target.execute(...args);
+					};
+				}
+				const value = Reflect.get(target, property, target) as unknown;
+				return typeof value === 'function' ? value.bind(target) : value;
+			},
+		});
+	const provider: DatabaseProvider = {
+		async acquire(request) {
+			const lease = await databases.acquire(request);
+			if (request.purpose !== 'runtime') return lease;
+			runtime = lease.database;
+			const database = new Proxy(lease.database, {
+				get(target, property) {
+					if (property === 'transaction') {
+						return <T>(
+							operation: (transaction: DatabaseTransaction) => Promise<T>,
+							options?: DatabaseTransactionOptions,
+						) =>
+							target.transaction(
+								(transaction) =>
+									operation(
+										options?.access === 'write'
+											? gated(transaction)
+											: transaction,
+									),
+								options,
+							);
+					}
+					const value = Reflect.get(target, property, target) as unknown;
+					return typeof value === 'function' ? value.bind(target) : value;
+				},
+			});
+			return { database, release: () => lease.release() };
+		},
+		dispose: () => databases.dispose(),
+	};
+	return {
+		provider,
+		holdNextWrite() {
+			let arrive!: () => void;
+			let release!: () => void;
+			const arrived = new Promise<void>((resolve) => (arrive = resolve));
+			const released = new Promise<void>((resolve) => (release = resolve));
+			held = async () => {
+				arrive();
+				await released;
+			};
+			return { arrived, release };
+		},
+		/* Resolves once the work settles or some transaction waits on a lock, so
+		   a held transaction that already locked the row cannot deadlock with
+		   the work the test runs beside it. */
+		async settledOrBlocked(work: Promise<unknown>): Promise<void> {
+			let settled = false;
+			work.then(
+				() => (settled = true),
+				() => (settled = true),
+			);
+			while (!settled) {
+				const waiting = await runtime!.transaction(
+					(transaction) =>
+						transaction.query<{ waiting: number }>({
+							text: 'SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted',
+						}),
+					{ access: 'read', tenantId: 'tenant-a' },
+				);
+				if ((waiting.rows[0]?.waiting ?? 0) > 0) return;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+		},
+	};
+}
+
+/* A claim and a cancellation interleave only on separate connections; the
+   embedded engine runs one transaction at a time. */
+describe.skipIf(process.env.FD_TEST_DATABASE_ADAPTER !== 'postgresql')(
+	'workflow claim racing a cancellation',
+	() => {
+		it('keeps a cancellation that commits between the claim read and its write', async () => {
+			const result: { current: JsonValue | null } = { current: null };
+			const fake = dependencies(result);
+			const registry = createPlatformCapabilityRegistry();
+			registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+			registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
+			const gate = writeGatedProvider(createWorkflowsTestProvider());
+			const runtime = createWorkflowsRuntime({
+				databases: gate.provider,
+				capabilities: registry,
+				payloadKey: Buffer.alloc(32, 70),
+				cursorKey: Buffer.alloc(32, 71),
+				worker: { pollMs: 250, leaseMs: 1_000 },
+			});
+			try {
+				const service = await runtime.service();
+				const definition = await service.create(
+					'tenant-a',
+					{ key: 'claim-cancel', name: 'Claim cancel', description: '' },
+					actor,
+				);
+				await service.update(
+					'tenant-a',
+					{
+						workflowId: definition.definition.id,
+						expectedRevision: 1,
+						name: 'Claim cancel',
+						description: '',
+						graph: agentGraph(),
+					},
+					actor,
+				);
+				await service.publish(
+					'tenant-a',
+					definition.definition.id,
+					2,
+					actor,
+					permissions,
+				);
+				await runtime.start();
+				const accepted = await service.enqueue(
+					{
+						workflowKey: 'claim-cancel',
+						input: { name: 'Ada' },
+						idempotencyKey: 'claim-cancel:1',
+					},
+					context(),
+				);
+				await waitFor(
+					async () =>
+						(await service.getRun('tenant-a', accepted.runId))?.status ===
+						'waiting-agent',
+				);
+				/* Parked on its child without a lease, the run is claimable on every
+				   poll. The test claims it itself so the cancel lands inside the
+				   claim. */
+				await runtime.stop();
+				const repository = await runtime.repository();
+				const hold = gate.holdNextWrite();
+				const now = Date.now();
+				const claim = repository.claimNext('worker-race', now, now + 1_000);
+				await hold.arrived;
+				const cancellation = service.cancel('tenant-a', accepted.runId, actor);
+				await gate.settledOrBlocked(cancellation);
+				hold.release();
+				await claim;
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+
+				expect(
+					(await service.getRunDetail('tenant-a', accepted.runId)).run.status,
+				).toBe('cancel-requested');
+				await runtime.start();
+				await waitFor(async () =>
+					(await service.getRunDetail('tenant-a', accepted.runId)).events.some(
+						(event) => event.type === 'node.cancel.acknowledged',
+					),
+				);
+				result.current = { name: 'must not be routed' };
+				await waitFor(
+					async () =>
+						(await service.getRun('tenant-a', accepted.runId))?.status ===
+						'cancelled',
+				);
+				const detail = await service.getRunDetail('tenant-a', accepted.runId);
+				expect(
+					detail.events.filter(
+						(event) => event.type === 'run.cancel.requested',
+					),
+				).toHaveLength(1);
+				expect(detail.edges.map((edge) => edge.edgeId)).not.toContain(
+					'edge.success',
+				);
+			} finally {
+				await runtime.dispose();
+				await gate.provider.dispose();
+			}
+		});
+	},
+);
