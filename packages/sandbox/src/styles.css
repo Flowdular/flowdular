@@ -287,8 +287,11 @@
 }
 
 /* Chat */
+/* One column the width of the transcript: a single unbroken line inside any
+   card must truncate or wrap there, never widen every card under the preview. */
 .chat {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	align-content: start;
 	gap: 10px;
 }
@@ -422,6 +425,7 @@
 
 .chat__events {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	gap: 4px;
 	margin: 0;
 	padding: 0;
