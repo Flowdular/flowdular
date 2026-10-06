@@ -368,33 +368,27 @@ async function restoreNode(
 	await symlink(node.target!, target);
 }
 
-/* Puts back every baseline file whose bytes no longer match. Used for the
-   tool-owned churn that must be undone without failing the turn. */
+/* Puts back exactly the tool-owned paths verify() reported. Every other change
+   a clean turn leaves is inside the role's allowlist and is the agent's work, so
+   restoring it would silently undo the turn. */
 async function revert(
 	root: string,
+	toolOwned: readonly string[],
 	baseline: ReadonlyMap<string, TreeNode>,
 	backup: string,
 	/* Files inside a protected directory never reach the hashed snapshot, so the
 	   protected pass holds the bytes for those. */
 	protectedBaseline: ProtectedTree,
 ): Promise<void> {
-	const current = await snapshot(root);
-	for (const [path, node] of baseline) {
-		const now = current.get(path);
-		if (!now || now.kind !== 'file') continue;
+	for (const path of toolOwned) {
 		const info = await lstat(join(root, path)).catch(() => null);
 		if (!info?.isFile()) continue;
-		if ((await digest(join(root, path))) === node.digest) continue;
-		await mkdir(dirname(join(root, path)), { recursive: true });
-		await copyFile(join(backup, path), join(root, path));
-	}
-	for (const [path, bytes] of protectedBaseline.backup) {
-		if (!isToolOwned(path)) continue;
-		const info = await lstat(join(root, path)).catch(() => null);
-		if (!info?.isFile()) continue;
-		if (Buffer.compare(await readFile(join(root, path)), bytes) === 0) continue;
-		await mkdir(dirname(join(root, path)), { recursive: true });
-		await writeFile(join(root, path), bytes);
+		if (baseline.get(path)?.kind === 'file') {
+			await copyFile(join(backup, path), join(root, path));
+			continue;
+		}
+		const bytes = protectedBaseline.backup.get(path);
+		if (bytes) await writeFile(join(root, path), bytes);
 	}
 }
 
@@ -493,7 +487,7 @@ export async function guardAgentPaths(input: {
 			if (violations.length === 0) {
 				/* Tool-owned churn was still reverted, so the restore runs before
 				   the early return. */
-				await revert(workspace, baseline, backup, baselineProtected);
+				await revert(workspace, toolOwned, baseline, backup, baselineProtected);
 				/* The baseline is an enforcement aid, not session history. Retaining a
 				   full copy on every successful turn leaks disk and duplicates any
 				   sensitive attachment the role was allowed to read. */
