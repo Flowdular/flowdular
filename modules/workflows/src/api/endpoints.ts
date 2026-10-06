@@ -246,6 +246,9 @@ function streamEvents(
 					const events = await (
 						await runtime.service()
 					).readEvents(tenantId, runId, cursor);
+					/* The observer left, or the runtime retired, while the read was in
+					   flight. The stream is closed and the runtime may be closing. */
+					if (closed) return;
 					for (const event of events) {
 						cursor = event.sequence;
 						const eventCursor = (await runtime.service()).eventCursor(
@@ -283,6 +286,7 @@ function streamEvents(
 					   full page before using the projection as the close shortcut, otherwise
 					   a resumed client can miss the persisted terminal event. */
 					const run = await (await runtime.service()).getRun(tenantId, runId);
+					if (closed) return;
 					if (
 						run &&
 						['succeeded', 'failed', 'refused', 'cancelled'].includes(run.status)
@@ -293,6 +297,7 @@ function streamEvents(
 						return close();
 					}
 				} catch (error) {
+					if (closed) return;
 					controller.enqueue(
 						encoder.encode(
 							`event: workflow.stream-error\ndata: ${JSON.stringify({ error: { code: error instanceof WorkflowsServiceError ? error.code : 'WORKFLOW_STREAM_FAILED' } })}\n\n`,
