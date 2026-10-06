@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { retirePlatformRuntimes } from '@flowdular/dev-console/shutdown';
 import { build } from 'esbuild';
 import { expect, it } from 'vitest';
 import { scaffold } from '../src/scaffold.ts';
@@ -14,7 +15,9 @@ interface BootedRoute {
 }
 
 interface BootedConfig {
-	readonly middlewares: { databases: { checked: boolean; root: string } }[];
+	readonly middlewares: {
+		databases: { checked: boolean; disposed: boolean; root: string };
+	}[];
 	readonly router: { readonly routes: readonly BootedRoute[] };
 }
 
@@ -23,7 +26,7 @@ const fixtures: Record<string, string> = {
 		export const defineConfig = value => value;
 		export class RenderRoute { constructor(options) { Object.assign(this, options); } }
 	`,
-	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export class HttpProblem extends Error { constructor(code, message, status) { super(message); this.code = code; this.status = status; } } export const problemResponse = error => Response.json({ error: { code: error.code, message: error.message } }, { status: error.status ?? 500 }); export const serverLogger = () => ({ error() {}, warn() {}, info() {}, debug() {} }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
+	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export class HttpProblem extends Error { constructor(code, message, status) { super(message); this.code = code; this.status = status; } } export const problemResponse = error => Response.json({ error: { code: error.code, message: error.message } }, { status: error.status ?? 500 }); export const serverLogger = () => ({ error() {}, warn() {}, info() {}, debug() {} }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }]; export const trackResponseBody = (response, release) => { release(); return response; };`,
 	'@flowdular/sdk/modules/auth/server': `
         export const principalFromContext = () => null;
 		export const isTokenPrincipal = () => false;
@@ -52,7 +55,7 @@ const fixtures: Record<string, string> = {
 		export const databaseProviderConfigFromEnvironment = (_environment, root) => ({ root });
 		export const loadPlatformEnvironmentFile = () => {};
 		export const platformDatabaseConfigured = environment => environment.FD_TEST_DATABASE_CONFIGURED !== 'false';
-		export const createPlatformDatabaseProvider = config => ({ checked: false, root: config.root, async check() { this.checked = true; }, async dispose() {} });
+		export const createPlatformDatabaseProvider = config => ({ checked: false, disposed: false, root: config.root, async check() { this.checked = true; }, async dispose() { this.disposed = true; } });
 	`,
 	'./src/server/setup/index.ts': `
 		export const clearSetupToken = () => {};
@@ -69,8 +72,11 @@ const fixtures: Record<string, string> = {
 	`,
 };
 
+let evaluations = 0;
+
 /* Run the emitted config with boundary doubles. No package installation, real
-   database, process signal listener or provider credential is needed. */
+   database, process signal listener or provider credential is needed. Each
+   call is a fresh evaluation, as each Vite load is. */
 async function boot(
 	directory: string,
 	environment: NodeJS.ProcessEnv = {},
@@ -91,7 +97,7 @@ async function boot(
 			process: '__fixtureProcess',
 		},
 		banner: {
-			js: `const __fixtureProcess = { env: ${JSON.stringify(environment)}, once() {} };`,
+			js: `const __fixtureProcess = { env: ${JSON.stringify(environment)}, once() {}, off() {} };`,
 		},
 		plugins: [
 			{
@@ -114,7 +120,7 @@ async function boot(
 		'data:text/javascript;base64,' +
 			Buffer.from(
 				bundled.outputFiles[0]!.text +
-					'\n//# sourceURL=generated-platform-smoke.mjs',
+					`\n//# sourceURL=generated-platform-smoke-${(evaluations += 1)}.mjs`,
 			).toString('base64')
 	);
 	return imported.default as BootedConfig;
@@ -145,7 +151,7 @@ it('finds the generated workspace from the production bundle directory', async (
 			{},
 			join(platform.directory, 'dist', 'server'),
 		);
-		expect(config.middlewares[1]!.databases.root).toBe(
+		expect(config.middlewares.at(-1)!.databases.root).toBe(
 			join(platform.directory, '..'),
 		);
 	} finally {
@@ -161,8 +167,8 @@ it('boots a generated platform with one shared database provider', async () => {
 		/* Cross-origin admission runs ahead of authentication, because a
 		   preflight carries no credential; the authentication middleware is the
 		   one that holds the shared provider. */
-		expect(config.middlewares).toHaveLength(2);
-		expect(config.middlewares[1]!.databases.checked).toBe(true);
+		expect(config.middlewares).toHaveLength(3);
+		expect(config.middlewares.at(-1)!.databases.checked).toBe(true);
 		/* The container and orchestrator probes in infra/ poll the first two, and
 		   an integration reads the third to learn what the application serves. */
 		expect(config.router.routes.map((route) => route.path)).toEqual(
@@ -184,6 +190,23 @@ it('boots a generated platform with one shared database provider', async () => {
 				})
 			).status,
 		).toBe(200);
+	} finally {
+		await platform.dispose();
+	}
+});
+
+/* Vite evaluates octane.config.ts once while it resolves its own configuration
+   and again to serve it, in one process. */
+it('releases the runtime of an earlier evaluation and retires the serving one on a stop', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const first = await boot(platform.directory);
+		const serving = await boot(platform.directory);
+		expect(first.middlewares.at(-1)!.databases.disposed).toBe(true);
+		expect(serving.middlewares.at(-1)!.databases.disposed).toBe(false);
+
+		await retirePlatformRuntimes();
+		expect(serving.middlewares.at(-1)!.databases.disposed).toBe(true);
 	} finally {
 		await platform.dispose();
 	}

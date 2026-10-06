@@ -77,6 +77,21 @@ it('keeps generated workspace-root resolution in sync with the platform', async 
 	expect(template).toBe(platform);
 });
 
+it('keeps the generated runtime lifecycle in sync with the platform', async () => {
+	const platform = await readFile(
+		new URL('../../../platform/src/server/lifecycle.ts', import.meta.url),
+		'utf8',
+	);
+	const template = await readFile(
+		new URL(
+			'../template/default/platform/src/server/lifecycle.ts',
+			import.meta.url,
+		),
+		'utf8',
+	);
+	expect(template).toBe(sdkImports(platform));
+});
+
 it('ships the same isolated, clean production build script in generated projects', async () => {
 	const platform = await readFile(
 		new URL('../../../platform/scripts/build.mjs', import.meta.url),
