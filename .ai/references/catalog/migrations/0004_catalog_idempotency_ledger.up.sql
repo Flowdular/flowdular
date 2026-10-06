@@ -15,5 +15,5 @@ CREATE INDEX IF NOT EXISTS catalog_idempotency_ledger_tenant_operation_idx
 ALTER TABLE catalog_idempotency_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_idempotency_ledger FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_idempotency_ledger_tenant_policy ON catalog_idempotency_ledger
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

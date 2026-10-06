@@ -47,7 +47,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							name="name"
 							value={name}
 							onInput={(event) => setName(event.currentTarget.value)}
-							minlength={2}
+							minLength={2}
 							maxLength={160}
 							autoFocus
 							required
@@ -113,7 +113,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							name="currency"
 							value={currency}
 							onInput={(event) => setCurrency(event.currentTarget.value)}
-							minlength={3}
+							minLength={3}
 							maxLength={3}
 							required
 						/>

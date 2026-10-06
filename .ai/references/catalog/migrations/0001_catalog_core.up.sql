@@ -17,5 +17,5 @@ CREATE INDEX IF NOT EXISTS catalog_items_tenant_sku_idx
 ALTER TABLE catalog_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_items FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_items_tenant_policy ON catalog_items
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
