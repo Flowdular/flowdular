@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BroadcastChannel } from 'node:worker_threads';
 import { createServer } from 'vite';
 import {
 	createOctaneLogger,
@@ -16,7 +15,9 @@ import {
 } from '@flowdular/dev-console';
 import {
 	PLATFORM_SHUTDOWN_BUDGET_MS,
+	retirePlatformRuntimes,
 	stopOnSignals,
+	stopServing,
 } from '@flowdular/dev-console/shutdown';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -27,6 +28,7 @@ export {
 	isClientDisconnectLog,
 	shouldUseColor,
 } from '@flowdular/dev-console';
+export { stopServing } from '@flowdular/dev-console/shutdown';
 
 export function withShutdownDeadline(
 	promise,
@@ -44,20 +46,6 @@ export function withShutdownDeadline(
 		timer.unref?.();
 	});
 	return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
-}
-
-/* Stops accepting requests. An open browser tab keeps Vite's HMR socket on
-   this server, and the HTTP close waits for every socket, so the HMR sockets
-   end here rather than in Vite's own close at the end of the shutdown. */
-export function stopServing(httpServer, server) {
-	const httpClose = new Promise((resolveClose, rejectClose) => {
-		if (!httpServer.listening) {
-			resolveClose();
-			return;
-		}
-		httpServer.close((error) => (error ? rejectClose(error) : resolveClose()));
-	});
-	return Promise.all([httpClose, server.ws.close()]).then(() => undefined);
 }
 
 export function parseDevArguments(arguments_) {
@@ -261,22 +249,7 @@ export async function startDevelopmentServer(
 			try {
 				/* Stop accepting requests before retiring their route generation. */
 				const httpClose = closeHttpServer();
-				const retirements = [];
-				process.emit('flowdular:platform-runtime-retire', (retirement) =>
-					retirements.push(retirement),
-				);
-				const channel = new BroadcastChannel(
-					'flowdular.platform.runtime-lifecycle',
-				);
-				channel.postMessage({ type: 'retire-all' });
-				try {
-					await Promise.all([httpClose, ...retirements]);
-					await new Promise((resolveRetirement) =>
-						setTimeout(resolveRetirement, 100),
-					);
-				} finally {
-					channel.close();
-				}
+				await Promise.all([httpClose, retirePlatformRuntimes()]);
 				await closeVite();
 			} finally {
 				restoreConsole();
