@@ -781,7 +781,8 @@ once its gates are done. **Check modules** settles the state from its results
 the same way, but only from `editing`, `validating`, `previewing` or `failed`
 and never while a turn runs, so an approval or answers the operator owes, a
 `planned` or `blocked` session and a delivered one keep their state. A check
-that cannot finish changes nothing. Open views hear the change like any other.
+that cannot finish, or one the session was written during, changes nothing.
+Open views hear the change like any other.
 
 ## Preview
 

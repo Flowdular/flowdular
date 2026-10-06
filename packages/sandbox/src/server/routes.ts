@@ -2408,18 +2408,26 @@ export function createSandboxRoutes(
 			results,
 			(await collectDiffs(runtime.workspaceRoot, session)).length > 0,
 		);
+		/* `session` was read before the gates ran. Any write since then, such as
+		   a turn that started or ended meanwhile, may have changed the drafts
+		   these results describe, so the check then leaves the state alone. */
 		const settles = (current: SandboxSession) =>
+			current.updatedAt === session.updatedAt &&
 			current.state !== state &&
 			checkSettles.has(current.state) &&
 			!running.has(current.id);
 		/* Read first so an unchanged state costs no write and no change event. */
 		if (!settles(await readSession(runtime.workspaceRoot, session.id))) return;
+		let settled = false;
 		const updated = await updateSession(
 			runtime.workspaceRoot,
 			session.id,
-			(current) => (settles(current) ? { state } : {}),
+			(current) => {
+				settled = settles(current);
+				return settled ? { state } : {};
+			},
 		);
-		if (updated.state === state) await notifyPlatform(updated, state, context);
+		if (settled) await notifyPlatform(updated, state, context);
 	};
 
 	const gates = new ServerRoute({

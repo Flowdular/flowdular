@@ -1742,12 +1742,15 @@ describe('session state after the gates', () => {
 		const control = {
 			verdict: 'passed' as 'passed' | 'failed',
 			crash: false,
+			/* Runs while the gates are in flight. */
+			meanwhile: async () => {},
 		};
 		const executeGates: SandboxRouteOptions['executeGates'] = async ({
 			session,
 			gates,
 			modules,
 		}) => {
+			await control.meanwhile();
 			if (control.crash) throw new Error('The gate runner crashed.');
 			return gates.map((id) => ({
 				id,
@@ -1863,6 +1866,36 @@ describe('session state after the gates', () => {
 		expect((await check()).status).toBe(500);
 		expect(await state()).toBe('failed');
 		await tab.close();
+	});
+
+	it('keeps the verdict a turn wrote while the check ran', async () => {
+		const root = await workspace();
+		const { control, executeGates } = gateVerdicts();
+		const call = api(
+			fakeRuntime(root, fakeDriver({ handoff: 'HANDOFF: none - done' })),
+			4320,
+			{ executeGates },
+		);
+		const session = await sessionFor(root);
+		await updateSession(root, session.id, { state: 'failed' });
+		/* The check saw the drafts before a turn fixed them; the turn's own
+		   gates passed and it ended while the check was still running. */
+		control.verdict = 'failed';
+		control.meanwhile = async () => {
+			await updateSession(root, session.id, { state: 'previewing' });
+		};
+
+		expect(
+			(
+				await call('POST', `/sandbox/api/sessions/${session.id}/gates`, {
+					body: {},
+				})
+			).status,
+		).toBe(200);
+		const view = (await (
+			await call('GET', `/sandbox/api/sessions/${session.id}`)
+		).json()) as StateView;
+		expect(view.session.state).toBe('previewing');
 	});
 
 	it('leaves lifecycle steps and a running turn to their owners', async () => {
