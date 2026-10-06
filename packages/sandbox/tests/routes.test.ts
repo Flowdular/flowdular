@@ -1534,6 +1534,12 @@ describe('detached turns', () => {
 		expect(events.at(-1)?.event).toBe('ended');
 		expect(turns).toBe(3);
 		expect((await readSession(root, session.id)).chainDepth).toBe(2);
+		/* A reload reads the transcript, so the reason has to be stored there. */
+		const stopped = (await readChat(root, session)).at(-1);
+		expect(stopped?.kind).toBe('system');
+		expect(stopped?.text).toContain(
+			'Stopped after 3 consecutive gate-repair turns.',
+		);
 	});
 
 	it('refuses to delete a running session unless told to stop it', async () => {

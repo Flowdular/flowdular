@@ -529,6 +529,9 @@ describe('gate repair, replaying the recorded equipment session', () => {
 		const idle = await follow(context, session.id, client);
 		expect(idle.handoff.kind).toBe('blocked');
 		expect(idle.handoff.reason).toContain('changed no files');
+		expect((await readChat(root, session)).at(-1)?.handoff).toEqual(
+			idle.handoff,
+		);
 	});
 
 	it('does not count an operator message after a repair handoff as an idle repair', async () => {

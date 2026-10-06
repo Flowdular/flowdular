@@ -940,10 +940,15 @@ export function createSandboxRoutes(
 					) {
 						/* Hand back to the operator with the reason on the transcript
 						   rather than starting another turn that costs tokens. */
-						publish(channel, 'entry', {
-							kind: 'system',
-							text: `Stopped after ${repairs} consecutive gate-repair turns. Read the gate output and change the request, or fix the module by hand.`,
-						});
+						publish(
+							channel,
+							'entry',
+							await appendChatEntry(runtime.workspaceRoot, outcome.session, {
+								kind: 'system',
+								role: outcome.session.role,
+								text: `Stopped after ${repairs} consecutive gate-repair turns. Read the gate output and change the request, or fix the module by hand.`,
+							}),
+						);
 					} else if (
 						outcome.handoff.kind === 'continue' &&
 						outcome.session.autoContinue &&
