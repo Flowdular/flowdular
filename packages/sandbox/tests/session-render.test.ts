@@ -4,6 +4,8 @@ import { ChatPane, type ChatPaneProps } from '../src/client/ChatPane.tsrx';
 import { ApprovalHandoff } from '../src/client/ApprovalHandoff.tsrx';
 import { SpecEditor } from '../src/client/SpecEditor.tsrx';
 import { GateResults } from '../src/client/GateResults.tsrx';
+import { SessionBar } from '../src/client/SessionBar.tsrx';
+import type { SandboxSession } from '../src/server/sessions.ts';
 import {
 	registerSandboxTranslations,
 	setActiveLocale,
@@ -233,5 +235,65 @@ describe('session approval rendering', () => {
 		expect(rendered.html).toContain('no longer accepts decisions');
 		expect(rendered.html).not.toContain('type="radio"');
 		expect(rendered.html).not.toContain('Send decisions');
+	});
+});
+
+describe('session state pill', () => {
+	function sessionIn(state: SandboxSession['state']): SandboxSession {
+		return {
+			id: 'session-1',
+			kind: 'new-module',
+			moduleId: 'booking.core',
+			moduleSuffix: '',
+			modules: [{ id: 'booking.core', directory: 'booking', kind: 'new' }],
+			title: 'Room booking',
+			brief: '',
+			blueprint: 'new-module@1.0.0',
+			role: 'business-manager',
+			driver: 'codex',
+			model: null,
+			resumeIds: {},
+			autoContinue: true,
+			chainDepth: 0,
+			attachments: [],
+			checkpoints: [],
+			pendingQuestions: null,
+			state,
+			createdAt: 1,
+			updatedAt: 1,
+			ejectedAt: null,
+			archivedAt: null,
+			registeredWithPlatform: false,
+		};
+	}
+	function pill(state: SandboxSession['state']): string {
+		const noop = () => {};
+		const html = renderToString(SessionBar, {
+			session: sessionIn(state),
+			changes: 0,
+			busy: false,
+			activeModule: '',
+			workspaceModules: [],
+			onModule: noop,
+			onAddModule: noop,
+			onBack: noop,
+			onGates: noop,
+			onChanges: noop,
+			onPreview: noop,
+			onEject: noop,
+		}).html;
+		return /<span class="ui-tag[^"]*">[\s\S]*?<\/span>/.exec(html)?.[0] ?? '';
+	}
+
+	it('says a session waits on answers, and only an approval says approval', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		expect(pill('awaiting-answers')).toContain('awaiting answers');
+		expect(pill('awaiting-answers')).not.toContain('approval');
+		expect(pill('awaiting-answers')).toContain('ui-tag--warning');
+		expect(pill('awaiting-approval')).toContain('awaiting approval');
+		setActiveLocale('pl');
+		expect(pill('awaiting-answers')).toContain('oczekuje na odpowiedzi');
+		expect(pill('awaiting-answers')).not.toContain('zatwierdz');
 	});
 });

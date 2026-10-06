@@ -227,6 +227,16 @@ describe('business dashboard', () => {
 		expect(filterWork(archived.rows, '', '', true, 'pl')).toHaveLength(1);
 	});
 
+	it('puts a session waiting on answers beside the ones waiting on approval', async () => {
+		const { root, session } = await fixture();
+		for (const state of ['awaiting-approval', 'awaiting-answers'] as const) {
+			const current = await updateSession(root, session.id, { state });
+			const dashboard = await buildDashboard(root, [current], owner, new Set());
+			expect(dashboard.rows[0]?.status, state).toBe('approval');
+			expect(dashboard.counts.approval, state).toBe(1);
+		}
+	});
+
 	it('retains usage after deletion and excludes anonymous history from personal totals', async () => {
 		const { root, session } = await fixture();
 		const entry = completion(1, 0.03);

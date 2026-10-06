@@ -42,6 +42,7 @@ export type SandboxSessionState =
 	| 'validating'
 	| 'previewing'
 	| 'awaiting-approval'
+	| 'awaiting-answers'
 	| 'accepted'
 	| 'failed'
 	| 'blocked'

@@ -221,7 +221,8 @@ export async function buildDashboard(
 						? 'working'
 						: session.state === 'failed' || session.state === 'blocked'
 							? 'attention'
-							: session.state === 'awaiting-approval'
+							: session.state === 'awaiting-approval' ||
+								  session.state === 'awaiting-answers'
 								? 'approval'
 								: approvedModules === session.modules.length &&
 									  approvedModules > 0

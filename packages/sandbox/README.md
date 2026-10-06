@@ -533,10 +533,10 @@ block tagged `questions` holding
 The sandbox parses and bounds it (at most 12 questions with unique `Q-n` ids, a
 question of 1 to 400 characters, at most 8 options of 1 to 120 characters, a
 recommendation that is one of them) and stores it on the session as
-`pendingQuestions`; a turn that asks always stops for the answers, never for
-approval. A block it cannot read is not a failed turn: the transcript says why,
-and the specialist gets the reason and the limits for one repair turn. A second
-refusal in a row stops for the operator.
+`pendingQuestions`; a turn that asks always stops for the answers (session
+state `awaiting-answers`), never for approval. A block it cannot read is not a
+failed turn: the transcript says why, and the specialist gets the reason and the
+limits for one repair turn. A second refusal in a row stops for the operator.
 The transcript lists the questions instead of showing JSON, and the session view
 offers a form with the recommendation preselected.
 
