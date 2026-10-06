@@ -416,7 +416,13 @@ describe('research search chain', () => {
 		await configure(stub, TENANT, 'searxng');
 		await configure(stub, OTHER, 'searxng');
 		let searxngWorks = false;
-		stub.answer(() => (searxngWorks ? succeeded(SEARXNG_RESULT) : failed(401)));
+		let held: Promise<void> | null = null;
+		stub.answer(async () => {
+			const waiting = held;
+			held = null;
+			await waiting;
+			return searxngWorks ? succeeded(SEARXNG_RESULT) : failed(401);
+		});
 		const service = researchService({
 			repository: shared.repository,
 			now: () => clock,
@@ -460,7 +466,18 @@ describe('research search chain', () => {
 
 		clock += 60_000;
 		searxngWorks = true;
-		const probes = await Promise.all([search(TENANT), search(TENANT)]);
+		/* The probe's answer waits until the other query has settled, so that
+		   query decides while the circuit is half open. Unheld, it can start
+		   after the probe has closed the circuit (PostgreSQL runs the two on
+		   separate connections) and then rightly asks searxng. */
+		let answerProbe!: () => void;
+		held = new Promise((resolve) => {
+			answerProbe = resolve;
+		});
+		const racing = [search(TENANT), search(TENANT)];
+		await Promise.race(racing);
+		answerProbe();
+		const probes = await Promise.all(racing);
 		expect(stub.requests).toHaveLength(4);
 		expect(probes.map((answer) => answer.adapter).sort()).toEqual([
 			'recorded',
