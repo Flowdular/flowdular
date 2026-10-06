@@ -725,7 +725,8 @@ it('reports the address of the platform it starts before that platform answers',
 
 /* Most of the budget goes to the sandbox's first Vite request, which
    transforms its server modules cold and has taken a minute on a loaded
-   machine. */
+   machine. Starting the sandbox before the platform has taken over twenty
+   seconds under the full suite on a saturated machine. */
 it('shows the private setup token once in the launcher terminal without putting it in HTTP state', async () => {
 	const workspace = await platformWorkspace('flowdular-launcher-setup-');
 	const root = workspace.root;
@@ -785,7 +786,7 @@ createServer((request, response) => {
 		await waitUntil(async () => {
 			if (launcher.exitCode !== null) throw new Error(output());
 			return output().includes(`Setup token: ${token}`);
-		}, 400);
+		}, 1_200);
 		expect(
 			output().match(new RegExp(`Setup token: ${token}`, 'g')),
 		).toHaveLength(1);
@@ -828,9 +829,11 @@ createServer((request, response) => {
 					throw new Error(`Launcher did not exit: ${output()}`);
 				}),
 			]);
-		const pids = (await readFile(pidFile, 'utf8'))
-			.trim()
+		/* A platform that never started left no file; the error that ended the
+		   test is the one to report. */
+		const pids = (await readFile(pidFile, 'utf8').catch(() => ''))
 			.split('\n')
+			.filter(Boolean)
 			.map(Number);
 		for (const pid of pids) await waitUntil(() => processGone(pid));
 	}
