@@ -2040,6 +2040,10 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				runId,
 				nodeId,
 			]);
+			/* The child already exists. Without the run's lock, a cancellation
+			   appending beside this event takes the same sequence and fails this
+			   write, and the cancellation never learns of the child. */
+			await this.#query(transaction, SQL.lockRun, [tenantId, runId]);
 			if (childKind === 'agent') {
 				await this.#exec(transaction, SQL.markRunWaitingAgent, [
 					tenantId,
