@@ -29,7 +29,11 @@ import {
 	type ModuleMetrics,
 } from '@flowdular/server';
 import { createAuthenticationMiddleware } from '../middleware/authentication.ts';
-import { AuthService, type AuthPolicy } from '../services/auth-service.ts';
+import {
+	AuthService,
+	recordSingleWorkspaceOperator,
+	type AuthPolicy,
+} from '../services/auth-service.ts';
 import { authDataClasses } from '../services/data-classes.ts';
 import {
 	DatabaseAuthRepository,
@@ -560,13 +564,20 @@ async function openAuthDatabase(
 			purpose: 'background',
 			requirements: RUNTIME_REQUIREMENTS,
 		});
-		return {
-			repository: new DatabaseAuthRepository({
-				runtime: runtime.database,
-				background: background.database,
-			}),
-			leases: [runtime, background],
-		};
+		const repository = new DatabaseAuthRepository({
+			runtime: runtime.database,
+			background: background.database,
+		});
+		/* Isolated: sign-in must not depend on this rule, and a driver error can
+		   carry bound values, so only the rule is named in the log. A failed
+		   attempt leaves no record, platform settings stay locked, and the next
+		   open tries again. */
+		try {
+			await recordSingleWorkspaceOperator(repository);
+		} catch {
+			console.error('[auth.core] single-workspace operator rule failed');
+		}
+		return { repository, leases: [runtime, background] };
 	} catch (error) {
 		/* A deployment that declares no cross-tenant role is refused here. The
 		   lease already taken goes back before the error leaves. */

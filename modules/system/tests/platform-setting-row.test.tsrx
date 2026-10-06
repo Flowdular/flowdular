@@ -102,6 +102,25 @@ it.each([
 	},
 );
 
+it.each([
+	['en', 'Applies to every workspace, and no workspace is recorded'],
+	['pl', 'żadna przestrzeń robocza nie jest jeszcze zapisana jako operator'],
+])(
+	'SYSTEM-SETTINGS-PLATFORM-UNCONFIGURED shows a platform row read-only with the unset reason in %s',
+	async (locale, hint) => {
+		setActiveLocale(locale);
+		const row = await render({
+			...appName,
+			locked: 'This setting applies to every workspace, and no workspace is recorded as this deployment\'s operator yet. Record one with pnpm flowdular auth operator-set on the deployment.',
+			lockedKey: 'system.settings.platformOperatorUnset',
+		});
+		const input = row.querySelector('input') as HTMLInputElement;
+		expect(input.disabled).toBe(true);
+		expect(row.textContent).toContain(hint);
+		expect(row.textContent).toContain('pnpm flowdular auth operator-set');
+	},
+);
+
 it(
 	'SYSTEM-SETTINGS-READ disables the switch of a locked platform boolean',
 	async () => {

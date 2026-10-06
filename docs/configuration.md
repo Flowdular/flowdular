@@ -18,17 +18,32 @@ deployments must set the secret keys.
 | `FD_LOG_LEVEL`       | `info`                            | `debug`, `info`, `warn` or `error`                                         |
 | `FD_METRICS`         | `false`                           | Expose `GET /api/metrics`; see [operations.md](operations.md)              |
 | `FD_METRICS_TOKEN`   | none                              | Bearer token a metrics scrape must present                                 |
-| `FD_OPERATOR_TENANT` | none                              | Tenant id of the workspace that changes platform settings                  |
+| `FD_OPERATOR_TENANT` | none                              | Tenant id that overrides the recorded operator workspace                   |
 
 A platform-scoped module setting has one value for every workspace: the
 branding, sign-up and session policy, the mail relay and the platform settings
-of other modules. Only the operator workspace changes them. Set
-`FD_OPERATOR_TENANT` to its tenant id (`pnpm flowdular auth workspaces` lists
-them) and a principal there holding `system.settings.manage` edits them in
-Administration as before. Every other workspace sees them read-only, and a
-write from it is refused with 403 `PLATFORM_SETTING_OPERATOR_ONLY`. Unset, no
-workspace can change them and the stored values keep applying, so a deployment
-upgrading from an earlier release sets it to keep editing them.
+of other modules. Only the operator workspace changes them: a principal there
+holding `system.settings.manage` edits them in Administration. Every other
+workspace sees them read-only, and a write from it is refused with 403
+`PLATFORM_SETTING_OPERATOR_ONLY`.
+
+auth.core records the operator workspace. First-run setup records the workspace
+it creates, in the transaction that creates it, and so does any other path that
+creates the first workspace of an empty database (`auth workspace-create`,
+`sandbox provision`, `setup quick`). `pnpm flowdular auth operator` shows the
+record and `pnpm flowdular auth operator-set <id|slug> --apply` moves it to
+another workspace; the next request sees the change, with no restart.
+
+`FD_OPERATOR_TENANT` is an override. Set, the workspace whose tenant id it names
+is the operator and the record is not consulted; a value that is not the id of
+an existing workspace leaves no operator rather than falling back to the record.
+Leave it empty to use the record.
+
+A deployment upgraded from 0.6.0 with exactly one workspace records that
+workspace the first time it starts. With two or more nothing is recorded, every
+platform row is locked with a reason that names `auth operator-set`, and the
+stored values keep applying until the operator runs that command or sets the
+variable.
 
 A `web` process serves HTTP only: it never starts a module worker and never
 claims queued work from a request, so a deployment of `web` processes also needs

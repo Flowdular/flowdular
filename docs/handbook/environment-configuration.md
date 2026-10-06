@@ -203,7 +203,8 @@ Set `FD_LOG_FORMAT=json` in production so one log line is one object.
 The product name, document title, description, link preview image, browser
 icon, theme colour and logo are `system.core` settings, changed under
 Administration, Branding by a principal with `system.settings.manage` in the
-operator workspace (`FD_OPERATOR_TENANT`), and every change is audited. One
+operator workspace (the one auth.core records, or `FD_OPERATOR_TENANT` when
+set), and every change is audited. One
 value serves the whole deployment, including the sign-in screen and shared
 links.
 
@@ -227,9 +228,11 @@ Run in order. Each step assumes the previous one succeeded.
 5. Configure the mail relay and send one test message.
 6. Point the observability egresses at the collector.
 7. Roll out. Migrations run at rollout under the migrator role.
-8. Create the operator workspace, set `FD_OPERATOR_TENANT` to its tenant id
-   (`pnpm flowdular auth workspaces` lists them) and restart. Until then no
-   workspace can change the branding or the other platform settings.
+8. Create the first workspace through first-run setup or
+   `pnpm flowdular auth workspace-create --apply`. auth.core records it as the
+   operator workspace, the one that changes the branding and the other platform
+   settings; `pnpm flowdular auth operator` confirms it. Leave
+   `FD_OPERATOR_TENANT` empty unless another workspace must decide.
 9. Verify, as below.
 
 ## Verification

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.7
+specVersion: 0.14.8
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -75,6 +75,14 @@ invariants:
   - Operator provisioning creates a workspace, its owner and the owner scopes exactly as sign-up does, works against the deployment database, and never reads the sign-up setting.
   - An operator command never returns a password the operator did not supply. It emits a single-use setup or invitation link once, and a supplied password is read from the environment rather than from a command flag.
   - Every operator provisioning command appends an audit row whose actor identifies the operator shell that ran it.
+  - auth.core keeps the deployment's operator workspace record, at most one row naming the workspace whose principals change platform-scoped settings, with how it was recorded (first-workspace, single-workspace or command) and when. It is deployment configuration rather than workspace data, so it is not a declared data class, is never exported or erased with a workspace, and holds no personal data; the actor is carried by its audit event.
+  - The record's table is under forced row-level security with a USING and WITH CHECK policy that binds the row to the workspace it names, the way a workspace row is its own tenant, so a transaction bound to a workspace sees the row only when that workspace is the operator and can write only a row naming itself. The runtime role reads, inserts and deletes it only in such a transaction and holds neither SUPERUSER nor BYPASSRLS; the background role reads only the workspace id column through a FOR SELECT policy of its own and writes nothing; the migration role creates the table and writes no row.
+  - Every path that creates the first workspace of an empty database records that workspace as the operator in the transaction that creates it, together with one auth.operator.assigned event in that workspace's trail, whatever the path; the platform's first-run setup, auth workspace-create, sandbox provision and the greenfield reset are those paths. For first-run setup the transaction that commits the first workspace, which is what ends first run, also commits the record and its event, and a failure leaves neither. Public sign-up never creates the first workspace, because the first-run gate answers every request until one exists, invitation acceptance and just-in-time provisioning create none, and creating any later workspace, through sign-up or provisioning, never changes the record.
+  - The greenfield reset, and so setup quick, creates Operations Demo first and Finance Demo second on the database it has just emptied, so Operations Demo is recorded as the operator workspace with source first-workspace and its event, and Finance Demo is not; a local reset can change branding and the other platform settings without FD_OPERATOR_TENANT.
+  - When auth.core opens the deployment database, after its migrations, and finds no record while exactly one workspace exists, it records that workspace with source single-workspace and one auth.operator.assigned event whose service actor names the rule, in a transaction bound to that workspace; with no workspace, or with two or more, it records nothing. Concurrent processes record it once. auth.core deletes no workspace and only ever replaces the record, so the rule fires at most once per deployment, which is how a deployment upgraded with a single workspace gains its operator without an environment change.
+  - The operator command is the only way to change the record. pnpm flowdular auth operator reads it, and pnpm flowdular auth operator-set with a workspace id or slug previews the change and applies it with --apply. Applying releases the previous operator, deleting its row with one auth.operator.released event in that workspace's trail, and then assigns the named workspace, inserting its row with one auth.operator.assigned event in its trail, each in a transaction bound to its own workspace. Between the two no workspace is the operator, so a failure leaves platform settings locked and never two operators, and running the command again completes it. Naming the current operator changes nothing and writes no event, and a reference to no workspace is refused with WORKSPACE_NOT_FOUND. auth.core serves no HTTP route that writes the record, and the workspace it names comes from the operator's command line, never from a request.
+  - auth.operator.assigned and auth.operator.released carry the source and the actor (the provisioning actor, a service actor naming the single-workspace rule, or the operator shell) and never the other workspace's id or name, so no workspace's trail discloses another workspace. Each is written in the transaction that writes or deletes the row, so the record never changes without its event.
+  - auth.core answers, for one workspace, whether it is the recorded operator, whether another workspace is, or whether none is recorded, the first from that workspace's own transaction and the others from the background read, without naming the other workspace. It does not read FD_OPERATOR_TENANT for that answer; system.core applies the variable's precedence. The read command reports the record and, when FD_OPERATOR_TENANT is set in the shell it runs in, says that the variable overrides the record wherever the deployment sets it and whether it names a workspace.
   - An audit row records its actor as one of the kernel kinds user, agent or service. An operator command and an identity provider are service actors, an account id is stored for a user only, an agent row names its run, and a service row stores the user who configured it, or null when that user is not stored, as an identity provider's is not.
   - TOTP secrets are encrypted with a deployment-provided AES-256 key; a successful password check creates a short-lived, single-use MFA challenge rather than a session.
   - The label an authenticator lists an enrolled account under is the deployment's own name, the branding system.core declares, resolved by the enrolment route and never taken from the request, so a caller cannot name the workspace a member sees and a deployment that renamed itself enrols under its new name. A deployment that stored no name enrols under the product name.
@@ -133,6 +141,7 @@ dataOwnership:
   - Tenant roles, sign-in failure counters, module settings values, the module settings change log, and the auth audit trail are owned by auth.core. Another module reads the change log only through the kernel settings runtime, never the table.
   - auth.core owns default decisions.core scope grants on built-in roles and memberships; decisions.core declares its own permissions and owns decision definitions, connections and invocation records.
   - Other modules may reference account and tenant identifiers but may not write authentication tables.
+  - auth.core owns the deployment's operator workspace record; system.core reads it only through the auth runtime to decide platform-scoped settings writes, and no other module reads or writes it.
 entities:
   - id: identity-provider
     name: Identity provider
@@ -242,6 +251,25 @@ entities:
         - from: disabled
           to: active
           permission: users.members.manage
+  - id: operator-workspace
+    name: Operator workspace
+    description: The deployment's one record of the workspace whose principals change platform-scoped settings; at most one row, bound under row-level security to the workspace it names.
+    fields:
+      - id: workspaceId
+        type: string
+        required: true
+        maxLength: 128
+        description: Tenant id of the operator workspace.
+      - id: source
+        type: enum
+        required: true
+        values:
+          - first-workspace
+          - single-workspace
+          - command
+      - id: recordedAt
+        type: datetime
+        required: true
 screens:
   - id: identity-providers
     kind: list
@@ -359,6 +387,7 @@ outOfScope:
   - Discovering a workspace from an e-mail address is not offered; the person names the workspace first.
   - E-mailing a provisioned member is deferred to the notifications delivery path once auth mail kinds are extended.
   - Wording a message in a workspace's own custom phrasing is deferred; every auth.core message is rendered from the shipped locale bundles, so a workspace picks a language and never its own text.
+  - Choosing, changing or clearing the operator workspace from a screen or an HTTP route, removing the record without naming a replacement, and more than one operator workspace; the operator command and FD_OPERATOR_TENANT are the only channels.
 decisions:
   - id: D-G2-SCOPE
     question: What does this G2 delivery contain?
@@ -447,6 +476,34 @@ decisions:
   - id: D-SETTINGS-LOG-BACKFILL
     question: Does the log start empty?
     answer: No. Its migration records one change per value already stored, at its stored time and by its stored author, so a reader starting from the beginning sees every stored value.
+    decidedBy: default
+  - id: D-OPERATOR-FIRST-RUN
+    question: Which workspace is the operator of a new deployment?
+    answer: The workspace its first-run setup creates, recorded by auth.core in the transaction that creates it; FD_OPERATOR_TENANT stays an override that system.core applies. Owner decision of 2026-10-06.
+    decidedBy: user
+  - id: D-OPERATOR-RECORD-OWNER
+    question: Which module owns the operator record?
+    answer: auth.core. The first workspace is committed by auth.core's own transaction, bound to the new workspace, and the record has to commit in that same transaction; no other module may write an auth table or open auth.core's transaction, so the record cannot live in system.core without giving up that guarantee. Binding the row to the workspace it names is what lets that transaction write it under the policy. Owner confirmed on 2026-10-06.
+    decidedBy: user
+  - id: D-OPERATOR-FIRST-WORKSPACE
+    question: Which paths record the operator when they create a deployment's first workspace?
+    answer: Every path. The first workspace on an empty database becomes the operator whether first-run setup, auth workspace-create, sandbox provision or the greenfield reset creates it; public sign-up cannot create it because the first-run gate is in front of it. Owner decision of 2026-10-06.
+    decidedBy: user
+  - id: D-OPERATOR-GREENFIELD
+    question: Which demo workspace does auth greenfield, and so setup quick, record as the operator?
+    answer: Operations Demo, the first workspace the reset creates, so a local reset is never left with platform settings locked. Owner decision of 2026-10-06.
+    decidedBy: user
+  - id: D-OPERATOR-SINGLE-WORKSPACE
+    question: What happens to a deployment that completed setup before the record existed?
+    answer: With exactly one workspace, auth.core records it with source single-workspace the first time it opens the database after the upgrade; with two or more it records nothing and platform settings stay locked until the deployment sets FD_OPERATOR_TENANT or runs the operator command, because nothing in the data says which workspace the operator meant.
+    decidedBy: default
+  - id: D-OPERATOR-CHANGE
+    question: How is the operator workspace changed later?
+    answer: Only with pnpm flowdular auth operator-set from a shell on the deployment, release then assign in two transactions each bound to its own workspace, since one transaction is bound to one tenant; it fails closed in between.
+    decidedBy: default
+  - id: D-OPERATOR-AUDIT
+    question: What evidence does a write or change of the record leave?
+    answer: One auth.operator.assigned event in the trail of the workspace that becomes the operator and, on a change, one auth.operator.released event in the trail of the one that stops being it, each in the transaction that writes or deletes the row, carrying the source and the actor and never the other workspace.
     decidedBy: default
 acceptanceScenarios:
   - id: AUTH-MAIL-TEST-MESSAGE
@@ -688,11 +745,39 @@ acceptanceScenarios:
   - id: AUTH-OPERATOR-WORKSPACE
     given: A deployment with public sign-up disabled and no workspace yet.
     when: An operator runs the workspace creation command with a workspace name, an owner address and a display name, and authorizes it with apply.
-    then: The workspace, the owner account, the owner membership and the owner scopes are created exactly as a sign-up creates them, an audit row names the operator, and the owner's first credential is returned once as a single-use setup link unless the operator supplied a password through the environment.
+    then: The workspace, the owner account, the owner membership and the owner scopes are created exactly as a sign-up creates them, an audit row names the operator, the workspace is recorded as the deployment's operator workspace because it is the first, and the owner's first credential is returned once as a single-use setup link unless the operator supplied a password through the environment.
   - id: AUTH-OPERATOR-MEMBER
     given: An existing workspace in a deployment with public sign-up disabled.
     when: An operator adds an email address to that workspace with a role.
     then: A known account joins immediately with that role's scopes, an unknown address receives a single-use invitation link that is shown once, and either outcome is appended to the workspace audit trail with the operator as the actor.
+  - id: AUTH-OPERATOR-FIRST-WORKSPACE
+    given: A deployment that holds no workspace, reached through the platform's first-run setup on Vercel, Docker, a local checkout or the sandbox's local platform, through auth workspace-create, or through sandbox provision.
+    when: The first workspace A is provisioned, and in a separate run the provisioning transaction fails after the workspace row was written.
+    then: In the transaction that creates A, A is recorded as the operator workspace with source first-workspace and one auth.operator.assigned event naming the provisioning actor is appended to A's trail, so first-run setup completes with an operator and without FD_OPERATOR_TENANT; the failed run leaves no workspace, no record and no event, and setup is offered again.
+  - id: AUTH-OPERATOR-GREENFIELD
+    given: A workstation's embedded development database, with or without an earlier operator record or demo data.
+    when: The developer runs setup quick, or auth greenfield, with apply and the typed confirmation, then signs in as the seeded administrator.
+    then: The reset leaves exactly one record, naming Operations Demo with source first-workspace and one auth.operator.assigned event in its trail; Finance Demo is not the operator; the administrator changes a platform-scoped setting from Operations Demo and is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY from Finance Demo, with no FD_OPERATOR_TENANT set.
+  - id: AUTH-OPERATOR-LATER-WORKSPACE
+    given: A deployment whose record names workspace A.
+    when: A visitor signs up workspace B, the operator provisions workspace C, and a just-in-time sign-in joins an existing workspace.
+    then: B and C are created exactly as before, the record still names A, and no auth.operator event is written.
+  - id: AUTH-OPERATOR-SINGLE-WORKSPACE
+    given: A database upgraded from a release without the record that holds exactly one workspace A, and a second such database that holds workspaces A and B.
+    when: The platform, a worker and a CLI command open each database concurrently, and open it again later.
+    then: The first database records A with source single-workspace and exactly one auth.operator.assigned event whose service actor names the single-workspace rule, and later opens change nothing; the second records nothing, so no workspace is the operator until the deployment sets FD_OPERATOR_TENANT or the operator runs auth operator-set.
+  - id: AUTH-OPERATOR-COMMAND
+    given: Workspaces A and B, the record naming A, and an operator shell on the deployment.
+    when: The operator runs auth operator, then auth operator-set naming B without apply, then with apply, then the same command again, then auth operator-set with a reference that names no workspace.
+    then: The read prints A with its source and recorded time and says whether FD_OPERATOR_TENANT is set in that shell and names a workspace; the preview prints A to B and changes nothing; the apply deletes A's row with one auth.operator.released event in A's trail and then inserts B's row with one auth.operator.assigned event in B's trail, each naming the operator shell and neither naming the other workspace; the repeat reports no change and writes nothing; the unknown reference is refused with WORKSPACE_NOT_FOUND and changes nothing.
+  - id: AUTH-OPERATOR-COMMAND-INTERRUPTED
+    given: The record naming A and an operator applying auth operator-set naming B.
+    when: The assign transaction fails after the release committed.
+    then: The command reports the failure, no workspace is recorded and the read says so, platform-scoped settings stay locked for every workspace, two rows never exist at any point, and running the command again records B with its event.
+  - id: AUTH-OPERATOR-ISOLATION
+    given: Workspaces A and B on PostgreSQL with runtime and background roles that hold neither SUPERUSER nor BYPASSRLS, and the record naming A.
+    when: A transaction bound to B reads the record table, inserts a row naming A and deletes A's row; the background role reads the table and tries to write it; and a transaction bound to A reads it.
+    then: B's transaction sees no row, its insert is refused by the policy and its delete removes nothing; the background role reads only the workspace id column and every write is refused; A's transaction sees its own row; and no auth.core HTTP route returns or writes the record.
   - id: AUTH-PROVIDER-TENANT-CRUD
     given: A principal holding auth.providers.manage supplies a unique key, a label, an https issuer that discovers itself, a client id and a client secret.
     when: The provider is created, updated, disabled, enabled, rotated and deleted after disabling.

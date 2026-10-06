@@ -61,8 +61,9 @@ spec:
                   key: backgroundUrl
             - name: FD_AUTH_ALLOW_SIGN_UP
               value: 'false'
-            # Tenant id of the workspace that changes platform settings such as
-            # the branding and the mail relay. Empty, no workspace can.
+            # Tenant id that overrides the operator workspace, the one that
+            # changes platform settings such as the branding and the mail relay.
+            # Empty, the workspace auth.core recorded at first-run setup decides.
             - name: FD_OPERATOR_TENANT
               value: ''
             - name: FD_AUTH_SECURE_COOKIE

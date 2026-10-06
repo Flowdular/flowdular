@@ -32,7 +32,7 @@ function required(context: CliExtensionContext, name: string): string {
 
 /* Who the audit trail records. An owner created by an operator command is the
    highest privilege a workspace has, so the row names the shell that made it. */
-function operatorOf(context: CliExtensionContext): string {
+export function operatorOf(context: CliExtensionContext): string {
 	const explicit = flag(context, 'actor');
 	if (explicit) return `cli:${explicit.slice(0, 100)}`;
 	try {
@@ -78,7 +78,7 @@ function pageSize(context: CliExtensionContext): number {
 /* These commands write to the deployment database through the platform-owned
    provider on the context. The runner owns it: this releases only the leases
    the runtime took. */
-async function withAuth<T>(
+export async function withAuth<T>(
 	context: CliExtensionContext,
 	run: (auth: AuthRuntime) => Promise<T>,
 ): Promise<T> {

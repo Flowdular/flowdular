@@ -54,6 +54,9 @@ import {
 	type IdentityProviderPatch,
 	type IdentityProviderRecord,
 	type MfaChallengeRecord,
+	type OperatorAssignment,
+	type OperatorRecord,
+	type OperatorSource,
 	type PasswordResetTokenRecord,
 	type SessionExportRecord,
 	type SettingsChangeAudit,
@@ -510,6 +513,31 @@ function scopeRows(
 	};
 }
 
+/* One audit row, for appendAudit and for a write whose event commits in the
+   same transaction as the write. */
+function auditInsert(record: AuditRecord): DatabaseStatement {
+	return {
+		text: `INSERT INTO auth_audit
+		       (tenant_id, actor_account_id, actor_label, actor_kind, actor_run_id,
+		        configured_by_json, action, subject_type, subject_id, metadata_json,
+		        occurred_at)
+		       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		parameters: [
+			record.tenantId,
+			record.actorAccountId,
+			record.actorLabel,
+			record.actorKind,
+			record.actorRunId,
+			record.configuredBy ? JSON.stringify(record.configuredBy) : null,
+			record.action,
+			record.subjectType,
+			record.subjectId,
+			JSON.stringify(record.metadata),
+			record.occurredAt,
+		],
+	};
+}
+
 export async function migrateAuthDatabase(
 	database: DatabaseHandle,
 ): Promise<void> {
@@ -702,10 +730,12 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return rows.length > 0;
 	}
 
+	/* A slug may spell another workspace's id, so the id match wins. */
 	async findTenant(reference: string): Promise<TenantSummary | null> {
 		const rows = await this.#route<TenantRow>({
 			text: `SELECT id, name, slug FROM auth_tenants
-			       WHERE id = $1 OR slug = $1 LIMIT 1`,
+			       WHERE id = $1 OR slug = $1
+			       ORDER BY (id = $1) DESC LIMIT 1`,
 			parameters: [reference],
 		});
 		return rows[0] ? tenantSummary(rows[0]) : null;
@@ -718,11 +748,85 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return rows.length > 0;
 	}
 
+	async findOnlyTenantId(): Promise<string | null> {
+		const rows = await this.#route<{ id: string }>({
+			text: 'SELECT id FROM auth_tenants LIMIT 2',
+		});
+		return rows.length === 1 ? rows[0]!.id : null;
+	}
+
 	async listTenants(): Promise<readonly TenantSummary[]> {
 		const rows = await this.#route<TenantRow>({
 			text: 'SELECT id, name, slug FROM auth_tenants ORDER BY name, id',
 		});
 		return rows.map(tenantSummary);
+	}
+
+	async findOperatorTenantId(): Promise<string | null> {
+		const rows = await this.#route<RoutedTenantRow>({
+			text: 'SELECT tenant_id FROM auth_operator_workspace LIMIT 1',
+		});
+		return rows[0]?.tenant_id ?? null;
+	}
+
+	async findOperatorRecord(tenantId: string): Promise<OperatorRecord | null> {
+		const rows = await this.#query<{
+			tenant_id: string;
+			source: OperatorSource;
+			recorded_at: unknown;
+		}>(tenantId, {
+			text: `SELECT tenant_id, source, recorded_at FROM auth_operator_workspace
+			       WHERE tenant_id = $1`,
+			parameters: [tenantId],
+		});
+		const row = rows[0];
+		return row
+			? {
+					tenantId: row.tenant_id,
+					source: row.source,
+					recordedAt: integer(row.recorded_at, 'recorded_at'),
+				}
+			: null;
+	}
+
+	async assignOperator(assignment: OperatorAssignment): Promise<boolean> {
+		return this.#tx(assignment.record.tenantId, 'write', (transaction) =>
+			this.#recordOperator(transaction, assignment),
+		);
+	}
+
+	async releaseOperator(
+		tenantId: string,
+		event: AuditRecord,
+	): Promise<boolean> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const deleted = await transaction.query<RoutedTenantRow>({
+				text: `DELETE FROM auth_operator_workspace WHERE tenant_id = $1
+				       RETURNING tenant_id`,
+				parameters: [tenantId],
+			});
+			if (deleted.rows.length === 0) return false;
+			await transaction.execute(auditInsert(event));
+			return true;
+		});
+	}
+
+	/* The one-row index answers a concurrent writer: whichever commits first
+	   keeps the row, the other inserts nothing and so appends no event. */
+	async #recordOperator(
+		transaction: DatabaseTransaction,
+		{ record, event }: OperatorAssignment,
+	): Promise<boolean> {
+		const inserted = await transaction.query<RoutedTenantRow>({
+			text: `INSERT INTO auth_operator_workspace (tenant_id, source, recorded_at)
+			       VALUES ($1, $2, $3)
+			       ON CONFLICT DO NOTHING
+			       RETURNING tenant_id`,
+			parameters: [record.tenantId, record.source, record.recordedAt],
+		});
+		if (inserted.rows.length === 0) return false;
+		await transaction.execute(auditInsert(event));
+		return true;
 	}
 
 	async renameTenant(
@@ -1070,6 +1174,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 
 	async createAccountWithTenant(
 		record: CreateAccountRecord,
+		operator?: OperatorAssignment,
 	): Promise<AccountCredential> {
 		try {
 			return await this.#tx(record.tenantId, 'write', async (transaction) => {
@@ -1119,6 +1224,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 					record.tenantId,
 					record.scopes,
 				);
+				if (operator) await this.#recordOperator(transaction, operator);
 				return (await this.#membership(
 					transaction,
 					record.accountId,
@@ -2433,26 +2539,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 	}
 
 	async appendAudit(record: AuditRecord): Promise<void> {
-		await this.#exec(record.tenantId, {
-			text: `INSERT INTO auth_audit
-			       (tenant_id, actor_account_id, actor_label, actor_kind, actor_run_id,
-			        configured_by_json, action, subject_type, subject_id, metadata_json,
-			        occurred_at)
-			       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-			parameters: [
-				record.tenantId,
-				record.actorAccountId,
-				record.actorLabel,
-				record.actorKind,
-				record.actorRunId,
-				record.configuredBy ? JSON.stringify(record.configuredBy) : null,
-				record.action,
-				record.subjectType,
-				record.subjectId,
-				JSON.stringify(record.metadata),
-				record.occurredAt,
-			],
-		});
+		await this.#exec(record.tenantId, auditInsert(record));
 	}
 
 	async queryAudit(query: AuditQuery): Promise<readonly AuditActorEvent[]> {

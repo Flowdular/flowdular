@@ -124,6 +124,7 @@
 	"settings.mailTransportRequired": "Potwierdzanie adresu e-mail wymaga skonfigurowanej usługi wysyłki wiadomości.",
 	"settings.mfaKeyRequired": "Wymagane uwierzytelnianie dwuskładnikowe potrzebuje klucza szyfrującego MFA skonfigurowanego we wdrożeniu.",
 	"settings.platformOperatorOnly": "Dotyczy wszystkich przestrzeni roboczych; zmienić je może tylko przestrzeń robocza operatora wdrożenia.",
+	"settings.platformOperatorUnset": "Dotyczy wszystkich przestrzeni roboczych, a żadna przestrzeń robocza nie jest jeszcze zapisana jako operator tego wdrożenia. Zapisz ją poleceniem pnpm flowdular auth operator-set uruchomionym we wdrożeniu.",
 	"settings.timeZone.label": "Strefa czasowa przestrzeni roboczej",
 	"settings.timeZone.description": "Nazwa strefy IANA, na przykład Europe/Warsaw. Moduły, które pokazują lub planują czas lokalny, odczytują tę wartość; domyślnie UTC.",
 	"activation.notComposed": "Ten moduł nie jest włączony w aplikacji; najpierw włącz go przez CLI.",
