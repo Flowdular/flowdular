@@ -1,8 +1,8 @@
 import { APPROVAL_LIMITS } from '../domain/capability.ts';
-import type { ApprovalRequest } from '../domain/types.ts';
+import type { ApprovalRequestWithDeciders } from '../domain/types.ts';
 
 export type ApprovalResolvedCallback = (
-	request: ApprovalRequest,
+	request: ApprovalRequestWithDeciders,
 ) => Promise<void>;
 
 export interface ApprovalCallbackRegistry {
@@ -12,7 +12,7 @@ export interface ApprovalCallbackRegistry {
 		callback: ApprovalResolvedCallback,
 	): void;
 	/** Runs the callback for a resolved request, at most once, and forgets it. */
-	run(request: ApprovalRequest): Promise<void>;
+	run(request: ApprovalRequestWithDeciders): Promise<void>;
 	forget(tenantId: string, requestId: string): void;
 	readonly size: number;
 }

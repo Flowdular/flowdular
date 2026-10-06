@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: approvals.core
-specVersion: 0.1.18
+specVersion: 0.1.19
 status: approved
 name: Approvals Core
 description: Turns a policy decision that needs a person into an approval request with named requirements, a decision record that is append-only, notifications to the people who can decide, and a workflow node that waits for the decision, so every module delegates who may decide instead of writing its own approval state machine.
@@ -29,6 +29,7 @@ invariants:
   - A decision is append-only. Approving, rejecting and the expiry are recorded as decision rows with the account, the time and an optional bounded comment; a request reaches approved when the needed number of approvals is recorded, rejected on the first rejection, expired when the expiry passes without a resolution, cancelled only by the requester or a member holding approvals.requests.manage while pending.
   - Every state change publishes through notifications.publish.v1 when the capability is present, with the kinds approval-requested to the eligible deciders and approval-decided to the requester, and continues without notifying when it is absent.
   - The subject module learns the outcome by reading the request through the capability or by the callback it registered when opening the request; the callback runs at most once per terminal state and outside the deciding transaction, and a callback failure never changes the recorded decision.
+  - The request the get operation of approvals.requests.v1 answers, and the request an onResolved callback receives, carry deciderAccountIds, the accounts whose decision rows produced the terminal state in ledger order, derived from the append-only decision ledger on every read and never stored on the request. An approved request names every account that approved it, a rejected request the account that rejected it and a cancelled request the account that cancelled it; a pending or expired request names none, so an approval recorded before a rejection or an expiry is not a decider of that outcome. It carries account ids alone, never a comment, exactly as the ledger holds them, so a decision an erasure redacted names its tombstone; open, list and cancel answer the request without it.
   - Expiry is enforced by the platform job runner on the platform interval setting, claiming a bounded page of routing columns read on the background role, each request re-read under its workspace before it is expired, and one request that cannot be read or written costing no other request in the pass.
   - The workflows.core human-approval node opens a request with the run as subject and pauses the run until the terminal state; approval resumes the run, rejection or expiry fails it with a stable code; the node's requirement is declared on the node and validated against the workspace roles at publish time.
   - Opening is idempotent per subject, so one pending request exists per (subject module, subject reference) in a workspace, and a repeated open returns the pending request instead of asking the deciders twice, so a subject module recovering after a crash never duplicates a request.
@@ -254,6 +255,10 @@ decisions:
     question: How does the subject module learn the outcome?
     answer: By reading the request through the capability or through a callback registered at opening, run once per terminal state outside the deciding transaction.
     decidedBy: default
+  - id: D-APPROVALS-DECIDER
+    question: How does a subject module learn who decided its request?
+    answer: Through deciderAccountIds on the request get answers and onResolved receives, read from the decision ledger rather than a new column, so the ledger stays the one record of who decided and an erasure that redacts a decision redacts its decider with it. It names the accounts whose decisions produced the outcome (every approver of an approved request, the account that rejected or cancelled it, nobody for an expiry) and carries account ids alone; open, list and cancel stay as they were, because a module that needs the decider reads the request back with get, as it already does to learn the outcome.
+    decidedBy: user
   - id: D-APPROVALS-WORKFLOW-NODE
     question: How does a workflow wait for a person?
     answer: A ninth node kind, human-approval, declared in workflows.core with its requirement, opening a request with the run as subject and pausing until the terminal state.
@@ -307,6 +312,10 @@ acceptanceScenarios:
     given: A pending request.
     when: The requester cancels it, and then a member holding approvals.requests.manage cancels another pending request.
     then: Both requests become cancelled with a cancel decision row and no notification of approval-decided is published for a cancellation.
+  - id: APPROVALS-DECIDER
+    given: A subject module opened requests through approvals.requests.v1 with an onResolved callback in one workspace, one needing a single approval, one needing two, one rejected after an approval, one cancelled and one that expires after an approval, and another workspace holds a request of its own.
+    when: Eligible members decide them, the expiry loop runs, and the subject module reads each request back with get, including the other workspace's request id under the first workspace.
+    then: get and the callback both answer deciderAccountIds naming the account that approved the first request, both approving accounts in ledger order for the second, only the rejecting account for the rejected one, the cancelling account for the cancelled one, and no account for the expired one or for any request while it is pending; the field carries account ids alone, the other workspace's request id answers null, and every other field of the request reads as it did before.
   - id: APPROVALS-WORKFLOW-NODE
     given: A published workflow revision with a human-approval node requiring the owner role.
     when: A run reaches the node, an owner approves, and in a second run an owner rejects.

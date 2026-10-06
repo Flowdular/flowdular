@@ -52,6 +52,7 @@ export type {
 	ApprovalMember,
 	ApprovalRequest,
 	ApprovalRequestDetail,
+	ApprovalRequestWithDeciders,
 	ApprovalRequirementRecord,
 	ApprovalRouting,
 	ApprovalStatus,

@@ -7,7 +7,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import { createPgliteTestProvider } from '@flowdular/database-testing';
+import { createTestDatabaseProvider } from '@flowdular/database-testing';
 import {
 	DatabaseApprovalsRepository,
 	migrateApprovalsDatabase,
@@ -43,13 +43,14 @@ const REQUIREMENTS = {
 } as const;
 
 /**
- * An embedded PostgreSQL with the real runtime and background roles and forced
- * row-level security, migrated to the module's current schema. Starting the
- * engine costs about half a second, so open one per file and `reset()` between
- * cases rather than paying it per test.
+ * The test engine `FD_TEST_DATABASE_ADAPTER` selects (embedded PGlite unless
+ * it names a PostgreSQL server) with the real runtime and background roles and
+ * forced row-level security, migrated to the module's current schema. Starting
+ * the engine costs about half a second, so open one per file and `reset()`
+ * between cases rather than paying it per test.
  */
 export async function openApprovalsTestDatabase(): Promise<ApprovalsTestDatabase> {
-	const databases: DatabaseProvider = createPgliteTestProvider();
+	const databases: DatabaseProvider = createTestDatabaseProvider();
 	const leases: DatabaseAdapterLease[] = [];
 	try {
 		/* The owner lease outlives the migration: only a role above row-level
