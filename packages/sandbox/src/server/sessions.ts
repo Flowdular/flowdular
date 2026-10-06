@@ -154,6 +154,9 @@ export interface SessionOwner {
 
 export interface ChatEntry {
 	readonly decision?: 'approved' | 'changes-requested';
+	/* On an approval: SHA-256 of the exact text the operator reviewed, before
+	   the approval moved its status line to approved. */
+	readonly reviewedHash?: string;
 	readonly sequence: number;
 	readonly at: number;
 	readonly kind: 'user' | 'agent' | 'event' | 'system';
@@ -840,10 +843,14 @@ export async function deleteSession(
    The hash of the approved text is recorded on the module, which is what makes
    the approval belong to this version of the specification and not to the file
    name: an edit after it re-opens the gate. */
+/* With `reviewedHash`, the approval holds only for the text the operator
+   reviewed: a document whose current hash differs is refused before anything
+   is written. */
 export async function approveSpecification(
 	workspaceRoot: string,
 	session: SandboxSession,
 	module: SessionModule = session.modules[0]!,
+	reviewedHash?: string,
 ): Promise<{
 	readonly session: SandboxSession;
 	readonly status: string;
@@ -873,6 +880,12 @@ export async function approveSpecification(
 		throw new SandboxSetupError(
 			'QUESTIONS_PENDING',
 			`${module.id} still has ${pending.questions.length} open question(s). Answer them before approving the specification.`,
+		);
+	}
+	if (reviewedHash !== undefined && hashSpec(spec) !== reviewedHash) {
+		throw new SandboxSetupError(
+			'SPEC_CHANGED',
+			`The specification of ${module.id} changed after you reviewed it. Review the current text and approve again.`,
 		);
 	}
 	const status = /^status:[ \t]*(\S+)[ \t]*$/m.exec(spec);

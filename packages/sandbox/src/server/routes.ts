@@ -159,6 +159,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	MODULE_ALREADY_IN_SESSION: 409,
 	SPEC_NOT_FOUND: 404,
 	SPEC_NOT_APPROVED: 409,
+	SPEC_CHANGED: 409,
 	QUESTIONS_PENDING: 409,
 	NO_PENDING_QUESTIONS: 409,
 	EJECT_SPEC_MISSING: 409,
@@ -190,6 +191,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
    uploads: this is what a spec edit may carry. */
 const MAX_SPEC_TEXT = 200_000;
 const MAX_SPEC_COMMENT = 4_000;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 const MAX_JSON_BODY_BYTES = 256_000;
 /* What an operator may add beside the decisions. The decision list is bounded
    by the questions protocol, so the two together stay inside a turn message. */
@@ -2079,7 +2081,9 @@ export function createSandboxRoutes(
 
 	/* Approving a specification is the operator's decision, so the sandbox makes
 	   it: the status line moves to approved, the approved text is recorded on
-	   the module, and its implementer can start. One module at a time. */
+	   the module, and its implementer can start. One module at a time. The
+	   request names the hash of the text the operator reviewed, so an edit that
+	   lands between the review and the click is refused instead of approved. */
 	const approve = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/approve',
 		methods: ['POST'],
@@ -2097,17 +2101,29 @@ export function createSandboxRoutes(
 					session,
 					optionalText(value, 'module', 120),
 				);
+				const reviewedHash = value.specHash;
+				if (
+					typeof reviewedHash !== 'string' ||
+					!SHA256_HEX.test(reviewedHash)
+				) {
+					throw new SandboxSetupError(
+						'INVALID_INPUT',
+						'specHash must be the SHA-256 of the specification you reviewed. Reload the session and review it again.',
+					);
+				}
 				const approved = await approveSpecification(
 					runtime.workspaceRoot,
 					session,
 					module,
+					reviewedHash,
 				);
 				await appendChatEntry(runtime.workspaceRoot, approved.session, {
 					decision: 'approved',
+					reviewedHash,
 					kind: 'system',
 					role: session.role,
 					module: module.directory,
-					text: `You approved the specification of ${module.id}. Implementation of modules/${module.directory} is unblocked until the specification changes again.`,
+					text: `You approved the specification of ${module.id} (SHA-256 ${reviewedHash.slice(0, 12)}). Implementation of modules/${module.directory} is unblocked until the specification changes again.`,
 				});
 				return json({
 					session: approved.session,

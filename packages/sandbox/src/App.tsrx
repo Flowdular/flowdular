@@ -486,17 +486,20 @@ export function App(props?: RenderRouteProps) @{
 		dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 	};
 
-	const approveAndContinue = async (handoff: HandoffPlan) => {
+	const approveAndContinue = async (handoff: HandoffPlan, specHash: string) => {
 		const session = currentSession();
 		if (!session || running) return;
 		setBusy(true);
 		setError('');
 		try {
-			await approveSpecification(session.id, handoff.module);
+			await approveSpecification(session.id, handoff.module, specHash);
 			await openSession(session.id);
 			dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 		} catch (approveError) {
 			setError(message(approveError, t('sandbox.app.error.approveSpec')));
+			/* A refused approval usually means the text changed: show the
+   current one, with its hash, for the next review. */
+			void refreshView(session.id);
 		} finally {
 			setBusy(false);
 		}
@@ -1013,7 +1016,10 @@ export function App(props?: RenderRouteProps) @{
 									pendingBrief={startingPoint(view.session, entries)}
 									onStart={() => send(startingPoint(view.session, entries))}
 									onContinue={continueWith}
-									onApprove={(handoff) => void approveAndContinue(handoff)}
+									onApprove={(handoff, specHash) => void approveAndContinue(
+										handoff,
+										specHash,
+									)}
 									onRequestChanges={(module, comment) => void askForSpecChanges(
 										module,
 										comment,

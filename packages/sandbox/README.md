@@ -500,9 +500,15 @@ next step:
   up to four chained turns per operator message (`chainDepth` in the record).
   With it off, the transcript shows a `Continue with <role>` button instead.
 - **approval**: every new or edited module stops before implementation until
-  the operator approves its current specification. The approval route moves
-  the `status` line to `approved` and records the SHA-256 hash of that exact
-  text in the session. An `approved` line written by an agent is not authority.
+  the operator approves its current specification. The review card shows the
+  SHA-256 of the text it renders, and `POST /sandbox/api/sessions/:id/approve`
+  with `{ "module", "specHash" }` names that hash: when the document changed
+  since the review the route answers `409 SPEC_CHANGED` and records nothing,
+  and while the module has unanswered questions it answers
+  `409 QUESTIONS_PENDING`. An accepted approval moves the `status` line to
+  `approved`, records the SHA-256 hash of that exact text in the session and
+  the reviewed hash on the transcript. An `approved` line written by an agent
+  is not authority.
   Editing the specification or requesting changes makes the recorded hash
   stale and opens the approval gate again. In a multi-module session each
   affected module needs its own current approved hash.

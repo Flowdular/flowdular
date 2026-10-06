@@ -62,6 +62,9 @@ export interface ModuleSpecReview {
 	/* Workspace-relative, so the browser never sees a host path. */
 	readonly path: string;
 	readonly present: boolean;
+	/* SHA-256 of the exact text this review was read from. The approval names
+	   it, so an edit made after the review cannot be approved unseen. */
+	readonly hash: string | null;
 	readonly status: string | null;
 	/* Null when the module has no specification to gate on yet. */
 	readonly approved: boolean | null;
@@ -460,6 +463,7 @@ export async function readModuleSpecReview(
 		kind: module.kind,
 		path: `modules/${module.directory}/${SPEC_FILE}`,
 		present: draftText !== null,
+		hash: draftText === null ? null : hashSpec(draftText),
 		status: draftText === null ? null : statusOf(draftText),
 		approved: draftText === null ? null : isSpecApproved(module, draftText),
 		approvedAt: module.specApprovedAt ?? null,

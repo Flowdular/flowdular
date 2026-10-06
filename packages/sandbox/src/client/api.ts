@@ -381,10 +381,13 @@ export function setAutoContinue(
 	});
 }
 
-/* The three answers to a specification review, one module at a time. */
+/* The three answers to a specification review, one module at a time. The
+   approval names the hash of the text the operator reviewed; the sandbox
+   refuses it when the document changed since. */
 export function approveSpecification(
 	id: string,
-	module?: string,
+	module: string | undefined,
+	specHash: string,
 ): Promise<{
 	readonly session: SandboxSession;
 	readonly status: string;
@@ -392,6 +395,7 @@ export function approveSpecification(
 }> {
 	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/approve`, {
 		...(module ? { module } : {}),
+		specHash,
 	});
 }
 
