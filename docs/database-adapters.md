@@ -32,7 +32,12 @@ const databases = createDatabaseProvider(config, {
 });
 ```
 
-`@flowdular/database` owns no driver, so the caller supplies both. Composition
+`@flowdular/database` owns no driver, so the caller supplies both. The provider
+listens for the `error` events node-postgres emits on a pool and on a leased
+client, so a connection the server closes (a suspended compute, a failover, a
+restart) costs at most the query or transaction it interrupts, never the
+process; a factory
+needs no listener of its own. Composition
 injects the result as `PlatformServerContext.databases`, and that is the only
 way a module reaches storage. `GET /api/ready` reports the live adapter and
 answers 503 while the database is unreachable.

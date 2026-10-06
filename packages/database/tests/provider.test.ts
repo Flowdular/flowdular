@@ -1,6 +1,8 @@
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
 	createDatabaseProvider,
@@ -56,6 +58,92 @@ describe('lease drain on dispose', () => {
 			error.mockRestore();
 		}
 	}, 60_000);
+});
+
+/* node-postgres reports a connection the server closed as an `error` event: on
+   the pool for an idle client, on the client while it is leased. Node ends the
+   process on an `error` event nobody listens for. */
+describe('connection errors from an event-emitting driver', () => {
+	function emittingClient() {
+		return Object.assign(new EventEmitter(), {
+			async query() {
+				return { rows: [], rowCount: 0 };
+			},
+			release() {},
+		});
+	}
+
+	function emittingPool(client = emittingClient()) {
+		return Object.assign(new EventEmitter(), {
+			async connect() {
+				return client;
+			},
+			async end() {},
+		});
+	}
+
+	it('reports an idle connection error by code and message only', async () => {
+		const pools: ReturnType<typeof emittingPool>[] = [];
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		const provider = createDatabaseProvider(
+			databaseProviderConfigFromEnvironment(productionEnvironment(), scratch),
+			{
+				postgresPool: () => {
+					const pool = emittingPool();
+					pools.push(pool);
+					return pool;
+				},
+			},
+		);
+		try {
+			/* node-postgres attaches the closed client to the error it emits. */
+			const closed = Object.assign(
+				new Error('terminating connection due to administrator command'),
+				{
+					code: '57P01',
+					client: { user: 'runtime', password: 'secret', host: 'db.example' },
+				},
+			);
+			expect(() => pools[0]!.emit('error', closed)).not.toThrow();
+
+			expect(warn).toHaveBeenCalledTimes(1);
+			const output = inspect(warn.mock.calls, { depth: 10 });
+			expect(output).toContain('57P01');
+			expect(output).not.toContain('secret');
+			expect(output).not.toContain('db.example');
+		} finally {
+			await provider.dispose();
+			warn.mockRestore();
+		}
+	});
+
+	it('keeps a leased client error from ending the process, lease after lease', async () => {
+		const client = emittingClient();
+		const provider = createDatabaseProvider(
+			databaseProviderConfigFromEnvironment(productionEnvironment(), scratch),
+			{ postgresPool: () => emittingPool(client) },
+		);
+		const lease = await provider.acquire({
+			namespace: 'leased.core',
+			purpose: 'migration',
+		});
+		try {
+			for (let round = 0; round < 12; round += 1) {
+				await lease.database.transaction(async () => {
+					expect(() =>
+						client.emit(
+							'error',
+							new Error('Connection terminated unexpectedly'),
+						),
+					).not.toThrow();
+				});
+			}
+			expect(client.listenerCount('error')).toBeLessThanOrEqual(1);
+		} finally {
+			await lease.release();
+			await provider.dispose();
+		}
+	});
 });
 
 function certificateFile(name: string, contents: string): string {

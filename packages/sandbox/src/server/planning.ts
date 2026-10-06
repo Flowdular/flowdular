@@ -15,6 +15,7 @@ import {
 import type { DecisionAsk } from './decisions-runtime.ts';
 import type { GateResult } from './gates.ts';
 import { gateRepairOwner } from './gate-repair.ts';
+import { QUESTIONS_LIMITS, type QuestionsReading } from './questions.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 import {
 	moduleSuffixOf,
@@ -612,6 +613,11 @@ export interface HandoffContext {
 	/* null when the module has no specification file at all. */
 	readonly specApproved: boolean | null;
 	readonly brief: string;
+	/* What the closing reply asked the operator, as the questions protocol
+	   read it. Absent reads as asking nothing. */
+	readonly questions?: QuestionsReading;
+	/* The last handoff before this turn ran, so a repeated repair is seen. */
+	readonly previous?: HandoffPlan | null;
 }
 
 function roleName(roles: readonly AgentRoleDefinition[], id: string): string {
@@ -677,7 +683,10 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		reason: string,
 		prompt = '',
 		module = context.module,
-		options: { readonly repair?: boolean } = {},
+		options: {
+			readonly repair?: boolean;
+			readonly resendQuestions?: boolean;
+		} = {},
 	): HandoffPlan => ({
 		kind,
 		role,
@@ -686,6 +695,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		prompt,
 		module,
 		...(options.repair ? { repair: true } : {}),
+		...(options.resendQuestions ? { resendQuestions: true } : {}),
 	});
 
 	if (context.failed) {
@@ -693,6 +703,41 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 			'blocked',
 			context.role,
 			'The coding agent stopped with an error, so nothing continues on its own.',
+		);
+	}
+
+	/* Open questions stop the chain whatever else the turn did. An approval
+	   or a next specialist would otherwise run past decisions nobody made. */
+	if (context.questions?.kind === 'valid') {
+		return plan(
+			'question',
+			context.role,
+			'The specialist needs your decisions before it can continue.',
+		);
+	}
+
+	/* A block the protocol refused goes back to the specialist that wrote it,
+	   once, with the reason and the limits. It is never dropped in silence. */
+	if (context.questions?.kind === 'invalid') {
+		const reason = context.questions.reason;
+		const previous = context.previous;
+		if (previous?.resendQuestions === true && previous.role === context.role) {
+			return plan(
+				'question',
+				context.role,
+				`The questions block was refused again: ${reason} Answer in your own words, or ask the specialist to ask again.`,
+			);
+		}
+		return plan(
+			'continue',
+			context.role,
+			`The questions block was refused: ${reason} ${roleName(roles, context.role)} sends it again within the limits.`,
+			[
+				`Your questions block was refused: ${reason}`,
+				`Send the same questions again as one corrected questions block at the end of your reply. ${QUESTIONS_LIMITS} Shorten an option that is too long, or move its detail into the question. Change no files. End with your handoff line.`,
+			].join('\n\n'),
+			context.module,
+			{ repair: true, resendQuestions: true },
 		);
 	}
 

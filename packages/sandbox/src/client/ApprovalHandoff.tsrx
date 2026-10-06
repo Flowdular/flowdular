@@ -8,7 +8,8 @@ export function ApprovalHandoff(props: {
 	readonly handoff: HandoffPlan;
 	readonly reviews: readonly ModuleSpecReview[];
 	readonly busy: boolean;
-	readonly onApprove: (handoff: HandoffPlan) => void;
+	/* The hash names the exact text the operator reviewed on this card. */
+	readonly onApprove: (handoff: HandoffPlan, specHash: string) => void;
 	readonly onRequestChanges: (module: string, comment: string) => void;
 	readonly onEdit: (module: string) => void;
 }) @{
@@ -23,10 +24,10 @@ export function ApprovalHandoff(props: {
 		<SpecReviewCard
 			review={review}
 			busy={props.busy}
-			onApprove={() => props.onApprove({
-				...props.handoff,
-				module: review.module,
-			})}
+			onApprove={() => props.onApprove(
+				{ ...props.handoff, module: review.module },
+				review.hash ?? '',
+			)}
 			onRequestChanges={(comment) => props.onRequestChanges(
 				review.module,
 				comment,

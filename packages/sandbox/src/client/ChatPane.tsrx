@@ -65,7 +65,7 @@ export interface ChatPaneProps {
 	readonly pendingBrief: string;
 	readonly onStart: () => void;
 	readonly onContinue: (handoff: HandoffPlan) => void;
-	readonly onApprove: (handoff: HandoffPlan) => void;
+	readonly onApprove: (handoff: HandoffPlan, specHash: string) => void;
 	readonly onRequestChanges: (module: string, comment: string) => void;
 	readonly onEditSpec: (module: string) => void;
 	readonly onAutoContinue: (enabled: boolean) => void;

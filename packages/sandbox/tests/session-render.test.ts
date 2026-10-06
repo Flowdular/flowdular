@@ -101,6 +101,7 @@ describe('session approval rendering', () => {
 					kind: 'new',
 					path: 'modules/booking/spec/module.yaml',
 					present: true,
+					hash: 'ab12cd34ef56'.padEnd(64, '0'),
 					status: 'draft',
 					approved: false,
 					approvedAt: null,
@@ -154,6 +155,14 @@ describe('session approval rendering', () => {
 		expect(rendered.html).toContain('Zatwierdź');
 		expect(rendered.html).toContain('Plan rezerwacji');
 		expect(rendered.html).toContain('Edytuj specyfikację');
+		/* The card names the exact text the approval applies to: a short form to
+		   compare by eye, and the full value to copy. */
+		expect(rendered.html).toContain('SHA-256 tego tekstu');
+		expect(rendered.html).toContain('>ab12cd34ef56<');
+		expect(rendered.html).toContain(
+			`title="${'ab12cd34ef56'.padEnd(64, '0')}"`,
+		);
+		expect(rendered.html).toContain('Kopiuj pełny skrót');
 	});
 	it('answers nothing in an archived session that still has open questions', () => {
 		registerSandboxTranslations();
