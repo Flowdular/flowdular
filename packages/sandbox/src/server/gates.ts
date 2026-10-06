@@ -36,6 +36,33 @@ export interface GateResult {
 	readonly output: string;
 }
 
+/* One error a validator reported, in the words of the CLI envelope. A failure
+   the envelope does not tie to a file, such as an enabled module without a
+   manifest, has no file. */
+export interface GateIssue {
+	readonly file?: string;
+	readonly code: string;
+	readonly path?: string;
+	readonly message: string;
+}
+
+/* What the transcript keeps of a gate result to show it as a result. The
+   entry text still carries the command and the full output the next turn
+   reads; this is the part a reader needs first. */
+export interface GateSummary {
+	readonly id: GateId;
+	readonly module?: string;
+	readonly status: GateResult['status'];
+	/* The errors of the reports that failed. Absent when the output is not a
+	   validation envelope (a test run, a typecheck), or when the envelope was
+	   cut by the output bound and no longer parses. */
+	readonly issues?: readonly GateIssue[];
+	/* Errors past MAX_GATE_ISSUES, counted rather than dropped in silence. */
+	readonly moreIssues?: number;
+}
+
+export const MAX_GATE_ISSUES = 20;
+
 interface GateDefinition {
 	readonly id: GateId;
 	readonly summary: string;
@@ -258,6 +285,80 @@ export async function formatSession(context: {
 
 export function isGateId(value: string): value is GateId {
 	return (GATE_IDS as readonly string[]).includes(value);
+}
+
+export function summarizeGate(gate: GateResult): GateSummary {
+	const summary: GateSummary = {
+		id: gate.id,
+		...(gate.module ? { module: gate.module } : {}),
+		status: gate.status,
+	};
+	if (gate.status !== 'failed') return summary;
+	const errors = validationErrors(gate.output);
+	if (!errors) return summary;
+	return {
+		...summary,
+		issues: errors.issues,
+		...(errors.more > 0 ? { moreIssues: errors.more } : {}),
+	};
+}
+
+type Fields = Readonly<Record<string, unknown>>;
+
+function fields(value: unknown): Fields | null {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? (value as Fields)
+		: null;
+}
+
+function bounded(value: unknown, limit: number): string | undefined {
+	return typeof value === 'string' && value ? value.slice(0, limit) : undefined;
+}
+
+/* A failed validator gate prints the CLI envelope with a report for every
+   specification the workspace holds, the read-only reference copies included,
+   most of them valid with warnings. What failed is the error issues of the
+   reports marked invalid; an envelope without reports failed as a whole. */
+function validationErrors(
+	output: string,
+): { readonly issues: readonly GateIssue[]; readonly more: number } | null {
+	let envelope: Fields | null;
+	try {
+		envelope = fields(JSON.parse(output));
+	} catch {
+		return null;
+	}
+	const error = fields(envelope?.error);
+	if (envelope?.ok !== false || !error) return null;
+	const reports = fields(error.details)?.reports;
+	const issues: GateIssue[] = [];
+	let more = 0;
+	for (const report of Array.isArray(reports) ? reports : []) {
+		const entry = fields(report);
+		if (entry?.valid !== false || !Array.isArray(entry.issues)) continue;
+		const file = bounded(entry.file, 300);
+		for (const candidate of entry.issues) {
+			const issue = fields(candidate);
+			const code = bounded(issue?.code, 80);
+			const message = bounded(issue?.message, 500);
+			if (issue?.severity !== 'error' || !code || !message) continue;
+			if (issues.length >= MAX_GATE_ISSUES) {
+				more += 1;
+				continue;
+			}
+			const path = bounded(issue.path, 300);
+			issues.push({
+				...(file ? { file } : {}),
+				code,
+				...(path ? { path } : {}),
+				message,
+			});
+		}
+	}
+	if (issues.length > 0) return { issues, more };
+	const code = bounded(error.code, 80);
+	const message = bounded(error.message, 500);
+	return code && message ? { issues: [{ code, message }], more: 0 } : null;
 }
 
 function runProcess(

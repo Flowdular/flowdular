@@ -523,7 +523,10 @@ next step:
 A failed gate is its own handoff: the specialist that caused it fixes it before
 anyone else works, so a broken change never travels down the chain. The fix
 prompt carries the gate command and the first 4000 characters of its output;
-the transcript keeps the whole output (head and tail of a long one).
+the transcript keeps the whole output (head and tail of a long one). When the
+same turn also asks questions, the questions come first and the handoff names
+the failed gate: the gates run again after the answering turn, and a failure
+that remains then gets its repair turn.
 
 ### Active questions
 
@@ -757,9 +760,12 @@ After a turn the module gates run for the modules that hold changes, not for
 every module of the session, and every result names the module it ran in. The
 `dependencies` gate runs after every turn that changed files, whatever the role
 lists. A failing gate is written back into the conversation, with its
-command and output, so the next turn can fix it. An agent whose driver has a
-shell may run the same commands itself; the sandbox still runs them after the
-turn.
+command and output, so the next turn can fix it. The transcript shows each
+result as a gate card; a failed validator lists the errors of its failing
+reports (code, file, path and message, the first 20 and a count of the rest),
+with the command and the full output folded under the details. An agent whose
+driver has a shell may run the same commands itself; the sandbox still runs
+them after the turn.
 
 ## Preview
 

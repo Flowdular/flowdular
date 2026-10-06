@@ -297,3 +297,112 @@ describe('session state pill', () => {
 		expect(pill('awaiting-answers')).not.toContain('zatwierdz');
 	});
 });
+
+describe('transcript entries', () => {
+	function transcript(entries: ChatPaneProps['entries']): string {
+		const noop = () => {};
+		const html = renderToString(ChatPane, {
+			entries,
+			delivered: false,
+			archived: false,
+			roles: [],
+			drivers: [],
+			modules: [],
+			specs: [],
+			role: 'auto',
+			module: '',
+			driver: '',
+			message: '',
+			running: false,
+			selection: null,
+			autoContinue: false,
+			pendingQuestions: null,
+			answersError: '',
+			pendingBrief: '',
+			onStart: noop,
+			onContinue: noop,
+			onApprove: noop,
+			onRequestChanges: noop,
+			onEditSpec: noop,
+			onAutoContinue: noop,
+			onRole: noop,
+			onModule: noop,
+			onDriver: noop,
+			onMessage: noop,
+			onSend: noop,
+			onAnswers: noop,
+			onStop: noop,
+			onClearSelection: noop,
+		}).html;
+		return html.replace(/<!--[\s\S]*?-->/g, '');
+	}
+
+	it('shows a failed gate as the errors of its failing reports, the raw output folded away', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const message =
+			'Field "equipment-item.createdAt" collides with the id, tenantId or createdAt column every tenant table owns.';
+		const output = JSON.stringify({
+			protocolVersion: 1,
+			ok: false,
+			error: {
+				code: 'SPEC_VALIDATION_FAILED',
+				message: 'One or more specifications are invalid.',
+				details: {
+					reports: [
+						{
+							file: 'reference/example-module/spec/module.yaml',
+							valid: true,
+							issues: [],
+						},
+						{
+							file: 'modules/equipment/spec/module.yaml',
+							valid: false,
+							issues: [
+								{
+									code: 'SPEC_FIELD_RESERVED',
+									message,
+									path: '/entities/0/fields/7/id',
+									severity: 'error',
+								},
+							],
+						},
+					],
+				},
+			},
+		});
+		const html = transcript([
+			{
+				sequence: 63,
+				at: 1,
+				kind: 'system',
+				role: 'business-manager',
+				text: `Gate spec-schema failed.\nCommand: pnpm flowdular spec validate --all --json\n\n${output}`,
+				gate: {
+					id: 'spec-schema',
+					status: 'failed',
+					issues: [
+						{
+							file: 'modules/equipment/spec/module.yaml',
+							code: 'SPEC_FIELD_RESERVED',
+							path: '/entities/0/fields/7/id',
+							message,
+						},
+					],
+				},
+			},
+		]);
+		const visible = html.replace(/<details[\s\S]*?<\/details>/g, '');
+
+		expect(visible).toContain('Requirements document');
+		expect(visible).toContain('Needs a fix');
+		expect(visible).toContain(message);
+		expect(visible).toContain('SPEC_FIELD_RESERVED');
+		expect(visible).toContain('/entities/0/fields/7/id');
+		expect(visible).not.toContain('reference/example-module');
+		expect(visible).not.toContain('protocolVersion');
+		/* The specialist's view of the same result is still there, folded. */
+		expect(html).toMatch(/<details>[\s\S]*protocolVersion[\s\S]*<\/details>/);
+	});
+
+});

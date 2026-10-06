@@ -12,6 +12,7 @@ import {
 	handoffLabel,
 	roleLabel,
 } from '../src/client/session-labels.ts';
+import { GATE_IDS } from '../src/server/gates.ts';
 
 describe('session labels', () => {
 	it('changes role, delivery and gate labels when the locale changes', () => {
@@ -62,6 +63,7 @@ describe('session labels', () => {
 				const key = 'sandbox.gates.status.' + status;
 				expect(t(key)).not.toBe(key);
 			}
+			for (const id of GATE_IDS) expect(gateLabel(id)).not.toBe(id);
 			expect(roleLabel('my-specialist', 'My specialist')).toBe('My specialist');
 			expect(gateLabel('custom-check')).toBe('custom-check');
 		}

@@ -15,6 +15,7 @@ const GATES = new Set([
 	'spec-schema',
 	'module-schema',
 	'dependencies',
+	'module-rules',
 	'typecheck',
 	'tests',
 	'format',

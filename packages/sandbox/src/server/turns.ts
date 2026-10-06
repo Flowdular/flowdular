@@ -42,6 +42,7 @@ import {
 	formatDirectory,
 	isGateId,
 	runGates,
+	summarizeGate,
 	type GateId,
 	type GateResult,
 } from './gates.ts';
@@ -641,6 +642,7 @@ export async function* runTurn(
 			role: roleId,
 			module: active.directory,
 			text: gateSummary(initialInstall),
+			gate: summarizeGate(initialInstall),
 			event: {
 				type: 'error',
 				code: 'GATE_DEPENDENCIES',
@@ -697,6 +699,7 @@ export async function* runTurn(
 				kind: 'system',
 				role: roleId,
 				text: gateSummary(install),
+				gate: summarizeGate(install),
 			});
 		}
 	}
@@ -1085,6 +1088,7 @@ export async function* runTurn(
 			role: roleId,
 			...(gate.module ? { module: gate.module } : {}),
 			text: gateSummary(gate),
+			gate: summarizeGate(gate),
 			event: {
 				type: gate.status === 'failed' ? 'error' : 'tool.completed',
 				...(gate.status === 'failed'

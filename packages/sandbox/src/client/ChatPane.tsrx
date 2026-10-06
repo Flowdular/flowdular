@@ -23,6 +23,7 @@ import {
 	type PendingQuestion,
 	type PendingQuestions,
 } from '../server/questions.ts';
+import { GateCard } from './GateCard.tsrx';
 import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
 import { transcriptRows, type TranscriptRow } from './transcript.ts';
@@ -561,6 +562,14 @@ export function ChatPane(props: ChatPaneProps) @{
 							}
 							{restoreRow(block.key)}
 						</article>
+					} @else if (block.entry!.gate) {
+						<GateCard
+							gate={block.entry!.gate!}
+							output={block.entry!.text ?? ''}
+							module={props.modules.length > 1
+								? block.entry!.module ?? null
+								: null}
+						/>
 					} @else {
 						<article
 							class={[

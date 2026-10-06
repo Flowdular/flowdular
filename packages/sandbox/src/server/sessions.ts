@@ -24,6 +24,7 @@ import {
 	replaceLocalFile,
 	withLocalFileLock,
 } from './local-file.ts';
+import type { GateSummary } from './gates.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -173,6 +174,9 @@ export interface ChatEntry {
 	readonly module?: string;
 	readonly text?: string;
 	readonly event?: CodingAgentEvent;
+	/* Set on the entry that records a gate result, so the transcript can show
+	   it as one. */
+	readonly gate?: GateSummary;
 	readonly handoff?: HandoffPlan;
 	/* Attachments included with this turn, echoed onto the user entry so the
 	   transcript records exactly what the agent was shown. */
@@ -216,6 +220,17 @@ function redactEntry(entry: ChatEntry): ChatEntry {
 	return {
 		...entry,
 		...(entry.text === undefined ? {} : { text: redactText(entry.text) }),
+		...(entry.gate?.issues
+			? {
+					gate: {
+						...entry.gate,
+						issues: entry.gate.issues.map((issue) => ({
+							...issue,
+							message: redactText(issue.message),
+						})),
+					},
+				}
+			: {}),
 	};
 }
 

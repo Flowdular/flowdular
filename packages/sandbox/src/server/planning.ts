@@ -707,12 +707,17 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 	}
 
 	/* Open questions stop the chain whatever else the turn did. An approval
-	   or a next specialist would otherwise run past decisions nobody made. */
+	   or a next specialist would otherwise run past decisions nobody made. A
+	   failed gate waits too, and the reason says so: the gates run again after
+	   the answering turn, and what still fails then gets its repair turn. */
 	if (context.questions?.kind === 'valid') {
+		const failed = context.gates.find((gate) => gate.status === 'failed');
 		return plan(
 			'question',
 			context.role,
-			'The specialist needs your decisions before it can continue.',
+			failed
+				? `The specialist needs your decisions before it can continue. The ${gateLabel(failed)} gate failed as well: the gates run again after your answers, and a failure that remains goes back to the specialist.`
+				: 'The specialist needs your decisions before it can continue.',
 		);
 	}
 
