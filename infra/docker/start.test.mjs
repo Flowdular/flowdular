@@ -227,3 +227,21 @@ test('the shipped template uses an HTTP cookie and a requested local port', () =
 		assert.equal(result.appPath, '/app');
 		assert.equal(values.FD_AUTH_SECURE_COOKIE, 'false');
 	}));
+
+test('every value the shipped template documents reaches compose', () => {
+	const example = parseEnv(
+		readFileSync(new URL('.env.example', import.meta.url), 'utf8'),
+	);
+	const compose = readFileSync(
+		new URL('compose.yaml', import.meta.url),
+		'utf8',
+	);
+	/* The app service lists its environment explicitly, so a key the operator
+	   sets in .env that compose never names is dropped without a warning.
+	   Compose reads the project name itself. */
+	assert.ok('FD_OPERATOR_TENANT' in example);
+	for (const key of Object.keys(example)) {
+		if (key === 'COMPOSE_PROJECT_NAME') continue;
+		assert.match(compose, new RegExp(`\\$\\{${key}[:?}-]`), key);
+	}
+});
