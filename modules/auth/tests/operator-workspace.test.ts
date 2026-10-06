@@ -540,6 +540,24 @@ describe('AUTH-OPERATOR-COMMAND', () => {
 		expect(await operatorEvents(service, b.tenantId)).toHaveLength(1);
 	});
 
+	it('records the workspace an id names even when an earlier workspace took that id as its slug', async () => {
+		const { database, service } = await fixture();
+		const impostor = await legacyWorkspace(database, 'tenant-target');
+		const target = await legacyWorkspace(database, 'target');
+		expect(target).toBe('tenant-target');
+
+		const applied = await setOperator(
+			cliContext(database.provider, { apply: true, arguments: [target] }),
+		);
+
+		expect(applied.data).toMatchObject({ to: { tenantId: target } });
+		expect(await service.operatorStanding(target)).toBe('own');
+		expect(await service.operatorStanding(impostor)).toBe('other');
+		expect(await service.operatorWorkspace()).toMatchObject({
+			workspace: { tenantId: target, slug: 'target' },
+		});
+	});
+
 	it('refuses a reference to no workspace and changes nothing', async () => {
 		const { database, service } = await fixture();
 		const a = await provision(service, 'workspace-a');

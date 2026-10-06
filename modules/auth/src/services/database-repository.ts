@@ -730,10 +730,12 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return rows.length > 0;
 	}
 
+	/* A slug may spell another workspace's id, so the id match wins. */
 	async findTenant(reference: string): Promise<TenantSummary | null> {
 		const rows = await this.#route<TenantRow>({
 			text: `SELECT id, name, slug FROM auth_tenants
-			       WHERE id = $1 OR slug = $1 LIMIT 1`,
+			       WHERE id = $1 OR slug = $1
+			       ORDER BY (id = $1) DESC LIMIT 1`,
 			parameters: [reference],
 		});
 		return rows[0] ? tenantSummary(rows[0]) : null;
