@@ -14,7 +14,7 @@ Two ways to land the same module: the sandbox (a brief, specialist turns, gates 
 
 With an approved `schemaVersion: 2` spec, the specification is the requirement document and you do not go looking for one. Read the spec, the files on this skill's touch list, and `.ai/references/catalog` for shape. Do not scan `modules/` or `packages/`; `.ai/platform-capabilities.md` answers what the platform provides, and the reference module answers what the code looks like.
 
-Anything the spec does not say is a spec defect, not a decision you make. A missing field, an unstated conflict behaviour, an undefined state transition, a screen without columns: report it back. In the sandbox that is `HANDOFF: business-manager - <what is missing>`; on a host it is a question to the user. Never fill the gap with a plausible guess, and never implement anything listed in `outOfScope[]`.
+Anything the spec does not say is a spec defect, not a decision you make. A missing field, an unstated conflict behaviour, an undefined state transition, a screen without columns: report it back. In the sandbox that is a `questions` block the operator answers, and the business manager records an answer that changes the spec for a new approval before you continue; on a host it is a question to the user. Never fill the gap with a plausible guess, and never implement anything listed in `outOfScope[]`.
 
 Every `acceptanceScenarios[]` entry maps to at least one test in `tests/`. A scenario with no test is unfinished work, and the scenario id belongs in the test name so the mapping is readable.
 

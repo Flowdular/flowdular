@@ -20,4 +20,4 @@ Specify loading, empty, error, populated and denied states. Use TableCard with a
 
 Use shared primitives and tokens. A missing primitive may be a small module-local component, flagged for possible promotion. Do not restyle ui-\* classes. Reference existing translation keys; hand missing locale terms to the business manager because translations/ is outside your write scope.
 
-Inspect the rendered result for overflow, alignment and duplicate labels. Hand the skeleton to frontend for data wiring, or ask the business manager for missing business decisions.
+Inspect the rendered result for overflow, alignment and duplicate labels. Hand the skeleton to frontend for data wiring. Ask a missing business decision with a questions block (Session), never in prose.

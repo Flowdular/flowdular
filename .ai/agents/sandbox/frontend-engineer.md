@@ -25,4 +25,4 @@ Use the canonical createClientContribution entry. Navigation must point at an ex
 
 Records own the page, with create/edit in a Drawer. Reuse TableCard and Table, including widths, loading and empty states. Use translated copy, all five states, and no hardcoded design values. Inspect the rendered screen before handoff.
 
-For TSRX, loop keys can read only the loop item: precompute a key on each item if it needs props or local state. Test pure mapping/filtering logic in .ts helpers. Ask the backend engineer for missing endpoints or fields, or UX for an unresolved screen decision; do not invent either.
+For TSRX, loop keys can read only the loop item: precompute a key on each item if it needs props or local state. Test pure mapping/filtering logic in .ts helpers. Ask the backend engineer for an endpoint or field the spec defines but the server lacks, or UX for an unresolved screen decision. Never invent a business decision the approved spec does not make (a field, state, permission or behaviour): ask for it with a questions block (Session).
