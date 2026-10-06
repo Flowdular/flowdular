@@ -103,7 +103,6 @@ try {
 		'.ai/agents',
 		'.ai/policies',
 		'.ai/references/catalog',
-		'.ai/references/catalog.provenance.json',
 		'.ai/platform-capabilities.md',
 		'docs/design-system.md',
 		'docs/agent-contract.md',

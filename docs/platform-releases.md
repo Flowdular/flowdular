@@ -31,8 +31,9 @@ context providers as `<Context value={value}>`, so modules using
 `<Context.Provider>` must update that syntax when they upgrade.
 Host elements must also use Octane's camel-case `minLength` and `enterKeyHint`
 property names; the DOM property check covers both.
-The offline catalog under `.ai/references/catalog` remains pinned to its verified
-official artifact until a replacement artifact is published.
+The catalog reference under `.ai/references/catalog` lives in this repository and
+passes module validation; its `package.json` still names the SDK and Octane
+versions it was written against.
 Installations from Flowdular 0.5 or earlier follow [flowdular-rename.md](flowdular-rename.md).
 
 Use **dry_run** to build and sign downloadable Actions artifacts without creating

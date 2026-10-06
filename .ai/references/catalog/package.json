@@ -30,8 +30,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/Flowdular/official-modules.git",
-		"directory": "modules/catalog"
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": ".ai/references/catalog"
 	},
 	"files": [
 		"src",
