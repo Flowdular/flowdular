@@ -1,7 +1,6 @@
 // Checks (or with --fix renames) DOM property names Octane expects in camelCase
 // on host elements in the TSRX sources of packages, modules and the platform.
-// Tests are skipped (they may build raw HTML strings), and so is the pinned
-// catalog reference, which changes only with an official catalog release.
+// Tests are skipped (they may build raw HTML strings).
 // Run: node scripts/dom-properties.mjs --check | --fix
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -12,10 +11,6 @@ import {
 
 const root = new URL('..', import.meta.url).pathname;
 const SKIP = new Set(['node_modules', 'dist', '.flowdular', '.git']);
-const PINNED_CATALOG_COPY = join(
-	root,
-	'packages/create-flowdular/agent-template/.ai/references/catalog',
-);
 
 async function tsrxFiles(directory) {
 	let entries;
@@ -27,7 +22,7 @@ async function tsrxFiles(directory) {
 	const files = [];
 	for (const entry of entries) {
 		const path = join(directory, entry.name);
-		if (SKIP.has(entry.name) || path === PINNED_CATALOG_COPY) continue;
+		if (SKIP.has(entry.name)) continue;
 		if (entry.isDirectory()) files.push(...(await tsrxFiles(path)));
 		else if (entry.name.endsWith('.tsrx')) files.push(path);
 	}

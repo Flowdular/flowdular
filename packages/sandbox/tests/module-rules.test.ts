@@ -105,21 +105,20 @@ describe('module rules gate', () => {
 		expect(report.output).toContain('ENABLE ROW LEVEL SECURITY');
 	});
 
-	/* The pinned reference module still carries the pre-0.6 tenant setting. A
-	   session that copies its migration must fail here, before a preview applies
-	   it to an empty database where every policy would see no tenant. */
-	it('fails a migration copied from the pinned reference', async () => {
+	/* A session that copies a policy on another tenant setting must fail here,
+	   before a preview applies it to an empty database where every policy would
+	   see no tenant. */
+	it('fails a migration whose policy reads another tenant setting', async () => {
 		const { modulePath } = await fixture();
 		await mkdir(join(modulePath, 'migrations'), { recursive: true });
 		await writeFile(
 			join(modulePath, 'migrations', '0001_claims.up.sql'),
-			await readFile(
-				new URL(
-					'../../../.ai/references/catalog/migrations/0001_catalog_core.up.sql',
-					import.meta.url,
-				),
-				'utf8',
-			),
+			[
+				'CREATE POLICY claims_records_tenant_policy ON claims_records',
+				"  USING (tenant_id = current_setting('legacy.tenant_id', true))",
+				"  WITH CHECK (tenant_id = current_setting('legacy.tenant_id', true));",
+				'',
+			].join('\n'),
 		);
 		const report = await runGateFor(modulePath);
 		expect(report.passed).toBe(false);

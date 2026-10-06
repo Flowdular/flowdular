@@ -13,11 +13,11 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "^0.8.0"
+			"range": "^0.9.0"
 		},
 		{
 			"id": "auth.core",
-			"range": "^0.13.0"
+			"range": "^0.14.0"
 		},
 		{
 			"id": "exports.core",
@@ -33,5 +33,5 @@
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",
-	"platformApi": "^0.1.0"
+	"platformApi": "^0.2.0"
 }

@@ -623,8 +623,7 @@ request names `workspace` or `git-pr` (default from configuration); the plan
 answer lists `availableTargets` with a reason for each unavailable target.
 The screen offers the choice when both are usable. `git-pr` sends an approved,
 gate-checked change to the platform repository configured by the operator.
-The former `official-modules` target was removed; publishing a source catalog
-is a separate host workflow described in [Module Studio](../../docs/module-distribution.md).
+Publishing a source catalog is a separate host workflow described in [Module Studio](../../docs/module-distribution.md).
 
 ### As a pull request (`git-pr`)
 

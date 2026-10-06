@@ -2,8 +2,11 @@ import { PLATFORM_API_VERSION } from '@flowdular/contracts';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { ModuleManifest } from '@flowdular/contracts';
+import { createModuleRegistry } from '@flowdular/kernel';
+import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import { moduleLayoutIssues, validateModules } from '../src/module-validate.ts';
 
 const manifest: ModuleManifest & {
@@ -354,18 +357,18 @@ describe('module contract drift', () => {
 	});
 });
 
-/* The pinned reference module still carries the pre-0.6 identifiers. A module
-   that copied them must fail validation without a database to apply them to. */
+/* A module that copied pre-0.6 identifiers must fail validation without a
+   database to apply them to. */
 describe('migration identifiers', () => {
-	const reference = new URL(
-		'../../../.ai/references/catalog/migrations/0001_catalog_core.up.sql',
-		import.meta.url,
-	);
-
-	it('reports a tenant setting copied from the pinned reference', async () => {
+	it('reports a tenant setting the platform never sets', async () => {
 		const { root, dispose } = await moduleRoot({
 			...complete,
-			'migrations/0001_billing_core.up.sql': await readFile(reference, 'utf8'),
+			'migrations/0001_billing_core.up.sql': [
+				'CREATE POLICY billing_runs_tenant_policy ON billing_runs',
+				"  USING (tenant_id = current_setting('legacy.tenant_id', true))",
+				"  WITH CHECK (tenant_id = current_setting('legacy.tenant_id', true));",
+				'',
+			].join('\n'),
 		});
 		try {
 			const issues = await moduleLayoutIssues(root, manifest);
@@ -409,5 +412,36 @@ describe('migration identifiers', () => {
 		} finally {
 			await dispose();
 		}
+	});
+});
+
+/* Agents copy the catalog reference into new modules, so it must pass the
+   validation those modules face and register beside the shipped modules. */
+describe('catalog reference module', () => {
+	const root = new URL('../../../.ai/references/catalog/', import.meta.url);
+	const readManifest = async (url: URL) =>
+		JSON.parse(await readFile(url, 'utf8')) as typeof manifest;
+
+	it('passes module layout validation', async () => {
+		const reference = await readManifest(new URL('module.json', root));
+		expect(
+			await moduleLayoutIssues(fileURLToPath(root), reference, {
+				projectLocales: reference.locales,
+			}),
+		).toEqual([]);
+	});
+
+	it('registers beside the shipped modules', async () => {
+		const shipped = await Promise.all(
+			findModuleManifests(
+				fileURLToPath(new URL('../../../', import.meta.url)),
+			).map((file) => readManifest(pathToFileURL(file))),
+		);
+		const registry = createModuleRegistry(
+			[...shipped, await readManifest(new URL('module.json', root))].map(
+				(entry) => ({ manifest: entry }),
+			),
+		);
+		expect(registry.has('catalog.core')).toBe(true);
 	});
 });

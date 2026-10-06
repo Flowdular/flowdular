@@ -60,13 +60,11 @@ const findings = [];
 const obsolete = [];
 for (const file of sources) {
 	const relativePath = relative(root, file);
-	/* The pinned catalog reference changes only with an official release, and
-	   the scaffold template ships without the workspace's stylesheets. */
+	/* The scaffold template ships without the workspace's stylesheets. */
 	if (
 		/* Tests build markup to drive a query, not to be looked at. */
 		relativePath.includes('/tests/') ||
 		relativePath.includes('.test.') ||
-		relativePath.startsWith('.ai/references/') ||
 		relativePath.includes('create-flowdular/template/') ||
 		relativePath.includes('create-flowdular/agent-template/')
 	)

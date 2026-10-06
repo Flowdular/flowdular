@@ -77,8 +77,7 @@ release. No direct registry installation path remains.
 Automation that imported `installModule` from `flowdular/distribution` must use
 the host CLI plan and apply commands; that direct install export was removed.
 
-The old `official-modules` Sandbox delivery target was removed. Change
-`sandbox.delivery.targets` to `workspace` or `git-pr`; `git-pr` points to the
+Sandbox delivery targets are `workspace` and `git-pr`; `git-pr` points to the
 platform repository configured in `flowdular.json`. A catalog publisher can
 use any Git repository and publish immutable artifacts independently. Historical
 review and RFC documents retain the old project name as provenance.

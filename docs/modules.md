@@ -2,7 +2,7 @@
 
 A module is a self-contained slice of the product: its own permissions,
 endpoints, migrations, services, screens, translations and tests, wired into the
-platform without touching a core file. `.ai/references/catalog` is the pinned reference
+platform without touching a core file. `.ai/references/catalog` is the reference
 implementation; copy its shape.
 
 ## Lifecycle
@@ -419,4 +419,4 @@ RuleSync generates the discovery copies for supported coding agents:
 `test-hardening`, `cli-extension`, `agent-tool-design`,
 `business-agent-design`, `workflow-development`, `release-eject-pr`.
 
-Official business modules are maintained outside core. See [module distribution](module-distribution.md) for install, update, lock verification and release checks.
+Business modules kept outside this repository install through [module distribution](module-distribution.md), which covers install, update, lock verification and release checks.

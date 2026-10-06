@@ -1,13 +1,13 @@
 # RFC 0005 first wave review record (2026-09-12)
 
-Scope: the wave the owner accepted on 2026-09-12: I1 (official modules on
+Scope: the wave the owner accepted on 2026-09-12: I1 (external modules on
 the current core), I4 with the small I6 items (review follow-ups and the
 open audit items), I2 (server-side lists), I3 (selection and bulk actions),
 I7 (documentation) at any point. This record grows with the wave.
 
-## I1: official modules against the current core
+## I1: external modules against the current core
 
-Delivered in `Flowdular/official-modules` pull request #1 (branch
+Delivered in the module repository's pull request #1 (branch
 `feat/core-0.2-compat`, commits `d7544e8` and `b8281b3`), tested against the
 SDK packed from this tree at `flowdular` 0.2.4, `@flowdular/sdk` 0.2.4,
 `create-flowdular` 0.2.6.
@@ -29,18 +29,18 @@ SDK packed from this tree at `flowdular` 0.2.4, `@flowdular/sdk` 0.2.4,
   still accepted by the validator.
 - Review records carry the new source digests; `release:pack --local`
   produced the three release artifacts and the local index.
-- Gates in the official repository against the packed SDK: rules, typecheck,
+- Gates in the module repository against the packed SDK: rules, typecheck,
   tests (expenses 54, catalog 35, parties 68, consumer 3), `module validate`,
   prettier.
 - Acceptance in a fresh consumer app created by the SDK smoke (21 core
   modules): `module install` of the three releases from the local index,
-  `module enable`, `module validate`, the app's `verify` (168 official module
+  `module enable`, `module validate`, the app's `verify` (168 external module
   tests) and `build`, all exit 0.
 - In this tree: `.ai/references/catalog` regenerated from the 0.7.0 artifact
   by `scripts/module-reference.mjs` (provenance pinned to `b8281b3`),
   `docs/module-distribution.md` names platform API 0.1.3.
 
-Open: the official lockfile still resolves the 0.1.0 SDK, so its CI stays
+Open: the module repository's lockfile still resolves the 0.1.0 SDK, so its CI stays
 red on `--frozen-lockfile` until the 0.2.4 packages are on npm and the
 lockfile is regenerated; the owner deferred that publication. The first
 commit's hunk split put a few data class spec bullets next to the version
@@ -302,14 +302,14 @@ API 0.1.6, format, rules, reference, `spec validate`, `module validate`,
 The audit items #11, #12 and #13 were delivered on 2026-09-14 under the
 owner's delegation, see `docs/reviews/audit-operations-2026-09-14.md`. Still
 open by decision: the npm publication of the 0.3.0 packages (the 0.2.x
-versions on npm predate these waves) and the official module lockfile
+versions on npm predate these waves) and the module repository's lockfile
 regeneration that follows it; H9, H10 and H11 of RFC 0004 on their
 triggers; enabling modules from the administration UI.
 
-## Official modules on the list contract (delivered 2026-09-15)
+## External modules on the list contract (delivered 2026-09-15)
 
-Decision (owner, 2026-09-14, item 5): the official modules get server lists,
-list export and bulk actions. Delivered in `Flowdular/official-modules` pull
+Decision (owner, 2026-09-14, item 5): the external modules get server lists,
+list export and bulk actions. Delivered in the module repository's pull
 requests #4 (branch `feat/lists-export-bulk`) and #5 (public index pin).
 
 - catalog.core 0.8.0: `GET /api/catalog/items` on a signed keyset cursor
@@ -326,9 +326,9 @@ requests #4 (branch `feat/lists-export-bulk`) and #5 (public index pin).
   without `exports.core` still composes; screens use `Table mode="server"`
   with selection and a confirm dialog before a destructive bulk action.
 - Minor bumps because the service `list` signatures changed; the consumer
-  test in the official repository moved to the paged parties list.
+  test in the module repository moved to the paged parties list.
 
-Found by the official PostgreSQL job and fixed before merge: the `updated_at`
+Found by the module repository's PostgreSQL job and fixed before merge: the `updated_at`
 backfills matched no row under forced row-level security (the migrator holds
 no tenant setting; PGlite runs as a superuser and hides it). Both migrations
 lift the force flag around the backfill, the auth 0031 pattern, and were

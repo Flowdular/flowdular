@@ -1,6 +1,6 @@
-# RFC 0005: Server-side lists, official module distribution and the recorded debt
+# RFC 0005: Server-side lists, external module distribution and the recorded debt
 
-- The official module distribution items below record the 2026-09-12 decision
+- The external module distribution items below record the 2026-09-12 decision
   and are superseded by [Module Studio](../module-distribution.md). They are not
   current installation or release instructions.
 - Status: accepted by the owner on 2026-09-12; first wave I1, I4, I2, I3, I6
@@ -11,7 +11,7 @@
 - Date: 2026-09-12
 - Follows: RFC 0004 (platform services, first wave delivered on 2026-09-12,
   see `docs/reviews/platform-services-rfc0004-2026-09-12.md`), RFC 0003
-  (official module distribution, MVP on 2026-09-10)
+  (external module distribution, MVP on 2026-09-10)
 - Relates to: ADR 0003 (module settings), ADR 0005 (sandbox runtime), RFC
   0001 and RFC 0002 (enterprise readiness and modules)
 
@@ -19,7 +19,7 @@
 
 RFC 0004 closed the services a module reaches for. What the tree still
 carries is older and less visible: lists that load a whole workspace into one
-response, a server-side `Table` mode with no consumer, three official modules
+response, a server-side `Table` mode with no consumer, three external modules
 that no longer install on the core they were written for, follow-ups the last
 two review rounds recorded, an audit backlog nobody re-triaged after two
 deliveries, and a blueprint section that describes an agent layer that was
@@ -28,7 +28,7 @@ above, gives a verdict per item and proposes an order.
 
 The verdicts follow RFC 0002 and RFC 0004: **module** (its own tables,
 permissions, screens, an approved spec), **platform capability** (a seam in
-`packages/*` or `platform/*`), **distribution** (the official module
+`packages/*` or `platform/*`), **distribution** (the separate module
 repository and the registry) or **documentation**.
 
 ## What exists today, read out of the tree
@@ -54,7 +54,7 @@ repository and the registry) or **documentation**.
   (`packages/ui/src/components/Table.tsrx`: `onSelect` and `selectedKey`
   highlight one row for navigation). The capability card lists multi-row
   actions under what does not exist.
-- Official modules: `Flowdular/official-modules` holds catalog, expenses and
+- External modules: a separate module repository holds catalog, expenses and
   parties with approved specs, a release registry and a consumer test
   against the packed SDK. All three pin system.core at 0.5.0, auth.core at
   0.10.0 and platformApi at 0.1.0 exactly. The core is at system 0.7.2, auth
@@ -86,20 +86,20 @@ repository and the registry) or **documentation**.
 
 ## Gaps
 
-### I1. Official modules against the current core
+### I1. External modules against the current core
 
 **Verdict: distribution, first.**
 
-Re-release catalog, expenses and parties in `Flowdular/official-modules`
+Re-release catalog, expenses and parties in the module repository
 against the packed SDK 0.2.x: caret ranges on system and auth, `platformApi
 ^0.1.0`, the spec sections the current validator expects, data class
 declarations for their tables, and where a list already pages a
 `defineListExport` registration. Refresh the registry index, the review
 records and the consumer test; refresh `.ai/references/catalog` from the
 released catalog. Without this the "full publication" the owner deferred
-ships an SDK with no installable official module.
+ships an SDK with no installable external module.
 
-Extends: the official module repository, `.ai/references/catalog`. Depends
+Extends: the module repository, `.ai/references/catalog`. Depends
 on: the SDK pack from this tree. Risk: the modules were last exercised on
 auth 0.10; the owner and member scope defaults changed in auth 0023 to 0030,
 so the consumer test has to run on a fresh workspace and on an upgraded one.
@@ -222,7 +222,7 @@ Nothing in this reading changes those verdicts.
 
 ## Proposed order
 
-1. **I1, official modules.** The publication the owner deferred depends on
+1. **I1, external modules.** The publication the owner deferred depends on
    it.
 2. **I4, the small follow-ups.** Already specified by the reviews.
 3. **I2, server-side lists.** The widest diff; one module per stream with
@@ -238,14 +238,14 @@ Nothing in this reading changes those verdicts.
 
 - First wave: I1, then I4 with the small I6 items, then I2, then I3, in the
   order proposed above; I7 lands at any point.
-- I1 lands as its own pull request in the official module repository,
+- I1 lands as its own pull request in the module repository,
   tested against the SDK packed from this tree, before the npm publication.
 - I3 starts on the users members list as soon as that list is on the server
   mode; the other screens follow as I2 moves them.
 
 ## Open questions for the owner, as they stood before the decisions
 
-- Does I1 land in the official module repository as its own pull request
+- Does I1 land in the module repository as its own pull request
   before the npm publication, or together with it.
 - Which items form the first wave, and is the order above acceptable.
 - Should I3 (bulk actions) wait for I2 to finish, or ship on the users

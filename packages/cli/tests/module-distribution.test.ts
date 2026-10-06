@@ -11,8 +11,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
 	ModuleArtifact,
@@ -46,31 +45,6 @@ import {
 	readModulePlan,
 } from '../src/module-plans.ts';
 import { addModuleSource, readModuleSources } from '../src/module-sources.ts';
-
-it('rejects a missing reference repository before reading an artifact', () => {
-	const script = fileURLToPath(
-		new URL('../../../scripts/module-reference.mjs', import.meta.url),
-	);
-	const result = spawnSync(
-		process.execPath,
-		[
-			script,
-			'--artifact',
-			'missing-artifact.json',
-			'--sha256',
-			'0'.repeat(64),
-			'--source-commit',
-			'a'.repeat(40),
-			'--repository',
-			'--apply',
-		],
-		{ encoding: 'utf8' },
-	);
-	expect(result.status).not.toBe(0);
-	expect(result.stderr).toContain(
-		'Reference repository must be a nonempty, bounded source',
-	);
-});
 
 const roots: string[] = [];
 afterEach(async () => {

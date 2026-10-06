@@ -26,8 +26,8 @@ CREATE INDEX IF NOT EXISTS catalog_items_tenant_sku_idx
 ALTER TABLE catalog_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_items FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_items_tenant_policy ON catalog_items
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const CATALOG_MIGRATION_002_HISTORY = `CREATE TABLE IF NOT EXISTS catalog_items_history (
@@ -48,8 +48,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS catalog_items_history_tenant_record_version_id
 ALTER TABLE catalog_items_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_items_history FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_items_history_tenant_policy ON catalog_items_history
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const CATALOG_MIGRATION_003_HISTORY_SERVICE_ACTORS = `CREATE TABLE IF NOT EXISTS catalog_items_history_v2 (
@@ -86,8 +86,8 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE catalog_items_history_v2 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_items_history_v2 FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_items_history_v2_tenant_policy ON catalog_items_history_v2
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const CATALOG_MIGRATION_004_IDEMPOTENCY_LEDGER = `CREATE TABLE IF NOT EXISTS catalog_idempotency_ledger (
@@ -107,8 +107,8 @@ CREATE INDEX IF NOT EXISTS catalog_idempotency_ledger_tenant_operation_idx
 ALTER TABLE catalog_idempotency_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_idempotency_ledger FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_idempotency_ledger_tenant_policy ON catalog_idempotency_ledger
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const CATALOG_MIGRATION_005_LIST_INDEXES = `ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;

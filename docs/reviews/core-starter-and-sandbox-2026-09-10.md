@@ -4,7 +4,7 @@ Verdict: pass. Base: a4532b7. Reviewed implementation, generated composition, ca
 
 ## Behavior and compatibility
 
-The generator now enables the platform's nine core modules plus the existing example. Template composition and enabled modules were written by the CLI's `enableModule` implementation against an installed SDK, without database seeding in the template. The scaffold test compares the generated enabled set with the platform set. No Official Modules business package was added.
+The generator now enables the platform's nine core modules plus the existing example. Template composition and enabled modules were written by the CLI's `enableModule` implementation against an installed SDK, without database seeding in the template. The scaffold test compares the generated enabled set with the platform set. No business package from the separate module repository was added.
 
 `packages/cli/src/runner.ts` synchronizes declared permissions only after successful applied local demo initialization, using the existing guarded auth command for each enabled module. Preview still returns before any grants. `modules/auth/src/cli/index.ts` discovers specifications beside installed SDK auth as well as local modules; the installed-scopes regression failed before the fix and passed afterward. No applied SQL migration, module specification or HTTP authority contract changed. The generator, SDK and CLI are 0.2.2; sandbox is 0.2.3.
 

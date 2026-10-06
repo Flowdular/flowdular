@@ -12,9 +12,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.8.0
+    range: ^0.9.0
   - id: auth.core
-    range: ^0.13.0
+    range: ^0.14.0
   - id: exports.core
     range: ^0.2.0
 requires:
@@ -26,7 +26,7 @@ locales:
   - pl
 invariants:
   - Persistence runs on the shared asynchronous database contract. The module receives a leased PostgreSQL handle from platform composition, never a driver or a connection string, and declares explicit PostgreSQL SQL for every statement and migration.
-  - PostgreSQL item, history, and idempotency ledger tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
+  - PostgreSQL item, history, and idempotency ledger tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local flowdular.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
   - Every catalog item is owned by exactly one tenant and every query uses the trusted tenant identifier.
   - SKU is unique inside a tenant and is never used as tenancy authority.
   - Monetary values are stored as integer minor units with an explicit ISO currency code.

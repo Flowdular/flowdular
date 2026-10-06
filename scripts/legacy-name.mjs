@@ -22,11 +22,7 @@ const ALLOWED = [
 	'.dockerignore',
 	'.vercelignore',
 ];
-const ALLOWED_TREES = [
-	'docs/reviews/',
-	// Pinned official-module release; it changes only with a new release.
-	'.ai/references/',
-];
+const ALLOWED_TREES = ['docs/reviews/'];
 
 function allowed(path) {
 	return (

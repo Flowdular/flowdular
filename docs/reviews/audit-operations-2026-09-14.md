@@ -99,6 +99,6 @@ composition unchanged; `docker compose config` renders the WAL settings;
 - PITR in the compose stack is a plain-copy WAL archive on the same host:
   no compression, no encryption, no off-site copy, no pruning; the README
   says so and names what a managed provider must offer in Kubernetes.
-- `.ai/references/catalog` and the official modules still pin SDK 0.2.4
-  until the 0.3.0 publication lands and the official repository is
+- `.ai/references/catalog` and the external modules still pin SDK 0.2.4
+  until the 0.3.0 publication lands and the module repository is
   re-released.

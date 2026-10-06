@@ -6,7 +6,7 @@
 
    This runs the same conformance checks over modules/ so a new rule cannot
    reach a session until it holds for the code that already ships. Wired into
-   verify:static next to reference:check and capabilities:check. */
+   verify:static next to capabilities:check. */
 import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {

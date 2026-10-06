@@ -99,6 +99,6 @@ Complexity to state in the review: for each new data structure and loop on a req
 ## Pitfalls
 
 - `LIKE` or `=` against `lower(column)` cannot use a plain `(tenant_id, column)` index; store a normalized column (`sku_normalized`) as `.ai/references/catalog` does, or add an expression index on `lower(column)`.
-- `ORDER BY lower(name)` (`Flowdular/official-modules`, `modules/parties`) cannot use the `(tenant_id, name, id)` index for the sort; acceptable at current sizes, name it if parties grow.
+- `ORDER BY lower(name)` cannot use a `(tenant_id, name, id)` index for the sort; acceptable at small sizes, name it once the table grows.
 - A `Kpi` that shows `items.length` after loading the full list is O(rows) network per dashboard load.
 - Never change behaviour in a performance commit; keep the functional tests green and add none that assert internal call counts.

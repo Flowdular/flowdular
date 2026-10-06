@@ -16,5 +16,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS catalog_items_history_tenant_record_version_id
 ALTER TABLE catalog_items_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_items_history FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalog_items_history_tenant_policy ON catalog_items_history
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
