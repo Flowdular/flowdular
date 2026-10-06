@@ -47,6 +47,35 @@ export function answersErrorFor(
 	return refusal.message;
 }
 
+/* A refused approval, stamped with the session, the module and the handoff the
+   operator was approving, so it explains that card and nothing after it. */
+export interface ApprovalRefusal {
+	readonly session: string;
+	readonly module: string;
+	readonly handoff: number;
+	readonly message: string;
+}
+
+/* The sequence of the newest handoff, the one an approval card answers. */
+export function latestHandoff(chat: readonly ChatEntry[]): number {
+	return chat.findLast((entry) => entry.handoff)?.sequence ?? -1;
+}
+
+/* A refusal such as SPEC_CHANGED or QUESTIONS_PENDING stops applying when the
+   view reloads into a state without the card it was refused on: another
+   session, a newer handoff, or the module approved, here or from another
+   client. */
+export function approvalErrorFor(
+	refusal: ApprovalRefusal | null,
+	view: SessionView | null,
+): string {
+	if (!refusal || !view || refusal.session !== view.session.id) return '';
+	if (latestHandoff(view.chat) !== refusal.handoff) return '';
+	const review = view.specs.find((spec) => spec.module === refusal.module);
+	if (review?.approved === true) return '';
+	return refusal.message;
+}
+
 export function createSandboxClientState() {
 	const store = createStore({
 		state: cell<SandboxState | null>(null),

@@ -213,6 +213,7 @@
 	"session.state.validating": "validating",
 	"session.state.previewing": "previewing",
 	"session.state.awaiting-approval": "awaiting approval",
+	"session.state.awaiting-answers": "awaiting answers",
 	"session.state.accepted": "accepted",
 	"session.state.failed": "failed",
 	"session.state.blocked": "blocked",

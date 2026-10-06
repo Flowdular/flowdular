@@ -1135,13 +1135,15 @@ export async function* runTurn(
 				: null,
 		state: failed
 			? 'failed'
-			: handoff.kind === 'approval' || handoff.kind === 'question'
+			: handoff.kind === 'approval'
 				? 'awaiting-approval'
-				: gates.some((gate) => gate.status !== 'passed')
-					? 'validating'
-					: diffs.length > 0
-						? 'previewing'
-						: 'planned',
+				: handoff.kind === 'question'
+					? 'awaiting-answers'
+					: gates.some((gate) => gate.status !== 'passed')
+						? 'validating'
+						: diffs.length > 0
+							? 'previewing'
+							: 'planned',
 		role: roleId,
 		driver: driverId,
 	});

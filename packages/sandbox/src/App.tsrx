@@ -67,12 +67,15 @@ import {
 import { RepositorySetupModal } from './client/RepositorySetupModal.tsrx';
 import {
 	answersErrorFor,
+	approvalErrorFor,
 	createSandboxClientState,
+	latestHandoff,
 	mergeEntries,
 	mergeSteps,
 	signalReady,
 	sessionIdFromUrl,
 	type AnswersRefusal,
+	type ApprovalRefusal,
 	type PreviewSelection,
 } from './client/state.ts';
 import {
@@ -151,6 +154,11 @@ export function App(props?: RenderRouteProps) @{
 	const [answersRefusal, setAnswersRefusal] = useState<AnswersRefusal | null>(
 		null,
 	);
+	/* A refused approval belongs to the card it was refused on, so another
+   client's approval or a newer handoff takes it off the banner. */
+	const [approvalRefusal, setApprovalRefusal] = useState<
+		ApprovalRefusal | null
+	>(null);
 	const [menuOpen, setMenuOpen] = useValue(sandbox.state.menuOpen);
 	const [githubSettingsOpen, setGitHubSettingsOpen] = useValue(
 		sandbox.state.githubSettingsOpen,
@@ -537,12 +545,20 @@ export function App(props?: RenderRouteProps) @{
 		if (!session || running) return;
 		setBusy(true);
 		setError('');
+		setApprovalRefusal(null);
 		try {
 			await approveSpecification(session.id, handoff.module, specHash);
 			await openSession(session.id);
 			dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 		} catch (approveError) {
-			setError(message(approveError, t('sandbox.app.error.approveSpec')));
+			setApprovalRefusal({
+				session: session.id,
+				module: handoff.module ?? session.modules[0]!.directory,
+				handoff: latestHandoff(
+					sandbox.store.get(sandbox.state.view)?.chat ?? [],
+				),
+				message: message(approveError, t('sandbox.app.error.approveSpec')),
+			});
 			/* A refused approval usually means the text changed: show the
    current one, with its hash, for the next review. */
 			void refreshView(session.id);
@@ -813,6 +829,10 @@ export function App(props?: RenderRouteProps) @{
 		}
 	};
 
+	/* No approval card shows while a turn runs, so no approval refusal does. */
+	const approvalError =
+		running ? '' : approvalErrorFor(approvalRefusal, view);
+
 	<Head>
 		<Seo
 			title={t('sandbox.app.seo.title')}
@@ -897,6 +917,8 @@ export function App(props?: RenderRouteProps) @{
 					<div class="sandbox__notice">
 						@if (error) {
 							<Alert>{error}</Alert>
+						} @else if (approvalError) {
+							<Alert>{approvalError}</Alert>
 						} @else if (notice) {
 							<Alert tone="info">{notice}</Alert>
 						}
