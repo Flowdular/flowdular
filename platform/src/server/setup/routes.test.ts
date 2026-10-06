@@ -372,39 +372,78 @@ describe('first-run routes', () => {
 				await page.insertText('!'.repeat(10) + 'x'.repeat(50));
 				expect((await read()).value).toBe('x'.repeat(48));
 				await page.evaluate(`${field}.select()`);
-				await page.insertText(' Zażółć  Gęślą Jaźń ');
+				await page.type('Łódź');
+				expect(await read()).toEqual({ value: 'lodz', caret: 4, valid: true });
+				await page.type(' Straße');
 				expect(await read()).toEqual({
-					value: 'za-gl-ja-',
-					caret: 9,
-					valid: false,
-				});
-				await page.compose('Żb');
-				expect((await read()).value).toBe('za-gl-ja-Żb');
-				await page.insertText('Żb');
-				expect(await read()).toEqual({
-					value: 'za-gl-ja-b',
-					caret: 10,
+					value: 'lodz-strasse',
+					caret: 12,
 					valid: true,
 				});
-				await page.evaluate(`${field}.setSelectionRange(0, 2)`);
+				await page.evaluate(`${field}.select()`);
+				await page.insertText('Łódź');
+				expect(await read()).toEqual({ value: 'lodz', caret: 4, valid: true });
+				await page.evaluate("document.execCommand('undo')");
+				expect((await read()).value).toBe('lodz-strasse');
+				await page.evaluate("document.execCommand('redo')");
+				expect((await read()).value).toBe('lodz');
+				await page.evaluate(`${field}.select()`);
+				await page.type('Zażółć gęślą jaźń');
+				expect(await read()).toEqual({
+					value: 'zazolc-gesla-jazn',
+					caret: 17,
+					valid: true,
+				});
+				await page.evaluate(`${field}.select()`);
+				await page.insertText(' Zażółć  Gęślą Jaźń ');
+				expect(await read()).toEqual({
+					value: 'zazolc-gesla-jazn-',
+					caret: 18,
+					valid: false,
+				});
+				await page.compose('Ż!b');
+				expect((await read()).value).toBe('zazolc-gesla-jazn-Ż!b');
+				await page.insertText('Ż!b');
+				expect(await read()).toEqual({
+					value: 'zazolc-gesla-jazn-zb',
+					caret: 20,
+					valid: true,
+				});
+				await page.evaluate(`${field}.setSelectionRange(0, 6)`);
 				await page.evaluate("document.execCommand('delete')");
 				await page.type('b');
 				expect(await read()).toEqual({
-					value: 'b-gl-ja-b',
+					value: 'b-gesla-jazn-zb',
 					caret: 1,
 					valid: true,
 				});
 				await page.type('-');
 				expect(await read()).toEqual({
-					value: 'b-gl-ja-b',
+					value: 'b-gesla-jazn-zb',
 					caret: 1,
 					valid: true,
 				});
 				await page.evaluate(`${field}.setSelectionRange(0, 0)`);
 				await page.insertText('X'.repeat(50));
 				expect(await read()).toEqual({
-					value: 'x'.repeat(39) + 'b-gl-ja-b',
-					caret: 39,
+					value: 'x'.repeat(33) + 'b-gesla-jazn-zb',
+					caret: 33,
+					valid: true,
+				});
+				await page.evaluate(`${field}.select()`);
+				await page.insertText('x'.repeat(46));
+				await page.type('æ');
+				expect(await read()).toEqual({
+					value: 'x'.repeat(46) + 'ae',
+					caret: 48,
+					valid: true,
+				});
+				await page.evaluate(`${field}.select()`);
+				await page.insertText('x'.repeat(47));
+				await page.type('ßœ');
+				expect(await read()).toEqual({
+					value: 'x'.repeat(47) + 's',
+					caret: 48,
 					valid: true,
 				});
 				/* An engine that cannot replay the filtered text keeps the raw
