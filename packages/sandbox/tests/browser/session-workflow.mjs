@@ -133,6 +133,7 @@ const review = modules.map((m) => ({
 	kind: 'new',
 	path: `modules/${m.directory}/spec/module.yaml`,
 	present: true,
+	hash: (m.directory === 'booking' ? 'b' : 'c').repeat(64),
 	status: 'draft',
 	approved: false,
 	approvedAt: null,
@@ -686,6 +687,11 @@ try {
 	assert.equal(
 		calls.filter((call) => call.path.endsWith('/approve')).at(-1)?.body.module,
 		'rooms',
+	);
+	assert.equal(
+		calls.filter((call) => call.path.endsWith('/approve')).at(-1)?.body
+			.specHash,
+		'c'.repeat(64),
 	);
 	await page
 		.locator('.session-bar')

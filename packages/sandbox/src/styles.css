@@ -592,6 +592,16 @@
 	gap: 8px;
 }
 
+.spec-review__hash {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	font-size: var(--text-xs);
+	color: var(--ink-3);
+}
+
 /* The specification as text, for the operator who would rather fix it than
    describe it. */
 .spec-editor {

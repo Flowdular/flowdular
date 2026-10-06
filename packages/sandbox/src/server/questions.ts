@@ -34,6 +34,10 @@ export const MAX_ANSWER_LENGTH = 400;
    before JSON.parse allocates it. */
 export const MAX_BLOCK_LENGTH = 8_000;
 
+/* The bounds above, worded for the specialist that writes a block. A refused
+   block goes back to it with this sentence, so it never has to guess them. */
+export const QUESTIONS_LIMITS = `At most ${MAX_QUESTIONS} questions with unique ids Q-1, Q-2 and so on, each 1 to ${MAX_QUESTION_LENGTH} characters; at most ${MAX_OPTIONS} distinct options per question, each 1 to ${MAX_OPTION_LENGTH} characters; recommended is one of the options; a question without options sets allowFreeText to true; no line breaks inside a value; the whole block at most ${MAX_BLOCK_LENGTH} characters.`;
+
 const QUESTION_ID = /^Q-[0-9]+$/;
 /* A question, an option and an answer each become one line of the decisions the
    answered turn reads back. A line break or a control character inside one would

@@ -401,13 +401,18 @@ it('carries one brief from the planner to a delivered module', async () => {
 	const afterSpec = await readSession(root, session.id);
 	expect(afterSpec.modules[0]!.specHash).toBeUndefined();
 
-	// 3. The operator approves the exact text, which records its hash.
+	// 3. The operator approves the exact text the review card shows, which
+	//    records its hash.
+	const reviewed = await json<{
+		readonly specs: readonly { readonly hash: string | null }[];
+	}>(await call('GET', `/sandbox/api/sessions/${session.id}`));
 	const approved = await json<{
 		readonly session: SandboxSession;
 		readonly status: string;
 	}>(
 		await call('POST', `/sandbox/api/sessions/${session.id}/approve`, {
 			module: module.directory,
+			specHash: reviewed.specs[0]!.hash,
 		}),
 	);
 	expect(approved.status).toBe('approved');
