@@ -61,6 +61,9 @@ function fakeDriver(options: {
 	readonly file?: string;
 	readonly delayMs?: number;
 }): CodingAgentDriver {
+	/* Every turn writes new bytes: a repair turn that rewrote the same text
+	   would have changed nothing, and the planner stops such a chain. */
+	let turns = 0;
 	return {
 		id: 'fake',
 		label: 'Fake',
@@ -81,7 +84,8 @@ function fakeDriver(options: {
 			if (options.file) {
 				const target = join(request.workspacePath, options.file);
 				await mkdir(join(target, '..'), { recursive: true });
-				await writeFile(target, `// ${request.role}\n`, 'utf8');
+				turns += 1;
+				await writeFile(target, `// ${request.role} ${turns}\n`, 'utf8');
 				yield { type: 'file.changed', path: options.file, change: 'created' };
 			}
 			await new Promise((resolveDelay) =>

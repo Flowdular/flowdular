@@ -299,6 +299,8 @@
 	"chat.approveAndImplement": "Zatwierdź i kontynuuj",
 	"chat.continueWith": "Kontynuuj: {role}",
 	"chat.you": "Ty",
+	"chat.instruction": "Sandbox",
+	"chat.instructionText": "Pełna wiadomość dla specjalisty",
 	"chat.notStarted": "Ta sesja jeszcze się nie rozpoczęła.",
 	"chat.pendingBrief": "Opis: {brief}",
 	"chat.startWork": "Rozpocznij pracę",

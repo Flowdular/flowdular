@@ -44,6 +44,7 @@ import {
 	runGates,
 	summarizeGate,
 	type GateId,
+	type GateKey,
 	type GateResult,
 } from './gates.ts';
 import {
@@ -554,6 +555,32 @@ function allowedPathsFor(
 	return role.allowedPaths.map((path) => `modules/${module.directory}/${path}`);
 }
 
+/* The gates whose last result did not pass, after this turn's results.
+   Auto-review is left out: any change invalidates its evidence, and the
+   review handoff records it again for every module before a review. */
+function stillFailing(
+	before: readonly GateKey[],
+	results: readonly GateResult[],
+	modules: readonly SessionModule[],
+): GateKey[] {
+	const key = (gate: GateKey) => `${gate.id}\0${gate.module ?? ''}`;
+	const latest = new Map(before.map((gate) => [key(gate), gate]));
+	for (const result of results) {
+		if (result.id === 'auto-review') continue;
+		if (result.status === 'passed') latest.delete(key(result));
+		else
+			latest.set(key(result), {
+				id: result.id,
+				...(result.module ? { module: result.module } : {}),
+			});
+	}
+	return [...latest.values()].filter(
+		(gate) =>
+			!gate.module ||
+			modules.some((module) => module.directory === gate.module),
+	);
+}
+
 function gateSummary(gate: GateResult): string {
 	const label = gate.module ? `${gate.id} (modules/${gate.module})` : gate.id;
 	return gate.status === 'failed'
@@ -624,11 +651,19 @@ export async function* runTurn(
 	);
 	const sampleDataNote = sampleDataInstruction(session.attachments);
 
+	/* The chain, and the operator's Continue button, send a handoff's own
+	   prompt: the words are the sandbox's, not the operator's. */
+	const handedOff =
+		transcript.filter((entry) => entry.handoff).at(-1)?.handoff ?? null;
+	const instructed = handedOff?.prompt.trim() === message;
 	yield await appendChatEntry(context.workspaceRoot, session, {
 		kind: 'user',
 		role: roleId,
 		module: active.directory,
 		text: message,
+		...(instructed
+			? { instruction: handedOff!.gates ? { gates: handedOff!.gates } : {} }
+			: {}),
 		...(session.attachments.length > 0
 			? { attachments: session.attachments }
 			: {}),
@@ -982,12 +1017,16 @@ export async function* runTurn(
 
 	const diffs = await collectDiffs(context.workspaceRoot, session);
 	const gates: GateResult[] = [];
+	const failing = session.failingGates ?? [];
 	if ((diffs.length > 0 || reviewing) && !failed) {
 		/* Only the modules that hold changes are gated: a module nobody touched
-		   has nothing to check and its gates would cost minutes for no signal. */
+		   has nothing to check and its gates would cost minutes for no signal.
+		   A module with a gate still failing is measured again. */
 		const changed = new Set(diffs.map((diff) => diff.module));
-		const gated = session.modules.filter((module) =>
-			changed.has(module.directory),
+		const gated = session.modules.filter(
+			(module) =>
+				changed.has(module.directory) ||
+				failing.some((gate) => gate.module === module.directory),
 		);
 		/* The install runs whenever a package.json changed and counts as the
 		   dependencies gate; the role's own gates follow, plus the declared
@@ -1000,10 +1039,13 @@ export async function* runTurn(
 					context,
 					session,
 					[
-						...(reviewing
-							? GATE_IDS.filter((id) => id !== 'auto-review')
-							: role.gates),
-						...(role.gates.includes('dependencies') ? [] : ['dependencies']),
+						...new Set([
+							...(reviewing
+								? GATE_IDS.filter((id) => id !== 'auto-review')
+								: role.gates),
+							...(role.gates.includes('dependencies') ? [] : ['dependencies']),
+							...failing.map((gate) => gate.id),
+						]),
 					],
 					reviewing ? [active] : gated,
 					input.signal,
@@ -1084,6 +1126,8 @@ export async function* runTurn(
 		gates,
 		failed,
 		changed: diffs.length > 0,
+		edited: pathResult.written.length > 0,
+		instructed,
 		specApproved: closingGate.approved,
 		brief: session.brief || message,
 		reviewing,
@@ -1162,6 +1206,7 @@ export async function* runTurn(
 	if (nextResumeId) resumeIds[resumeKey] = nextResumeId;
 	const updated = await updateSession(context.workspaceRoot, session.id, {
 		resumeIds,
+		failingGates: stillFailing(failing, gates, session.modules),
 		pendingQuestions:
 			asked.kind === 'valid' && !failed
 				? {

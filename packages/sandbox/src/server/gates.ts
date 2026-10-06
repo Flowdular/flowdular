@@ -62,6 +62,9 @@ export type GateSummary = Pick<
 	'id' | 'module' | 'status' | 'issues' | 'moreIssues'
 >;
 
+/* A gate as the session tracks it: a module gate per draft module. */
+export type GateKey = Pick<GateResult, 'id' | 'module'>;
+
 export const MAX_GATE_ISSUES = 20;
 
 interface GateDefinition {
@@ -78,6 +81,7 @@ interface GateDefinition {
 	inspect?(context: GateContext): Promise<{
 		readonly passed: boolean;
 		readonly output: string;
+		readonly issues?: readonly GateIssue[];
 	}>;
 	/* A sandbox rule checked beside the command; a refusal fails the gate. */
 	refuse?(context: GateContext): Promise<{
@@ -190,12 +194,22 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 		command: () => null,
 		inspect: async (context) => {
 			const report = await checkDeclaredDependencies(context.modulePath);
+			if (report.missing.length === 0)
+				return {
+					passed: true,
+					output: `${report.imported.length} imported packages, all declared.`,
+				};
+			const output = `Undeclared packages: ${report.missing.join(', ')}. Add them to package.json dependencies; the session installs what package.json declares and nothing else, and the ejected module would fail without them.`;
 			return {
-				passed: report.missing.length === 0,
-				output:
-					report.missing.length === 0
-						? `${report.imported.length} imported packages, all declared.`
-						: `Undeclared packages: ${report.missing.join(', ')}. Add them to package.json dependencies; the session installs what package.json declares and nothing else, and the ejected module would fail without them.`,
+				passed: false,
+				output,
+				issues: [
+					{
+						code: 'DEPENDENCY_UNDECLARED',
+						path: 'package.json',
+						message: output.slice(0, 500),
+					},
+				],
 			};
 		},
 	},
@@ -214,6 +228,14 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 				return {
 					passed: false,
 					output: `${specPath} could not be read, so the module cannot be measured against its specification.`,
+					issues: [
+						{
+							code: 'SPEC_UNREADABLE',
+							path: 'spec/module.yaml',
+							message:
+								'The specification could not be read, so the module cannot be measured against it.',
+						},
+					],
 				};
 			}
 			return checkModuleRules({ modulePath: context.modulePath, spec });
@@ -494,6 +516,9 @@ async function runGate(
 			durationMs: Date.now() - startedAt,
 			command: definition.summary,
 			output: result.output,
+			...(!result.passed && result.issues?.length
+				? { issues: result.issues }
+				: {}),
 		};
 	}
 	const invocation = definition.command(context);

@@ -281,6 +281,8 @@
 	"chat.approveAndImplement": "Approve and continue",
 	"chat.continueWith": "Continue with {role}",
 	"chat.you": "You",
+	"chat.instruction": "Sandbox",
+	"chat.instructionText": "Full message to the specialist",
 	"chat.notStarted": "This session has not started yet.",
 	"chat.pendingBrief": "Brief: {brief}",
 	"chat.startWork": "Start work",

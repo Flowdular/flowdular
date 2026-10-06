@@ -24,6 +24,7 @@ import {
 	type PendingQuestions,
 } from '../server/questions.ts';
 import { GateCard } from './GateCard.tsrx';
+import { GateIssues } from './GateIssues.tsrx';
 import { Markdown } from './Markdown.tsrx';
 import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
@@ -42,7 +43,7 @@ import {
 	type PreviewSelection,
 } from './state.ts';
 import { t, useTranslation } from './i18n.ts';
-import { roleLabel, handoffLabel } from './session-labels.ts';
+import { gateLabel, roleLabel, handoffLabel } from './session-labels.ts';
 
 export interface ChatPaneProps {
 	readonly entries: readonly ChatEntry[];
@@ -603,14 +604,34 @@ export function ChatPane(props: ChatPaneProps) @{
 						>
 							<header class="chat__meta">
 								<span>
-									{block.entry!.kind === 'user'
-										? t('sandbox.chat.you')
-										: roleLabel(block.entry!.role)}
+									{block.entry!.instruction
+										? t('sandbox.chat.instruction')
+										: block.entry!.kind === 'user'
+											? t('sandbox.chat.you')
+											: roleLabel(block.entry!.role)}
 								</span>
 								{moduleLabel(block.entry!)}
 							</header>
 							@if (block.entry!.kind === 'agent') {
 								<Markdown text={block.speech} />
+							} @else if (block.entry!.instruction?.gates) {
+								<>
+									@for (const [index, gate] of block.entry!.instruction!.gates!.entries(); key index) {
+										<>
+											<p class="chat__text">{gateLabel(gate.id)}</p>
+											@if (gate.issues) {
+												<GateIssues
+													issues={gate.issues}
+													more={gate.moreIssues}
+												/>
+											}
+										</>
+									}
+									<details>
+										<summary>{t('sandbox.chat.instructionText')}</summary>
+										<p class="chat__text">{block.speech}</p>
+									</details>
+								</>
 							} @else {
 								<p class="chat__text">{block.speech}</p>
 							}

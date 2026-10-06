@@ -487,6 +487,39 @@ describe('sandbox sessions', () => {
 				],
 			},
 		});
+		/* A repair handoff and the instruction it sends carry the same messages. */
+		const repairGates = [
+			{
+				id: 'spec-schema' as const,
+				status: 'failed' as const,
+				issues: [
+					{
+						code: 'SPEC_DATABASE_URL',
+						message: 'Header Authorization: Bearer abcdef0123456789 leaked.',
+					},
+				],
+			},
+		];
+		await appendChatEntry(root, session, {
+			kind: 'system',
+			role: 'business-manager',
+			text: 'Repair.',
+			handoff: {
+				kind: 'continue',
+				role: 'business-manager',
+				roleName: 'Business manager',
+				prompt: 'Continue as Business manager.',
+				reason: 'The spec-schema gate failed.',
+				repair: true,
+				gates: repairGates,
+			},
+		});
+		await appendChatEntry(root, session, {
+			kind: 'user',
+			role: 'business-manager',
+			text: 'Continue as Business manager.',
+			instruction: { gates: repairGates },
+		});
 		const stored = await readFile(
 			join(sessionPaths(root, session.id, session.moduleSuffix).chatLog),
 			'utf8',
@@ -1306,7 +1339,7 @@ describe('handoff planning', () => {
 								issues: [
 									{
 										severity: 'error',
-										code: 'TRANSLATION_KEY_MISSING',
+										code: 'RAW_TABLE_FORBIDDEN',
 										path: 'src/client/View.tsrx',
 									},
 								],
@@ -1438,12 +1471,13 @@ describe('handoff planning', () => {
 				},
 			],
 		});
-		expect(plan.role).toBe('frontend-engineer');
+		/* The key is missing from the bundles, which the business manager writes. */
+		expect(plan.role).toBe('business-manager');
 		expect(plan.module).toBe('booking');
 		expect(plan.prompt).toContain(
 			'- TRANSLATION_KEY_MISSING modules/booking/module.json src/client/View.tsrx: Key booking.title has no translation.',
 		);
-		expect(plan.prompt).toContain('(the first 1 of 3)');
+		expect(plan.prompt).toContain('(1 of 3)');
 	});
 
 	it.each([

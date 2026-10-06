@@ -526,15 +526,28 @@ next step:
   eject when the change looks right. A business manager who updated a
   specification stops at approval; only the approved handoff starts its
   implementer.
-- **blocked**: the coding agent errored. Nothing continues on its own.
+- **blocked**: the coding agent errored, or a repair turn changed nothing and
+  no other specialist is assigned what it left. Nothing continues on its own.
 
-A failed gate is its own handoff: the specialist that caused it fixes it before
-anyone else works, so a broken change never travels down the chain. The fix
-prompt carries the gate command and the first 4000 characters of its output;
-the transcript keeps the whole output (head and tail of a long one). When the
-same turn also asks questions, the questions come first and the handoff names
-the failed gate: the gates run again after the answering turn, and a failure
-that remains then gets its repair turn.
+A failed gate is its own handoff, before anyone else works, so a broken change
+never travels down the chain. It goes to a specialist whose write paths cover
+the file the fix goes in (`gate-repair.ts`): a validator error at its path, a
+module rule at the file it names, a compiler or test failure at the path in its
+output, a JSON pointer at the file it points into, and a missing translation
+key at the locale bundles rather than the client file that uses it. A failure
+that names no file goes to the specialist whose work the repairs follow. That
+specialist gets every failure in its files of that module; the rest wait for
+the next repair turn. The fix prompt carries the reported errors, plus the
+command and the first 4000 characters of the output of a gate that printed only
+text; the transcript keeps the whole output (head and tail of a long one) and
+shows the prompt as a Sandbox message listing the errors. A gate whose last
+result did not pass runs again after every turn, whatever the role's own gates,
+so its recorded result stays failed until it passes. A repair turn that changed
+no file is named in the next handoff and its specialist is not sent the same
+errors in the next turn; when no other specialist is assigned them, the chain
+stops for the operator. When the same turn also asks questions, the questions
+come first and the handoff names the failed gate: the gates run again after the
+answering turn, and a failure that remains then gets its repair turn.
 
 ### Active questions
 
