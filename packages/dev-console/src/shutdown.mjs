@@ -1,3 +1,15 @@
+/* How the platform's development server stops, for the server itself and for
+   the launchers that supervise it. The supervisor's SIGKILL must come after
+   the server's own deadline, or it cuts the drain of background work that the
+   deadline still allows. */
+
+/** Time the development server has to finish open requests, retire the
+    runtime and its background work, and close Vite after a stop signal. */
+export const PLATFORM_SHUTDOWN_BUDGET_MS = 6_000;
+
+/** Time a supervisor waits after SIGTERM before it sends SIGKILL. */
+export const PLATFORM_STOP_ESCALATION_MS = PLATFORM_SHUTDOWN_BUDGET_MS + 2_000;
+
 /* Each stop delivers more than one signal. pnpm forwards what it receives to
    its script, so a SIGTERM to the process group arrives twice, one Ctrl+C
    arrives as two SIGINTs, and a second Ctrl+C as SIGINT plus SIGTERM. Node

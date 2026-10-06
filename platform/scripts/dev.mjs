@@ -14,10 +14,12 @@ import {
 	shouldUseColor,
 	watchReloads,
 } from '@flowdular/dev-console';
-import { stopOnSignals } from '@flowdular/dev-console/shutdown';
+import {
+	PLATFORM_SHUTDOWN_BUDGET_MS,
+	stopOnSignals,
+} from '@flowdular/dev-console/shutdown';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const SHUTDOWN_TIMEOUT_MS = 3_000;
 /* Presentation is shared with the sandbox launcher so both terminals read the
    same way. This file keeps only what is specific to the platform. */
 export {
@@ -26,7 +28,10 @@ export {
 	shouldUseColor,
 } from '@flowdular/dev-console';
 
-export function withShutdownDeadline(promise, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
+export function withShutdownDeadline(
+	promise,
+	timeoutMs = PLATFORM_SHUTDOWN_BUDGET_MS,
+) {
 	let timer;
 	const deadline = new Promise((_, reject) => {
 		timer = setTimeout(
@@ -230,7 +235,7 @@ export async function startDevelopmentServer(
 	const closeVite = server.close.bind(server);
 	let closing;
 	const onSignal = () => {
-		void close().then(
+		void withShutdownDeadline(close()).then(
 			() => process.exit(0),
 			(error) => {
 				console.error(
@@ -265,14 +270,14 @@ export async function startDevelopmentServer(
 				);
 				channel.postMessage({ type: 'retire-all' });
 				try {
-					await withShutdownDeadline(Promise.all([httpClose, ...retirements]));
+					await Promise.all([httpClose, ...retirements]);
 					await new Promise((resolveRetirement) =>
 						setTimeout(resolveRetirement, 100),
 					);
 				} finally {
 					channel.close();
 				}
-				await withShutdownDeadline(Promise.resolve(closeVite()));
+				await closeVite();
 			} finally {
 				restoreConsole();
 			}

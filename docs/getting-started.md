@@ -33,7 +33,10 @@ workspace and owner account. Embedded PostgreSQL is already configured. Restart
 Vite HMR covers TSRX, TypeScript and styles. The launcher keeps tool warnings
 quiet; use `pnpm dev -- --verbose` for full diagnostics. `pnpm dev` runs
 `module sync` first, so a composition change is picked up without a manual
-step. The session lives in an HttpOnly cookie and carries the scopes of the
+step. Ctrl+C stops the server after open requests finish and background work
+drains, within six seconds. A second Ctrl+C does not cut that short, because
+pnpm already delivers every Ctrl+C more than once; Ctrl+\ stops it at once.
+The session lives in an HttpOnly cookie and carries the scopes of the
 selected tenant membership. A bookmark pointing at another workspace you
 belong to switches the session on load.
 

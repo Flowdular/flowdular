@@ -215,6 +215,26 @@ export async function recordedFixtures(
 	}
 }
 
+/** The recorded processes and groups (as negative ids) still alive. */
+export function survivors(recorded: readonly RecordedProcess[]): number[] {
+	return recorded
+		.flatMap(({ pid, group }) => (group === null ? [pid] : [pid, -group]))
+		.filter(processAlive);
+}
+
+/** Polls until nothing recorded is alive; returns the survivors at the bound. */
+export async function survivorsAfter(
+	recorded: readonly RecordedProcess[],
+	boundMs: number,
+): Promise<number[]> {
+	const deadline = Date.now() + boundMs;
+	for (;;) {
+		const alive = survivors(recorded);
+		if (alive.length === 0 || Date.now() >= deadline) return alive;
+		await delay(25);
+	}
+}
+
 /** Kills every process and process group the ledger names, then awaits them. */
 export async function stopRecordedProcesses(
 	ledger: string,

@@ -2,10 +2,15 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+	PLATFORM_SHUTDOWN_BUDGET_MS,
+	PLATFORM_STOP_ESCALATION_MS,
+} from '@flowdular/dev-console/shutdown';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
 	findRunningPlatformUrl,
@@ -16,12 +21,13 @@ import {
 	cleanupPlatformTests,
 	freePort,
 	platformWorkspace,
-	processAlive,
 	readLedger,
 	recordedFixtures,
 	spawnLauncher,
 	startTrackedPlatform,
 	stubbornPlatformSource,
+	survivors,
+	survivorsAfter,
 	trackLedger,
 	writePlatformChild,
 } from './support/platform-processes.ts';
@@ -825,14 +831,6 @@ createServer((request, response) => {
 	}
 }, 40_000);
 
-function survivors(
-	recorded: readonly { readonly pid: number; readonly group: number | null }[],
-): number[] {
-	return recorded
-		.flatMap(({ pid, group }) => (group === null ? [pid] : [pid, -group]))
-		.filter(processAlive);
-}
-
 it('stops every process in the platform group, including one that ignores SIGTERM', async () => {
 	const workspace = await platformWorkspace('flowdular-platform-group-');
 	await writePlatformChild(workspace, stubbornPlatformSource(workspace.ledger));
@@ -849,6 +847,39 @@ it('stops every process in the platform group, including one that ignores SIGTER
 		() => undefined,
 	);
 	expect(survivors(recorded)).toEqual([]);
+}, 30_000);
+
+it('lets the platform drain past three seconds within its shutdown budget', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-drain-');
+	const drained = join(workspace.root, 'drained');
+	const shutdown = pathToFileURL(
+		createRequire(import.meta.url).resolve('@flowdular/dev-console/shutdown'),
+	).href;
+	/* pnpm delivers the stop's SIGTERM twice; the drain outlasts the old
+	   three-second SIGKILL and ends a second before the budget. */
+	await writePlatformChild(
+		workspace,
+		`import { writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { stopOnSignals } from ${JSON.stringify(shutdown)};
+const args = process.argv;
+const server = createServer((request, response) => response.writeHead(404).end()).listen(Number(args[args.indexOf('--port') + 1]), args[args.indexOf('--host') + 1]);
+stopOnSignals(() => {
+	server.close();
+	setTimeout(() => {
+		writeFileSync(${JSON.stringify(drained)}, 'drained');
+		process.exit(0);
+	}, ${PLATFORM_SHUTDOWN_BUDGET_MS - 1_000});
+});
+`,
+	);
+	const platform = await startTrackedPlatform({
+		workspaceRoot: workspace.root,
+		port: await freePort(),
+		quiet: true,
+	});
+	await platform.stop();
+	expect(await readFile(drained, 'utf8')).toBe('drained');
 }, 30_000);
 
 it('reports a platform command that cannot be started', async () => {
@@ -898,12 +929,11 @@ it.each([
 		launcher.kill(signal);
 		await waitUntil(async () => launcher.signalCode !== null);
 		expect(launcher.signalCode).toBe(signal);
-		/* The guard escalates to SIGKILL three seconds after SIGTERM; ten
-		   seconds bounds that on a loaded machine. */
-		await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
-			() => undefined,
-		);
-		expect(survivors(recorded)).toEqual([]);
+		/* The guard escalates to SIGKILL after PLATFORM_STOP_ESCALATION_MS;
+		   seven more seconds bound that on a loaded machine. */
+		expect(
+			await survivorsAfter(recorded, PLATFORM_STOP_ESCALATION_MS + 7_000),
+		).toEqual([]);
 	},
 	60_000,
 );
@@ -931,10 +961,9 @@ it('stops the platform tree when a second Ctrl+C ends the launcher during shutdo
 	await waitUntil(
 		async () => launcher.exitCode !== null || launcher.signalCode !== null,
 	);
-	await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
-		() => undefined,
-	);
-	expect(survivors(recorded)).toEqual([]);
+	expect(
+		await survivorsAfter(recorded, PLATFORM_STOP_ESCALATION_MS + 7_000),
+	).toEqual([]);
 }, 60_000);
 
 it('leaves no process behind when a launcher test fails or times out', async () => {

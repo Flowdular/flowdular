@@ -9,10 +9,11 @@ import { spawn } from 'node:child_process';
 
    The channel is this process's stdin. The child gets its own stdin, because
    Linux would otherwise pass the channel's descriptor down to every platform
-   process and keep it open after the guard exits. */
-const STOP_GRACE_MS = 3_000;
+   process and keep it open after the guard exits.
 
-const [command, ...args] = process.argv.slice(2);
+   The caller passes the delay from SIGTERM to SIGKILL first. */
+const [grace, command, ...args] = process.argv.slice(2);
+const STOP_GRACE_MS = Number(grace);
 const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
 let stopping = false;
 
