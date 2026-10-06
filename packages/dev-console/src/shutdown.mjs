@@ -16,13 +16,20 @@ export const PLATFORM_STOP_ESCALATION_MS = PLATFORM_SHUTDOWN_BUDGET_MS + 2_000;
    ends the process on a signal nobody listens for, so the listeners stay for
    the rest of the process and every repeat is ignored. A repeat does not force
    an exit either: an operator's second Ctrl+C cannot be told apart from pnpm's
-   copy of the first. The stop is bounded by its own deadline; Ctrl+\ (SIGQUIT)
-   or SIGKILL ends the process at once. */
-export function stopOnSignals(stop) {
+   copy of the first. The stop is bounded by its own deadline, or by
+   `deadlineMs` when the caller has no single promise to bound; Ctrl+\
+   (SIGQUIT) or SIGKILL ends the process at once. */
+export function stopOnSignals(stop, { deadlineMs } = {}) {
 	let stopping = false;
 	const onSignal = () => {
 		if (stopping) return;
 		stopping = true;
+		if (deadlineMs !== undefined)
+			/* Unref'd, so a stop that drains in time exits on its own. */
+			setTimeout(() => {
+				console.error(`Development server shutdown exceeded ${deadlineMs} ms.`);
+				process.exit(1);
+			}, deadlineMs).unref();
 		stop();
 	};
 	process.on('SIGINT', onSignal);
