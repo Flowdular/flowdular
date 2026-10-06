@@ -962,6 +962,36 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
+	/* The specification owner applied an implementer's answers. The text it
+	   left behind says which case that was: a changed specification goes back
+	   to the operator for approval of the new hash, an unchanged one lets the
+	   implementer continue at once. Either way the implementer that asked
+	   resumes, whatever role the owner's handoff line named. */
+	const resume =
+		context.resume && context.specApproved !== null ? context.resume : null;
+	const resumed = (
+		waiting: SpecFollowUp,
+		unpassed: readonly GateResult[],
+	): HandoffPlan => {
+		const changed = context.specApproved === false;
+		return plan(
+			changed ? 'approval' : 'continue',
+			waiting.role,
+			[
+				unpassed.length > 0
+					? `The ${gatesFailed(unpassed)}: the gates run again after ${waiting.roleName} continues, and what still does not pass then gets its repair turn.`
+					: '',
+				changed
+					? 'The specification now records your decisions and is ready for your review.'
+					: `Your decisions stay inside the approved specification, so ${waiting.roleName} continues without a new approval.`,
+			]
+				.filter(Boolean)
+				.join(' '),
+			resumePrompt(waiting.roleName, waiting.decisions, changed, context.brief),
+			waiting.module ?? context.module,
+		);
+	};
+
 	/* A failure is fixed by a role that may write the file its fix goes in,
 	   in the module it belongs to, even when the finished turn worked
 	   somewhere else. What another role owns waits for the turn after. */
@@ -997,6 +1027,14 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 				: author,
 			exclude: idle,
 		});
+		/* Only the owner's next turn in this module still answers for the
+		   implementer, so any other repair waits until the implementer has
+		   resumed with the decisions. */
+		if (
+			resume &&
+			!(repair?.role === SPEC_OWNER_ROLE && repair.module === context.module)
+		)
+			return resumed(resume, failedGates);
 		if (!repair) {
 			return plan(
 				'blocked',
@@ -1031,24 +1069,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
-	/* The specification owner applied an implementer's answers. The text it
-	   left behind says which case that was: a changed specification goes back
-	   to the operator for approval of the new hash, an unchanged one lets the
-	   implementer continue at once. Either way the implementer that asked
-	   resumes, whatever role the owner's handoff line named. */
-	const resume = context.resume;
-	if (resume && context.specApproved !== null) {
-		const changed = context.specApproved === false;
-		return plan(
-			changed ? 'approval' : 'continue',
-			resume.role,
-			changed
-				? 'The specification now records your decisions and is ready for your review.'
-				: `Your decisions stay inside the approved specification, so ${resume.roleName} continues without a new approval.`,
-			resumePrompt(resume.roleName, resume.decisions, changed, context.brief),
-			resume.module ?? context.module,
-		);
-	}
+	if (resume) return resumed(resume, []);
 
 	const validated = validateDeclared(context);
 	const declared = validated.role;

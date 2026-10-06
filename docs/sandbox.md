@@ -432,7 +432,10 @@ leaves behind decides what happens next:
 The wait is read from the transcript (`specFollowUp` in `planning.ts`): the
 newest handoff that is not the business manager's own is the implementer's
 question, so the implementer still resumes when the business manager asks a
-question of its own in between.
+question of its own in between. A gate the implementer left failing runs again
+on the business manager's turn. When it still fails, only a repair the business
+manager takes in that module runs first; any other waits until the implementer
+has resumed with its decisions, and the gates run again after that turn.
 
 The `module-rules` gate backs the rule for permissions: `permissions-specified`
 fails a module whose `src/acl/permissions.ts`, or an inline `permission:`
