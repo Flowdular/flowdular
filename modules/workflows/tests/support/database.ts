@@ -49,6 +49,8 @@ export interface WorkflowsTestRepository {
 export interface WorkflowsTestRepositoryOptions {
 	readonly payloadCodec?: WorkflowPayloadCodec | undefined;
 	readonly payloadRetentionMs?: number | undefined;
+	/** Owned by the repository from here on; disposing it disposes this too. */
+	readonly databases?: DatabaseProvider | undefined;
 }
 
 /**
@@ -59,7 +61,7 @@ export interface WorkflowsTestRepositoryOptions {
 export async function openWorkflowsTestRepository(
 	options: WorkflowsTestRepositoryOptions = {},
 ): Promise<WorkflowsTestRepository> {
-	const databases = createWorkflowsTestProvider();
+	const databases = options.databases ?? createWorkflowsTestProvider();
 	const migration = await databases.acquire(request('migration'));
 	try {
 		await migrateWorkflowsDatabase(migration.database);

@@ -281,7 +281,6 @@ export function projectWorkflowRunEvents(
 				break;
 			}
 			case 'node.child.waiting': {
-				if (status === 'cancel-requested') transitionError(event, status);
 				const nodeId = requiredString(event.payload, 'nodeId');
 				const attempt = requiredInteger(event.payload, 'attempt');
 				const key = attemptKey(nodeId, attempt);
@@ -297,12 +296,17 @@ export function projectWorkflowRunEvents(
 				nodeStatuses.set(nodeId, 'waiting-child');
 				{
 					const childKind = requiredString(event.payload, 'childKind');
-					status =
-						childKind === 'agent'
-							? 'waiting-agent'
-							: childKind === 'approval'
-								? 'waiting-approval'
-								: 'running';
+					/* A child accepted while a cancellation landed is recorded so the
+					   cancellation can observe it to terminal; the run keeps waiting
+					   on that cancellation. */
+					if (status !== 'cancel-requested') {
+						status =
+							childKind === 'agent'
+								? 'waiting-agent'
+								: childKind === 'approval'
+									? 'waiting-approval'
+									: 'running';
+					}
 				}
 				break;
 			}
@@ -349,7 +353,8 @@ export function projectWorkflowRunEvents(
 					requiredString(event.payload, 'nodeId'),
 					'waiting-retry',
 				);
-				status = 'waiting-retry';
+				/* No node starts after a cancellation, so this retry never runs. */
+				if (status !== 'cancel-requested') status = 'waiting-retry';
 				break;
 			case 'node.retry.started':
 				nodeStatuses.set(requiredString(event.payload, 'nodeId'), 'running');
