@@ -121,3 +121,21 @@ it('keeps generated Docker boot files in sync with the platform stack', async ()
 		expect(template, file).toBe(platform);
 	}
 });
+
+it('packages generated deployments with the platform deploy scripts', async () => {
+	for (const file of [
+		'sdk-module-manifests.mjs',
+		'vercel/build.mjs',
+		'vercel/handler.mjs',
+	]) {
+		const platform = await readFile(
+			new URL(`../../../infra/${file}`, import.meta.url),
+			'utf8',
+		);
+		const template = await readFile(
+			new URL(`../template/default/infra/${file}`, import.meta.url),
+			'utf8',
+		);
+		expect(template, file).toBe(platform);
+	}
+});

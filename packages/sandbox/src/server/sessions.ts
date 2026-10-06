@@ -365,6 +365,7 @@ async function prepareSessionWorkspace(options: {
 		options.workspaceRoot,
 		options.paths.workspace,
 		options.modules.map((module) => module.id),
+		options.modules.map((module) => module.directory),
 	);
 	await materializeReference(options.workspaceRoot, options.paths.workspace);
 	await writeFile(

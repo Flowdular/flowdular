@@ -1,4 +1,6 @@
 import { materializeSdkReference } from './sdk-reference.ts';
+import { SandboxSetupError } from './workspace-root.ts';
+import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import { createRequire } from 'node:module';
 import {
 	access,
@@ -8,7 +10,7 @@ import {
 	readdir,
 	writeFile,
 } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 
 export async function referenceSource(
 	workspaceRoot: string,
@@ -238,22 +240,21 @@ export async function writeAgentPointer(
 }
 
 /* The module registry validates dependencies, so the session workspace carries
-   the manifest of every enabled module. Only the draft modules have sources. */
+   the manifest of every enabled module, including those @flowdular/sdk ships.
+   Only the draft modules have sources. Every module shares the session's one
+   modules/ directory, so a manifest whose directory a draft or another module
+   already holds is refused before anything is written. */
 export async function materializeModuleGraph(
 	workspaceRoot: string,
 	sessionWorkspace: string,
 	draftModuleIds: readonly string[],
+	draftDirectories: readonly string[] = [],
 ): Promise<readonly string[]> {
 	const drafts = new Set(draftModuleIds);
+	const directories = new Set(draftDirectories);
+	const graph: { directory: string; manifest: Record<string, unknown> }[] = [];
 	const enabled: string[] = [];
-	let entries: readonly string[] = [];
-	try {
-		entries = await readdir(join(workspaceRoot, 'modules'));
-	} catch {
-		return enabled;
-	}
-	for (const entry of entries) {
-		const manifestPath = join(workspaceRoot, 'modules', entry, 'module.json');
+	for (const manifestPath of findModuleManifests(workspaceRoot)) {
 		let manifest: { id?: string; cli?: unknown };
 		try {
 			manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
@@ -263,12 +264,24 @@ export async function materializeModuleGraph(
 			continue;
 		}
 		if (!manifest.id || drafts.has(manifest.id)) continue;
-		const target = join(sessionWorkspace, 'modules', entry, 'module.json');
+		const directory = basename(dirname(manifestPath));
+		if (directories.has(directory)) {
+			throw new SandboxSetupError(
+				'MODULE_DIRECTORY_CONFLICT',
+				`${manifest.id} shares the module directory ${directory} with another module of this session.`,
+			);
+		}
+		directories.add(directory);
+		graph.push({ directory, manifest });
+		enabled.push(manifest.id);
+	}
+	for (const { directory, manifest } of graph) {
+		const target = join(sessionWorkspace, 'modules', directory, 'module.json');
 		await mkdir(dirname(target), { recursive: true });
 		/* Only the dependency graph travels into a session. A CLI declaration
 		   would point at command files this workspace does not carry, so the
 		   capability goes with it. */
-		const { cli: _cli, ...rest } = manifest as Record<string, unknown>;
+		const { cli: _cli, ...rest } = manifest;
 		const graphManifest = {
 			...rest,
 			capabilities: (
@@ -280,7 +293,6 @@ export async function materializeModuleGraph(
 			`${JSON.stringify(graphManifest, null, '\t')}\n`,
 			'utf8',
 		);
-		enabled.push(manifest.id);
 	}
 	return enabled;
 }
