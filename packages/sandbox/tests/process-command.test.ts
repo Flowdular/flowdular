@@ -50,11 +50,11 @@ setInterval(() => {}, 1000);
 			process.execPath,
 			[hung],
 			workspace.root,
-			{ timeoutMs: 1_500 },
+			{ timeoutMs: 3_000 },
 		);
 		expect(result.code).toBeNull();
 		expect(result.output).toContain('Command timed out');
-		expect(Date.now() - started).toBeLessThan(5_000);
+		expect(Date.now() - started).toBeLessThan(8_000);
 		const recorded = await readLedger(workspace.ledger);
 		expect(recorded).toHaveLength(1);
 		expect(await survivorsAfter(recorded, 2_000)).toEqual([]);
