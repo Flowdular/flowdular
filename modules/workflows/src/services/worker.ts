@@ -822,7 +822,7 @@ export class WorkflowWorker {
 				!prior ||
 				(prior.status !== 'running' && prior.status !== 'waiting-child')
 			) {
-				await this.repository.startAttempt(
+				const started = await this.repository.startAttempt(
 					{
 						tenantId: run.tenantId,
 						runId: run.id,
@@ -855,6 +855,7 @@ export class WorkflowWorker {
 					run.actor,
 					run.origin,
 				);
+				if (!started) return;
 			}
 			if (jsonByteSize(nodeInput) > WORKFLOW_LIMITS.maxEnvelopeBytes) {
 				await this.#failNode(
