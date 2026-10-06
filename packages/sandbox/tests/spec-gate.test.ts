@@ -864,6 +864,84 @@ describe('a new module session', () => {
 		});
 		expect(sink.role).toBe('backend-engineer');
 	});
+
+	/* Every turn snapshots the workspace afresh, so the spec an earlier turn
+	   drafted and the files the scaffold wrote are pre-existing when the next
+	   role edits them. A clean turn used to put all of them back: one real
+	   session lost its answered spec three turns running and looped on the same
+	   spec-schema failure. */
+	it('keeps turn edits to a spec an earlier turn drafted and to a scaffolded file', async () => {
+		const root = await workspace();
+		const draftSpec = BASE_SPEC.replace('id: parties.core', 'id: booking.core')
+			.replace('status: approved', 'status: draft')
+			.replace('parties.parties.read', 'booking.bookings.read');
+		const answeredSpec = draftSpec.replace(
+			'specVersion: 0.2.0',
+			'specVersion: 0.3.0',
+		);
+		const session = await createSession({
+			workspaceRoot: root,
+			kind: 'new-module',
+			moduleId: 'booking.core',
+			title: 'Booking',
+			brief: 'A module that books rooms.',
+			blueprint: 'new-module@1.0.0',
+			role: 'business-manager',
+			driver: 'fake',
+			install: false,
+		});
+		const modulePath = join(
+			sessionPaths(root, session.id, session.moduleSuffix).workspace,
+			'modules',
+			'booking',
+		);
+		const specPath = join(modulePath, 'spec', 'module.yaml');
+		const routesPath = join(modulePath, 'src', 'server', 'routes.ts');
+		const turn = (file: string, content: string, role: string) =>
+			drive(
+				turnContext(
+					root,
+					recordingDriver({ prompt: '', role: '' }, { file, content }),
+				),
+				session.id,
+				{ message: 'Continue.', role },
+			);
+		/* A manifest of its own keeps the scaffold, which shells out to the CLI,
+		   out of this test. */
+		await writeFile(
+			join(modulePath, 'module.json'),
+			`${JSON.stringify({ id: 'booking.core' })}\n`,
+			'utf8',
+		);
+
+		await turn(
+			'modules/booking/spec/module.yaml',
+			draftSpec,
+			'business-manager',
+		);
+		await turn(
+			'modules/booking/spec/module.yaml',
+			answeredSpec,
+			'business-manager',
+		);
+		expect(await readFile(specPath, 'utf8')).toBe(answeredSpec);
+
+		await mkdir(join(routesPath, '..'), { recursive: true });
+		await writeFile(routesPath, 'export const routes = [];\n', 'utf8');
+		await api(fakeRuntime(root, recordingDriver({ prompt: '', role: '' })))(
+			'POST',
+			`/sandbox/api/sessions/${session.id}/approve`,
+			{ body: { specHash: await reviewedHash(specPath) } },
+		);
+		await turn(
+			'modules/booking/src/server/routes.ts',
+			'export const routes = [list];\n',
+			'backend-engineer',
+		);
+		expect(await readFile(routesPath, 'utf8')).toBe(
+			'export const routes = [list];\n',
+		);
+	});
 });
 
 describe('delivering a change', () => {
