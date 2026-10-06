@@ -70,6 +70,41 @@ describe('session approval rendering', () => {
 		expect(rendered.html).toContain('rooms');
 		expect(rendered.html).toContain('Overlapping reservation');
 	});
+	it('lists the validator errors above the folded raw output', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const rendered = renderToString(GateResults, {
+			results: [
+				{
+					id: 'spec-schema',
+					status: 'failed',
+					durationMs: 1,
+					command: 'pnpm --silent flowdular spec validate --all --json',
+					output: '{ "protocolVersion": 1, "ok": false }',
+					issues: [
+						{
+							file: 'modules/booking/spec/module.yaml',
+							code: 'SPEC_FIELD_RESERVED',
+							path: '/entities/0/fields/1/id',
+							message: 'Field "booking.createdAt" collides with a column.',
+						},
+					],
+					moreIssues: 2,
+				},
+			],
+			running: false,
+			error: '',
+			onClose: () => {},
+		});
+		const html = rendered.html;
+		expect(html).toContain('SPEC_FIELD_RESERVED');
+		expect(html).toContain('/entities/0/fields/1/id');
+		expect(html).toContain('2 more errors are not shown.');
+		expect(html.indexOf('SPEC_FIELD_RESERVED')).toBeLessThan(
+			html.indexOf('protocolVersion'),
+		);
+		expect(html).not.toMatch(/<details[^>]*\sopen/);
+	});
 	it('renders an approval action in the latest pending handoff', () => {
 		registerSandboxTranslations();
 		setActiveLocale('pl');

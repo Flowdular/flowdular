@@ -55,7 +55,7 @@ export {
 	isGateId,
 	runGates,
 } from './gates.ts';
-export type { GateId, GateResult } from './gates.ts';
+export type { GateId, GateIssue, GateResult, GateSummary } from './gates.ts';
 export {
 	SKILLS_DIRECTORY,
 	listSkills,

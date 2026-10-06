@@ -558,7 +558,7 @@
 	border-left-color: var(--danger);
 }
 
-.chat__gate-issues {
+.gate-issues {
 	display: grid;
 	gap: 8px;
 	margin: 0;
@@ -566,21 +566,21 @@
 	list-style: none;
 }
 
-.chat__gate-issues > li {
+.gate-issues > li {
 	display: grid;
 	gap: 2px;
 	min-width: 0;
 }
 
-.chat__gate-message {
+.gate-issues__message {
 	margin: 0;
 	font-size: var(--text-md);
 	line-height: 1.55;
+	white-space: pre-line;
 	overflow-wrap: anywhere;
 }
 
-.chat__gate-where {
-	font-size: var(--text-xs);
+.gate-issues__where {
 	color: var(--ink-3);
 	overflow-wrap: anywhere;
 }

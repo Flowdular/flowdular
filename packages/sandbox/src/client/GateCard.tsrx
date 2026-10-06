@@ -1,5 +1,6 @@
 import { Icon, Tag } from '@flowdular/ui';
 import type { GateSummary } from '../server/gates.ts';
+import { GateIssues } from './GateIssues.tsrx';
 import { gateLabel } from './session-labels.ts';
 import { useTranslation } from './i18n.ts';
 
@@ -38,23 +39,7 @@ export function GateCard(props: {
 			}
 		</header>
 		@if (issues.length > 0) {
-			<ul class="chat__gate-issues">
-				@for (const [index, issue] of issues.entries(); key index) {
-					<li>
-						<p class="chat__gate-message">{issue.message}</p>
-						<span class="ui-mono chat__gate-where">{[
-							issue.code,
-							issue.file,
-							issue.path,
-						].filter(Boolean).join(' · ')}</span>
-					</li>
-				}
-			</ul>
-		}
-		@if (props.gate.moreIssues) {
-			<p class="ui-help">{t('sandbox.chat.gate.more', {
-				count: props.gate.moreIssues,
-			})}</p>
+			<GateIssues issues={issues} more={props.gate.moreIssues} />
 		}
 		@if (failed && props.output) {
 			<details open={issues.length === 0}>

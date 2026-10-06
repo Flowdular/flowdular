@@ -1,5 +1,6 @@
 import { Alert, Drawer, Tag } from '@flowdular/ui';
 import type { GateResult } from '../server/gates.ts';
+import { GateIssues } from './GateIssues.tsrx';
 import { gateLabel } from './session-labels.ts';
 import { useTranslation } from './i18n.ts';
 
@@ -43,8 +44,13 @@ export function GateResults(props: {
 								module: gate.module ?? t('sandbox.gates.workspace'),
 							})}</p>
 							<p>{t('sandbox.gates.explain.' + gate.status)}</p>
+							@if (gate.issues?.length) {
+								<GateIssues issues={gate.issues} more={gate.moreIssues} />
+							}
 							@if (gate.output || gate.command) {
-								<details open={gate.status === 'failed'}>
+								<details
+									open={gate.status === 'failed' && !gate.issues?.length}
+								>
 									<summary>{t('sandbox.gates.details')}</summary>
 									<div class="ui-table-wrap">
 										<pre class="ui-code">{gate.output || gate.command}</pre>

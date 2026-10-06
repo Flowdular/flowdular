@@ -675,6 +675,18 @@ function validateDeclared(context: HandoffContext): {
    trusted when it names a role it may hand to, the deterministic routing
    answers when it does not, and an unapproved specification always stops for
    the operator. */
+function reportedErrors(gate: GateResult): string[] {
+	if (!gate.issues?.length) return [];
+	const count = gate.moreIssues
+		? ` (the first ${gate.issues.length} of ${gate.issues.length + gate.moreIssues})`
+		: '';
+	const lines = gate.issues.map(
+		(issue) =>
+			`- ${[issue.code, issue.file, issue.path].filter(Boolean).join(' ')}: ${issue.message}`,
+	);
+	return [`Errors the gate reported${count}:\n${lines.join('\n')}`];
+}
+
 export function planHandoff(context: HandoffContext): HandoffPlan {
 	const roles = context.routing.roles;
 	const plan = (
@@ -708,15 +720,16 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 
 	/* Open questions stop the chain whatever else the turn did. An approval
 	   or a next specialist would otherwise run past decisions nobody made. A
-	   failed gate waits too, and the reason says so: the gates run again after
-	   the answering turn, and what still fails then gets its repair turn. */
+	   gate that did not pass waits too, and the reason says so: the gates run
+	   again after the answering turn, and what still does not pass then gets
+	   its repair turn. */
 	if (context.questions?.kind === 'valid') {
-		const failed = context.gates.find((gate) => gate.status === 'failed');
+		const unpassed = context.gates.find((gate) => gate.status !== 'passed');
 		return plan(
 			'question',
 			context.role,
-			failed
-				? `The specialist needs your decisions before it can continue. The ${gateLabel(failed)} gate failed as well: the gates run again after your answers, and a failure that remains goes back to the specialist.`
+			unpassed
+				? `The specialist needs your decisions before it can continue. The ${gateLabel(unpassed)} gate did not pass either: the gates run again after your answers, and one that still does not pass goes back to the specialist.`
 				: 'The specialist needs your decisions before it can continue.',
 		);
 	}
@@ -768,6 +781,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 			[
 				`Continue as ${roleName(roles, repairRole)}. The ${gateLabel(failedGate)} gate failed. Fix the reported files within your role, preserve other work, and end with your handoff line.`,
 				`Recorded gate results:\n${context.gates.map((gate) => `${gateLabel(gate)}: ${gate.status}`).join('\n')}`,
+				...reportedErrors(failedGate),
 				`Gate command: ${failedGate.command}`,
 				`Gate output (first ${GATE_PROMPT_OUTPUT} characters; the transcript holds the rest):`,
 				failedGate.output.slice(0, GATE_PROMPT_OUTPUT),

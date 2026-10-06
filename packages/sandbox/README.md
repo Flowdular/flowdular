@@ -765,11 +765,12 @@ every module of the session, and every result names the module it ran in. The
 `dependencies` gate runs after every turn that changed files, whatever the role
 lists. A failing gate is written back into the conversation, with its
 command and output, so the next turn can fix it. The transcript shows each
-result as a gate card; a failed validator lists the errors of its failing
-reports (code, file, path and message, the first 20 and a count of the rest),
-with the command and the full output folded under the details. An agent whose
-driver has a shell may run the same commands itself; the sandbox still runs
-them after the turn.
+result as a gate card, and **Check modules** shows the same list: a failed
+validator lists the errors of its failing reports (code, file, path and
+message, the first 20 and a count of the rest), read from its JSON before the
+output is cut, with the command and output folded under the details. An agent
+whose driver has a shell may run the same commands itself; the sandbox still
+runs them after the turn.
 
 ## Preview
 
