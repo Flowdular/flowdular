@@ -1,5 +1,6 @@
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,15 +49,23 @@ export function withShutdownDeadline(
 
 /* Stops accepting requests. An open browser tab keeps Vite's HMR socket on
    this server, and the HTTP close waits for every socket, so the HMR sockets
-   end here rather than in Vite's own close at the end of the shutdown. */
+   end here rather than in Vite's own close at the end of the shutdown. The
+   close ends only the connections idle when it is called; one whose response
+   finishes later, such as an event stream the runtime retirement ends, would
+   stay open for keep-alive reuse, so it closes as soon as it goes idle. */
 export function stopServing(httpServer, server) {
+	const closeWhenIdle = ({ server: owner }) => {
+		if (owner === httpServer)
+			setImmediate(() => httpServer.closeIdleConnections());
+	};
+	subscribe('http.server.response.finish', closeWhenIdle);
 	const httpClose = new Promise((resolveClose, rejectClose) => {
 		if (!httpServer.listening) {
 			resolveClose();
 			return;
 		}
 		httpServer.close((error) => (error ? rejectClose(error) : resolveClose()));
-	});
+	}).finally(() => unsubscribe('http.server.response.finish', closeWhenIdle));
 	return Promise.all([httpClose, server.ws.close()]).then(() => undefined);
 }
 
