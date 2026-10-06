@@ -1,10 +1,9 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -13,15 +12,23 @@ import {
 	PlatformStartAbortedError,
 	startPlatformProcess,
 } from '../src/server/platform-process.ts';
+import {
+	cleanupPlatformTests,
+	freePort,
+	platformWorkspace,
+	processAlive,
+	readLedger,
+	recordedFixtures,
+	spawnLauncher,
+	startTrackedPlatform,
+	stubbornPlatformSource,
+	trackLedger,
+	writePlatformChild,
+} from './support/platform-processes.ts';
 
-const temporaryDirectories: string[] = [];
 afterEach(async () => {
 	vi.restoreAllMocks();
-	await Promise.all(
-		temporaryDirectories
-			.splice(0)
-			.map((path) => rm(path, { recursive: true, force: true })),
-	);
+	await cleanupPlatformTests();
 });
 
 async function waitUntil(
@@ -33,15 +40,6 @@ async function waitUntil(
 		await delay(50);
 	}
 	throw new Error('Timed out waiting for the platform process');
-}
-
-async function freePort(): Promise<number> {
-	const socket = createServer();
-	await new Promise<void>((resolve) => socket.listen(0, '127.0.0.1', resolve));
-	const address = socket.address();
-	if (!address || typeof address === 'string') throw new Error('No TCP port');
-	await new Promise<void>((resolve) => socket.close(() => resolve()));
-	return address.port;
 }
 
 async function processGone(pid: number): Promise<boolean> {
@@ -128,16 +126,12 @@ it('does not mistake the application shell at /setup for first-run setup', async
 });
 
 it('restarts an owned setup process and calls readiness again for the full application', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-setup-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-setup-');
+	const root = workspace.root;
 	const marker = join(root, 'configured');
 	const pidFile = join(root, 'children.txt');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
@@ -168,7 +162,7 @@ server.listen(port, host);
 	const port = await freePort();
 	const ready: { url: string; setup: boolean }[] = [];
 	const logs: string[] = [];
-	const process = await startPlatformProcess({
+	const process = await startTrackedPlatform({
 		workspaceRoot: root,
 		port,
 		quiet: true,
@@ -201,16 +195,12 @@ server.listen(port, host);
 }, 40_000);
 
 it('collects readiness after an in-process setup to application transition', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-reload-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-reload-');
+	const root = workspace.root;
 	const marker = join(root, 'configured');
 	const pidFile = join(root, 'child.pid');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
@@ -239,7 +229,7 @@ createServer((request, response) => {
 	);
 	const ready: boolean[] = [];
 	const logs: string[] = [];
-	const platform = await startPlatformProcess({
+	const platform = await startTrackedPlatform({
 		workspaceRoot: root,
 		port: await freePort(),
 		quiet: true,
@@ -274,18 +264,12 @@ createServer((request, response) => {
 }, 30_000);
 
 it('restarts when the wizard exits after an in-process application transition', async () => {
-	const root = await mkdtemp(
-		join(tmpdir(), 'flowdular-platform-late-restart-'),
-	);
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-late-restart-');
+	const root = workspace.root;
 	const marker = join(root, 'configured');
 	const pidFile = join(root, 'children.txt');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
@@ -313,7 +297,7 @@ createServer((request, response) => {
 	);
 	const ready: boolean[] = [];
 	const logs: string[] = [];
-	const platform = await startPlatformProcess({
+	const platform = await startTrackedPlatform({
 		workspaceRoot: root,
 		port: await freePort(),
 		quiet: true,
@@ -349,19 +333,15 @@ createServer((request, response) => {
 }, 40_000);
 
 it('recognizes setup behind a slow first answer and restarts into the application on the setup exit code', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-cold-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-cold-');
+	const root = workspace.root;
 	const marker = join(root, 'configured');
 	const pidFile = join(root, 'children.txt');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
 	/* Like the development server, the socket opens before the configuration
 	   is evaluated, and every request waits for that evaluation. A cold
 	   first-run boot takes far longer than a quick probe would wait. */
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
@@ -392,7 +372,7 @@ createServer(async (request, response) => {
 	const restarted = new Promise<void>((resolve) => {
 		applicationReady = resolve;
 	});
-	const platform = await startPlatformProcess({
+	const platform = await startTrackedPlatform({
 		workspaceRoot: root,
 		port: await freePort(),
 		quiet: true,
@@ -427,16 +407,12 @@ createServer(async (request, response) => {
 }, 90_000);
 
 it('restarts after setup when the exited process group answers EPERM', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-eperm-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-eperm-');
+	const root = workspace.root;
 	const marker = join(root, 'configured');
 	const pidFile = join(root, 'children.txt');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
@@ -483,7 +459,7 @@ createServer((request, response) => {
 		settle = resolve;
 	});
 	try {
-		const platform = await startPlatformProcess({
+		const platform = await startTrackedPlatform({
 			workspaceRoot: root,
 			port: await freePort(),
 			quiet: true,
@@ -519,16 +495,12 @@ createServer((request, response) => {
 }, 90_000);
 
 it('cancels startup while the platform has not answered its first request', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-unanswered-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-unanswered-');
+	const root = workspace.root;
 	const pidFile = join(root, 'child.pid');
 	const asked = join(root, 'asked');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
@@ -539,7 +511,7 @@ createServer(() => writeFileSync(${JSON.stringify(asked)}, 'asked')).listen(port
 `,
 	);
 	const controller = new AbortController();
-	const startup = startPlatformProcess({
+	const startup = startTrackedPlatform({
 		workspaceRoot: root,
 		port: await freePort(),
 		quiet: true,
@@ -595,19 +567,15 @@ it('stops waiting for an already-serving platform that has not answered when can
 }, 30_000);
 
 it('stops a platform child when startup is cancelled', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-platform-start-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-platform-start-');
+	const root = workspace.root;
 	const childPidFile = join(root, 'child.pid');
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(childPidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
 	);
 	const controller = new AbortController();
-	const startup = startPlatformProcess({
+	const startup = startTrackedPlatform({
 		workspaceRoot: root,
 		port: await freePort(),
 		quiet: true,
@@ -634,137 +602,87 @@ it('stops a platform child when startup is cancelled', async () => {
 }, 20_000);
 
 it('waits for a starting platform child to stop before the launcher exits', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-launcher-stop-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-launcher-stop-');
+	const root = workspace.root;
 	const childPidFile = join(root, 'child.pid');
 	await writeFile(
 		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 	);
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(childPidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
 	);
-	const entry = resolve(
-		fileURLToPath(new URL('../bin/flowdular-sandbox.mjs', import.meta.url)),
-	);
-	const launcher = spawn(
-		process.execPath,
-		[
-			entry,
-			'--workspace',
-			root,
-			'--port',
-			String(await freePort()),
-			'--platform-port',
-			String(await freePort()),
-		],
-		{ cwd: root, stdio: ['ignore', 'pipe', 'pipe'] },
-	);
-	let output = '';
-	for (const stream of [launcher.stdout, launcher.stderr])
-		stream.on('data', (chunk: Buffer) => {
-			output = (output + chunk.toString()).slice(-8000);
-		});
+	const { child: launcher, output } = spawnLauncher(workspace, {
+		sandbox: await freePort(),
+		platform: await freePort(),
+	});
 	let childPid: number | null = null;
-	try {
-		await waitUntil(async () => {
-			try {
-				childPid = Number(await readFile(childPidFile, 'utf8'));
-				return true;
-			} catch {
-				if (launcher.exitCode !== null) throw new Error(output);
-				return false;
-			}
-		}, 300).catch((error) => {
-			throw new Error(
-				`${error instanceof Error ? error.message : error}\n${output}`,
-			);
-		});
-		launcher.kill('SIGTERM');
-		await Promise.race([
-			once(launcher, 'exit'),
-			delay(8_000).then(() => {
-				throw new Error(`Launcher did not exit: ${output}`);
-			}),
-		]);
-		expect(childPid).not.toBeNull();
-		await waitUntil(() => processGone(childPid!)).catch((error) => {
-			let state = '';
-			try {
-				state = execFileSync(
-					'ps',
-					['-o', 'pid,ppid,pgid,stat,command', '-p', String(childPid)],
-					{ encoding: 'utf8' },
-				);
-			} catch {
-				/* A process can disappear between the checks. */
-			}
-			throw new Error(
-				`${error instanceof Error ? error.message : error}\n${state}\n${output}`,
-			);
-		});
-	} finally {
-		if (launcher.exitCode === null) launcher.kill('SIGKILL');
-		if (childPid !== null && !(await processGone(childPid))) {
-			try {
-				process.kill(childPid, 'SIGKILL');
-			} catch {
-				/* The child may have exited after the last check. */
-			}
+	await waitUntil(async () => {
+		try {
+			childPid = Number(await readFile(childPidFile, 'utf8'));
+			return true;
+		} catch {
+			if (launcher.exitCode !== null) throw new Error(output());
+			return false;
 		}
-	}
+	}, 300).catch((error) => {
+		throw new Error(
+			`${error instanceof Error ? error.message : error}\n${output()}`,
+		);
+	});
+	launcher.kill('SIGTERM');
+	await Promise.race([
+		once(launcher, 'exit'),
+		delay(8_000).then(() => {
+			throw new Error(`Launcher did not exit: ${output()}`);
+		}),
+	]);
+	expect(childPid).not.toBeNull();
+	await waitUntil(() => processGone(childPid!)).catch((error) => {
+		let state = '';
+		try {
+			state = execFileSync(
+				'ps',
+				['-o', 'pid,ppid,pgid,stat,command', '-p', String(childPid)],
+				{ encoding: 'utf8' },
+			);
+		} catch {
+			/* A process can disappear between the checks. */
+		}
+		throw new Error(
+			`${error instanceof Error ? error.message : error}\n${state}\n${output()}`,
+		);
+	});
 }, 30_000);
 
 it('reports the address of the platform it starts before that platform answers', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-launcher-address-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-launcher-address-');
+	const root = workspace.root;
 	const childPidFile = join(root, 'child.pid');
 	await writeFile(
 		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 	);
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
 	/* A first-run platform is still booting when the banner prints. */
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(childPidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`,
-	);
-	const entry = resolve(
-		fileURLToPath(new URL('../bin/flowdular-sandbox.mjs', import.meta.url)),
 	);
 	const sandboxPort = await freePort();
 	const platformPort = await freePort();
 	const started = `http://127.0.0.1:${platformPort}`;
-	const launcher = spawn(
-		process.execPath,
-		[
-			entry,
-			'--workspace',
-			root,
-			'--port',
-			String(sandboxPort),
-			'--platform-port',
-			String(platformPort),
-		],
-		{ cwd: root, stdio: ['ignore', 'pipe', 'pipe'] },
-	);
-	let output = '';
-	const plain = () => output.replace(/\x1b\[[0-9;]*m/g, '');
+	const { child: launcher, output } = spawnLauncher(workspace, {
+		sandbox: sandboxPort,
+		platform: platformPort,
+	});
+	const plain = () => output().replace(/\x1b\[[0-9;]*m/g, '');
 	const bannerPrinted = new Promise<void>((resolve, reject) => {
 		for (const stream of [launcher.stdout, launcher.stderr])
-			stream.on('data', (chunk: Buffer) => {
-				output = (output + chunk.toString()).slice(-12_000);
+			stream.on('data', () => {
 				if (/^\s*diagnostics\s/m.test(plain())) resolve();
 			});
-		launcher.once('exit', () => reject(new Error(output)));
+		launcher.once('exit', () => reject(new Error(output())));
 	});
 	try {
 		await bannerPrinted;
@@ -786,7 +704,7 @@ it('reports the address of the platform it starts before that platform answers',
 			await Promise.race([
 				once(launcher, 'exit'),
 				delay(8_000).then(() => {
-					throw new Error(`Launcher did not exit: ${output}`);
+					throw new Error(`Launcher did not exit: ${output()}`);
 				}),
 			]);
 		const childPid = await readFile(childPidFile, 'utf8').then(
@@ -798,8 +716,8 @@ it('reports the address of the platform it starts before that platform answers',
 }, 90_000);
 
 it('shows the private setup token once in the launcher terminal without putting it in HTTP state', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'flowdular-launcher-setup-'));
-	temporaryDirectories.push(root);
+	const workspace = await platformWorkspace('flowdular-launcher-setup-');
+	const root = workspace.root;
 	const token = 't'.repeat(43);
 	const platformToken = 'fd_test_platform_credential';
 	const pidFile = join(root, 'children.txt');
@@ -814,12 +732,8 @@ it('shows the private setup token once in the launcher terminal without putting 
 		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 	);
-	await writeFile(
-		join(root, 'package.json'),
-		JSON.stringify({ private: true, scripts: { dev: 'node child.mjs' } }),
-	);
-	await writeFile(
-		join(root, 'child.mjs'),
+	await writePlatformChild(
+		workspace,
 		`import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 appendFileSync(${JSON.stringify(pidFile)}, String(process.pid) + '\\n');
@@ -850,38 +764,21 @@ createServer((request, response) => {
 }).listen(port, host);
 `,
 	);
-	const entry = resolve(
-		fileURLToPath(new URL('../bin/flowdular-sandbox.mjs', import.meta.url)),
-	);
 	const sandboxPort = await freePort();
 	const platformPort = await freePort();
-	const launcher = spawn(
-		process.execPath,
-		[
-			entry,
-			'--workspace',
-			root,
-			'--port',
-			String(sandboxPort),
-			'--platform-port',
-			String(platformPort),
-		],
-		{ cwd: root, stdio: ['ignore', 'pipe', 'pipe'] },
-	);
-	let output = '';
-	for (const stream of [launcher.stdout, launcher.stderr])
-		stream.on('data', (chunk: Buffer) => {
-			output = (output + chunk.toString()).slice(-12_000);
-		});
+	const { child: launcher, output } = spawnLauncher(workspace, {
+		sandbox: sandboxPort,
+		platform: platformPort,
+	});
 	try {
 		await waitUntil(async () => {
-			if (launcher.exitCode !== null) throw new Error(output);
-			return output.includes(`Setup token: ${token}`);
+			if (launcher.exitCode !== null) throw new Error(output());
+			return output().includes(`Setup token: ${token}`);
 		}, 400);
-		expect(output.match(new RegExp(`Setup token: ${token}`, 'g'))).toHaveLength(
-			1,
-		);
-		expect(output).toContain(
+		expect(
+			output().match(new RegExp(`Setup token: ${token}`, 'g')),
+		).toHaveLength(1);
+		expect(output()).toContain(
 			`Open setup: http://127.0.0.1:${platformPort}/setup`,
 		);
 		const response = await fetch(
@@ -910,14 +807,14 @@ createServer((request, response) => {
 		expect(connected).toContain('Acme Finance');
 		expect(connected).not.toContain(token);
 		expect(connected).not.toContain(platformToken);
-		expect(output).not.toContain(platformToken);
+		expect(output()).not.toContain(platformToken);
 	} finally {
 		launcher.kill('SIGTERM');
 		if (launcher.exitCode === null)
 			await Promise.race([
 				once(launcher, 'exit'),
 				delay(8_000).then(() => {
-					throw new Error(`Launcher did not exit: ${output}`);
+					throw new Error(`Launcher did not exit: ${output()}`);
 				}),
 			]);
 		const pids = (await readFile(pidFile, 'utf8'))
@@ -927,3 +824,187 @@ createServer((request, response) => {
 		for (const pid of pids) await waitUntil(() => processGone(pid));
 	}
 }, 40_000);
+
+function survivors(
+	recorded: readonly { readonly pid: number; readonly group: number | null }[],
+): number[] {
+	return recorded
+		.flatMap(({ pid, group }) => (group === null ? [pid] : [pid, -group]))
+		.filter(processAlive);
+}
+
+it('stops every process in the platform group, including one that ignores SIGTERM', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-group-');
+	await writePlatformChild(workspace, stubbornPlatformSource(workspace.ledger));
+	const platform = await startTrackedPlatform({
+		workspaceRoot: workspace.root,
+		port: await freePort(),
+		quiet: true,
+	});
+	const recorded = await recordedFixtures(workspace.ledger, 2);
+	expect(survivors(recorded)).toHaveLength(4);
+	await platform.stop();
+	/* stop() can return while killed members wait to be reaped. */
+	await waitUntil(async () => survivors(recorded).length === 0, 40).catch(
+		() => undefined,
+	);
+	expect(survivors(recorded)).toEqual([]);
+}, 30_000);
+
+it('reports a platform command that cannot be started', async () => {
+	const workspace = await platformWorkspace('flowdular-platform-missing-');
+	const path = process.env.PATH;
+	/* The guard starts by absolute path; pnpm is looked up in an empty PATH. */
+	process.env.PATH = workspace.root;
+	try {
+		await expect(
+			startTrackedPlatform({
+				workspaceRoot: workspace.root,
+				port: await freePort(),
+				quiet: true,
+			}),
+		).rejects.toThrow('spawn pnpm ENOENT');
+	} finally {
+		process.env.PATH = path;
+	}
+});
+
+it.each([
+	['SIGKILL', 'worker'],
+	['SIGHUP', 'worker'],
+	['SIGKILL', 'server'],
+] as const)(
+	'stops the platform tree when the launcher dies by %s and its %s ignores SIGTERM',
+	async (signal, stubborn) => {
+		const workspace = await platformWorkspace('flowdular-launcher-abrupt-');
+		await writeFile(
+			join(workspace.root, 'flowdular.json'),
+			JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
+		);
+		await writePlatformChild(
+			workspace,
+			stubbornPlatformSource(workspace.ledger, stubborn),
+		);
+		const { child: launcher, output } = spawnLauncher(workspace, {
+			sandbox: await freePort(),
+			platform: await freePort(),
+		});
+		const recorded = await recordedFixtures(workspace.ledger, 2).catch(
+			(error: Error) => {
+				throw new Error(`${error.message}\n${output()}`);
+			},
+		);
+		expect(launcher.exitCode).toBeNull();
+		launcher.kill(signal);
+		await waitUntil(async () => launcher.signalCode !== null);
+		expect(launcher.signalCode).toBe(signal);
+		/* The guard escalates to SIGKILL three seconds after SIGTERM; ten
+		   seconds bounds that on a loaded machine. */
+		await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
+			() => undefined,
+		);
+		expect(survivors(recorded)).toEqual([]);
+	},
+	60_000,
+);
+
+it('stops the platform tree when a second Ctrl+C ends the launcher during shutdown', async () => {
+	const workspace = await platformWorkspace('flowdular-launcher-interrupt-');
+	await writeFile(
+		join(workspace.root, 'flowdular.json'),
+		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
+	);
+	await writePlatformChild(workspace, stubbornPlatformSource(workspace.ledger));
+	const { child: launcher, output } = spawnLauncher(workspace, {
+		sandbox: await freePort(),
+		platform: await freePort(),
+	});
+	const recorded = await recordedFixtures(workspace.ledger, 2).catch(
+		(error: Error) => {
+			throw new Error(`${error.message}\n${output()}`);
+		},
+	);
+	launcher.kill('SIGINT');
+	/* Printed once the platform's stop has begun. */
+	await waitUntil(async () => output().includes('Sandbox stopped.'));
+	launcher.kill('SIGINT');
+	await waitUntil(
+		async () => launcher.exitCode !== null || launcher.signalCode !== null,
+	);
+	await waitUntil(async () => survivors(recorded).length === 0, 200).catch(
+		() => undefined,
+	);
+	expect(survivors(recorded)).toEqual([]);
+}, 60_000);
+
+it('leaves no process behind when a launcher test fails or times out', async () => {
+	const workspace = await platformWorkspace('flowdular-abandoned-run-');
+	const ledger = join(workspace.root, 'abandoned.txt');
+	trackLedger(ledger);
+	const support = fileURLToPath(
+		new URL('./support/platform-processes.ts', import.meta.url),
+	);
+	await writeFile(
+		join(workspace.root, 'abandoned.test.ts'),
+		`import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { cleanupPlatformTests, freePort, platformWorkspace, recordedFixtures, spawnLauncher, stubbornPlatformSource, writePlatformChild } from ${JSON.stringify(support)};
+
+const ledger = ${JSON.stringify(ledger)};
+let platforms = 0;
+afterEach(cleanupPlatformTests);
+beforeEach(async () => {
+  const workspace = await platformWorkspace('flowdular-abandoned-', ledger);
+  await writeFile(join(workspace.root, 'flowdular.json'), JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }));
+  await writePlatformChild(workspace, stubbornPlatformSource(ledger));
+  spawnLauncher(workspace, { sandbox: await freePort(), platform: await freePort() });
+  platforms += 2;
+  await recordedFixtures(ledger, platforms, 45_000);
+}, 60_000);
+it('fails while its platform runs', () => {
+  throw new Error('deliberate failure');
+});
+it('times out while its platform runs', () => new Promise(() => undefined), 250);
+`,
+	);
+	const environment = Object.fromEntries(
+		Object.entries(process.env).filter(
+			([name]) => !/^(?:VITEST|TINYPOOL|FORCE_COLOR)/.test(name),
+		),
+	);
+	const run = spawn(
+		process.execPath,
+		[
+			fileURLToPath(
+				new URL('../node_modules/vitest/vitest.mjs', import.meta.url),
+			),
+			'run',
+			'--root',
+			workspace.root,
+			'--globals',
+			'--hookTimeout=60000',
+		],
+		{
+			cwd: workspace.root,
+			env: { ...environment, NO_COLOR: '1' },
+			stdio: ['ignore', 'pipe', 'pipe'],
+			detached: process.platform !== 'win32',
+		},
+	);
+	await writeFile(workspace.ledger, `${run.pid} ${run.pid}\n`);
+	let output = '';
+	for (const stream of [run.stdout, run.stderr])
+		stream.on('data', (chunk: Buffer) => {
+			output = (output + chunk.toString()).slice(-20_000);
+		});
+	const [code] = await once(run, 'exit');
+	expect(output).toContain('deliberate failure');
+	expect(output).toContain('Test timed out in 250ms');
+	expect(code, output).toBe(1);
+	const recorded = await readLedger(ledger);
+	expect(recorded.filter(({ group }) => group === null)).toHaveLength(2);
+	expect(recorded.filter(({ group }) => group !== null)).toHaveLength(4);
+	expect(survivors([...recorded, { pid: run.pid!, group: run.pid! }])).toEqual(
+		[],
+	);
+}, 120_000);

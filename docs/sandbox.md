@@ -57,7 +57,9 @@ written.
 
 An application already serving on the platform port is left alone, and no
 credential is prepared for it. `--platform` and `--platform-port` say otherwise
-explicitly; `--no-platform` never starts one.
+explicitly; `--no-platform` never starts one. An application the launcher
+started stops with it, including when the terminal closes or the launcher is
+killed.
 
 ## The credential is prepared, not pasted
 
