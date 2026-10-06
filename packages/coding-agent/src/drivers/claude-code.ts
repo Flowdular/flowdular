@@ -179,6 +179,9 @@ export function createClaudeCodeDriver(
 
 		let started = false;
 		let completed = false;
+		/* The result line repeats the closing text the assistant events already
+		   carried, so it speaks only for a stream that carried none. */
+		let spoke = false;
 		let currentResumeId = resumeId;
 		let lastActivityAt = -Infinity;
 		for await (const line of stream.lines) {
@@ -239,6 +242,7 @@ export function createClaudeCodeDriver(
 					.content;
 				for (const block of (content ?? []) as ContentBlock[]) {
 					if (block.type === 'text' && block.text?.trim()) {
+						spoke = true;
 						yield { type: 'assistant.message', text: block.text };
 					}
 					if (block.type === 'thinking' && block.thinking?.trim()) {
@@ -293,7 +297,11 @@ export function createClaudeCodeDriver(
 						code: 'DRIVER_TURN_FAILED',
 						message: message.result.slice(0, 500),
 					};
-				} else if (typeof message.result === 'string' && message.result) {
+				} else if (
+					!spoke &&
+					typeof message.result === 'string' &&
+					message.result
+				) {
 					yield { type: 'assistant.message', text: message.result };
 				}
 				yield {

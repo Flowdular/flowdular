@@ -317,6 +317,62 @@ else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'res
 		});
 	});
 
+	it('reports the closing message once although the result line repeats it', async () => {
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
+		const closing = 'I wrote the draft. **Two decisions** are open.';
+		const command = await replayBinary([
+			{ type: 'system', subtype: 'init', session_id: 'session-4' },
+			{
+				type: 'assistant',
+				message: { content: [{ type: 'text', text: 'Reading the schema.' }] },
+			},
+			{
+				type: 'assistant',
+				message: { content: [{ type: 'text', text: closing }] },
+			},
+			{
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: closing,
+				session_id: 'session-4',
+				usage: {},
+			},
+		]);
+		const events = await collect(
+			createClaudeCodeDriver({ command }),
+			workspacePath,
+		);
+		expect(
+			events.filter((event) => event.type === 'assistant.message'),
+		).toEqual([
+			{ type: 'assistant.message', text: 'Reading the schema.' },
+			{ type: 'assistant.message', text: closing },
+		]);
+	});
+
+	it('takes the closing message from the result line when no assistant text streamed', async () => {
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
+		const command = await replayBinary([
+			{ type: 'system', subtype: 'init', session_id: 'session-5' },
+			{
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'Nothing to change.',
+				session_id: 'session-5',
+				usage: {},
+			},
+		]);
+		const events = await collect(
+			createClaudeCodeDriver({ command }),
+			workspacePath,
+		);
+		expect(
+			events.filter((event) => event.type === 'assistant.message'),
+		).toEqual([{ type: 'assistant.message', text: 'Nothing to change.' }]);
+	});
+
 	it('surfaces a failed turn as an error event', async () => {
 		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await replayBinary([
