@@ -499,7 +499,10 @@ next step:
 - **continue**: the named specialist takes over with a prompt that carries the
   original brief. The line is honoured only when it names a role the finishing
   role may hand to (its `handoff` list) and never itself; otherwise the state
-  routing decides and the transcript says why. With **Auto handoff** on, which
+  routing decides and the transcript says why. When the line names module files
+  the finishing role may not write (`translations/en.json`), the turn goes to a
+  role whose `allowedPaths` cover one of them, by the rule a gate repair
+  follows, never to one that may write none of them. With **Auto handoff** on, which
   is the default, the server starts the next turn by itself on the same stream,
   up to four chained turns per operator message (`chainDepth` in the record).
   With it off, the transcript shows a `Continue with <role>` button instead.
@@ -526,8 +529,9 @@ next step:
   eject when the change looks right. A business manager who updated a
   specification stops at approval; only the approved handoff starts its
   implementer.
-- **blocked**: the coding agent errored, or a repair turn changed nothing and
-  no other specialist is assigned what it left. Nothing continues on its own.
+- **blocked**: the coding agent errored, a repair turn changed nothing and
+  no other specialist is assigned what it left, or a handoff line named files
+  no specialist may write. Nothing continues on its own.
 
 A failed gate is its own handoff, before anyone else works, so a broken change
 never travels down the chain. It goes to a specialist whose write paths cover

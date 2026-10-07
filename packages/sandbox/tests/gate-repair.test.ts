@@ -676,6 +676,10 @@ const RUN5_FRONTEND = `I rewrote the list screen to cover all five review findin
 
 HANDOFF: ux-designer - add the listed equipment.* translation keys to translations/en.json and pl.json (outside my write scope) and inspect the rendered list, drawer and retire dialog`;
 
+const RUN5_COPY_FIXES = `I tidied the list screen. Two existing strings read badly, and translations/ is outside my write scope.
+
+HANDOFF: ux-designer - apply the two copy fixes to translations/en.json and pl.json (outside my write scope) and inspect the rendered list`;
+
 const RUN5_UX = `I couldn't add the missing translations: that folder is outside what I'm allowed to change (\`src/client/**\`), so I made no edits.
 
 HANDOFF: business-manager - add the listed equipment.* keys and the two copy fixes to translations/en.json and pl.json, which are outside my write scope`;
@@ -850,6 +854,71 @@ describe('handoff scope, replaying the recorded run 5 frontend turn', () => {
 			translated.gates.find((gate) => gate.id === 'module-schema')?.status,
 		).toBe('passed');
 		expect(roles).not.toContain('ux-designer');
+	});
+
+	it('hands work named outside the write paths to a role that may write it, and runs the key check after the translations change', async () => {
+		const { root, session, module } = await approvedSession(RUN5_FILES);
+		const roles: string[] = [];
+		const ran: string[][] = [];
+		const context = run5Context(
+			root,
+			module,
+			run5Driver({
+				client: "export const title = t('equipment.page.title');\n",
+				closing: RUN5_COPY_FIXES,
+				roles,
+			}),
+			ran,
+		);
+
+		const client = await drive(context, session.id, {
+			message: 'Tidy the equipment list screen.',
+			role: 'frontend-engineer',
+		});
+		expect(client.gates.every((gate) => gate.status === 'passed')).toBe(true);
+		expect(client.handoff).toMatchObject({
+			kind: 'continue',
+			role: 'business-manager',
+		});
+		expect(client.handoff.repair).toBeUndefined();
+		expect(client.handoff.reason).toContain(
+			'UX designer may not write translations/en.json, so Business manager takes it.',
+		);
+		expect(client.handoff.prompt).toContain('apply the two copy fixes');
+
+		ran.length = 0;
+		await follow(context, session.id, client);
+		expect(roles).toEqual(['frontend-engineer', 'business-manager']);
+		expect(ran.flat()).toContain('module-schema');
+	});
+
+	it('stops for the operator when no role may write the work a handoff names', async () => {
+		const { root, session, module } = await approvedSession(RUN5_FILES);
+		const roles: string[] = [];
+		const context = run5Context(
+			root,
+			module,
+			run5Driver({
+				client: "export const title = t('equipment.page.title');\n",
+				closing: RUN5_COPY_FIXES,
+				roles,
+			}),
+			[],
+			DEFAULT_AGENT_ROLES.filter((role) => role.id !== 'business-manager'),
+		);
+
+		const client = await drive(context, session.id, {
+			message: 'Tidy the equipment list screen.',
+			role: 'frontend-engineer',
+		});
+		expect(client.handoff.kind).toBe('blocked');
+		expect(client.handoff.reason).toBe(
+			'Frontend engineer handed on work in translations/en.json, which no specialist in this session may write, so the chain stops here. Make that change by hand, or say what should change.',
+		);
+		expect((await readChat(root, session)).at(-1)?.handoff).toEqual(
+			client.handoff,
+		);
+		expect(roles).toEqual(['frontend-engineer']);
 	});
 
 	it('checks the translations a turn wrote once the module has its manifest, never before the scaffold', async () => {
@@ -1087,5 +1156,96 @@ describe('repair routing and the role write paths', () => {
 			},
 		]);
 		expect(plan.prompt).toContain('(1 of 2)');
+	});
+
+	it('never hands the work a handoff line names to a role that may not write it, whichever choice named that role', () => {
+		const gates = [
+			failed({ id: 'module-rules', module: 'equipment', status: 'passed' }),
+		];
+		/* The frontend engineer may not hand to the business manager, so the
+		   state routing chose the backend engineer. */
+		const routed = planHandoff({
+			...base,
+			gates,
+			declared: {
+				role: 'business-manager',
+				reason:
+					'add the listed keys to translations/en.json, outside my write scope',
+			},
+		});
+		expect(routed).toMatchObject({
+			kind: 'continue',
+			role: 'business-manager',
+		});
+		expect(routed.prompt).toContain('add the listed keys');
+		expect(
+			planHandoff({
+				...base,
+				gates,
+				declared: {
+					role: 'ux-designer',
+					reason: 'reword the empty state in ./translations/pl.json',
+				},
+			}).role,
+		).toBe('business-manager');
+
+		/* Work named in another module of the session is done there. */
+		const elsewhere = planHandoff({
+			...base,
+			routing: {
+				...base.routing,
+				session: {
+					...base.routing.session,
+					modules: [
+						...base.routing.session.modules,
+						{ id: 'rooms.core', directory: 'rooms', kind: 'new' },
+					],
+				} as unknown as SandboxSession,
+			},
+			gates,
+			declared: {
+				role: 'ux-designer',
+				reason: 'add the room labels to modules/rooms/translations/en.json',
+			},
+		});
+		expect(elsewhere).toMatchObject({
+			kind: 'continue',
+			role: 'business-manager',
+			module: 'rooms',
+		});
+
+		/* A role that may write what the line names keeps the handoff, and a
+		   file of a module outside the session is a reference, not work. */
+		for (const [role, reason] of [
+			['backend-engineer', 'return the count from src/api/endpoints.ts'],
+			[
+				'ux-designer',
+				'match the layout of modules/catalog/src/client/CatalogView.tsrx',
+			],
+		] as const)
+			expect(
+				planHandoff({ ...base, gates, declared: { role, reason } }).role,
+			).toBe(role);
+	});
+
+	it('sends a failed review to a role that may write the files the reviewer named', () => {
+		const plan = planHandoff({
+			...base,
+			role: 'backend-engineer',
+			reviewing: true,
+			gates: [
+				failed({
+					id: 'auto-review',
+					module: 'equipment',
+					output: 'Use $module-update to fix the findings in your review.',
+				}),
+			],
+			declared: {
+				role: 'ux-designer',
+				reason: 'add the missing keys to translations/en.json and pl.json',
+			},
+		});
+		expect(plan).toMatchObject({ kind: 'continue', repair: true });
+		expect(canWrite(plan.role, 'translations/en.json')).toBe(true);
 	});
 });
