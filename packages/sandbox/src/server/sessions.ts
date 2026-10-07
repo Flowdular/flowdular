@@ -214,43 +214,69 @@ const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
 	],
 	[/postgres(?:ql)?:\/\/[^:\s/]+:[^@\s]+@/gi, 'postgres://[redacted]@'],
 	[/https:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@'],
-	/* Local paths name the operator's home and project layout. A session
-	   workspace path reads relative to the workspace, any other path under the
-	   sandbox directory from .flowdular on. Outside quotes a path starts after
-	   a separator and runs to the next one, so no run crosses the start of
-	   another and a long line costs linear time; inside quotes it may hold
-	   spaces. */
-	...localPathRedactions(
-		String.raw`^|[\s'"\x60=(\[<>:;,]`,
-		String.raw`[^\s'"\x60=()\[\]<>:;,|]`,
-		String.raw`[\\/\s'"\x60)\]>,;:]|$`,
-	),
-	...localPathRedactions('"', '[^"\\n]', '[\\\\/"]'),
-	...localPathRedactions("'", "[^'\\n]", "[\\\\/']"),
 ];
 
-function localPathRedactions(
-	start: string,
-	char: string,
-	end: string,
-): [RegExp, string][] {
-	const root = String.raw`(?:file:\/\/\/?)?(?:[A-Za-z]:)?[\\/]${char}{0,1024}?`;
-	return [
-		[
-			new RegExp(
-				String.raw`(?<=${start})${root}[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"\x60]+[\\/]workspace(?=${end})`,
-				'gm',
-			),
-			'.',
-		],
-		[
-			new RegExp(
-				String.raw`(?<=${start})${root}[\\/](?=\.flowdular[\\/])`,
-				'gm',
-			),
-			'',
-		],
-	];
+/* Local paths name the operator's home and project layout. A path under the
+   sandbox directory reads from .flowdular on, and a session workspace path
+   reads relative to the workspace. Each path is found from its .flowdular
+   segment back to where it starts, so a directory name may hold any
+   character and a path may hold spaces; the walk back is bounded, so a long
+   line costs linear time. */
+const SANDBOX_SEGMENT = /[\\/]\.flowdular[\\/]/g;
+const SESSION_WORKSPACE =
+	/[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"`]+[\\/]workspace(?=[\\/\s'"`)\]>,;:]|$)/my;
+const PATH_LOOKBACK = 1024;
+
+function redactLocalPaths(text: string): string {
+	let output = '';
+	let copied = 0;
+	for (const match of text.matchAll(SANDBOX_SEGMENT)) {
+		const marker = match.index!;
+		if (copied > 0 && marker <= copied) continue;
+		const start = localPathStart(
+			text,
+			marker,
+			Math.max(copied, marker - PATH_LOOKBACK),
+		);
+		if (start === null) continue;
+		SESSION_WORKSPACE.lastIndex = marker;
+		const workspace = SESSION_WORKSPACE.exec(text);
+		output += `${text.slice(copied, start)}${workspace ? '.' : ''}`;
+		copied = workspace ? marker + workspace[0].length : marker + 1;
+	}
+	return output + text.slice(copied);
+}
+
+function opens(char: string | undefined): boolean {
+	return char === undefined || /[\s'"`=(\[<>:;,]/.test(char);
+}
+
+/* The nearest slash or drive before the segment that opens the text or
+   follows whitespace, a quote or a separator. A URL authority (//) is no
+   path, except in a file URL; a quote or a line break ends the search. */
+function localPathStart(
+	text: string,
+	marker: number,
+	limit: number,
+): number | null {
+	for (let index = marker; index >= limit; index -= 1) {
+		const char = text[index]!;
+		if (char === '\n' || char === '"' || char === "'" || char === '`')
+			return null;
+		if (char !== '/' && char !== '\\') continue;
+		const before = text[index - 1];
+		if (
+			before === ':' &&
+			/[A-Za-z]/.test(text[index - 2] ?? '') &&
+			opens(text[index - 3])
+		)
+			return index - 2;
+		if (!opens(before)) continue;
+		if (text[index + 1] !== '/') return index;
+		if (text.slice(index - 5, index) === 'file:' && opens(text[index - 6]))
+			return index - 5;
+	}
+	return null;
 }
 
 /* A single turn is bounded so one pathological gate output cannot fill the
@@ -263,6 +289,7 @@ export function redactText(value: string): string {
 	let safe = value;
 	for (const [pattern, replacement] of TRANSCRIPT_REDACTIONS)
 		safe = safe.replace(pattern, replacement);
+	safe = redactLocalPaths(safe);
 	return safe.length > ENTRY_TEXT_LIMIT
 		? `${safe.slice(0, ENTRY_TEXT_LIMIT)}\n[truncated at ${ENTRY_TEXT_LIMIT} characters]`
 		: safe;

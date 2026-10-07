@@ -1312,7 +1312,15 @@ describe('auto-review turn lifecycle', () => {
 				'"ui":"Synthetic ui evidence for this orchestration fixture."',
 				'"ui":"n/a"',
 			),
-			'Every check needs 20 to 4000 characters of evidence, and ui has none.',
+			'Every check needs 20 to 4000 characters of evidence: ui has less.',
+		],
+		[
+			'a passing verdict with a check longer than its limit',
+			REVIEW_RESPONSE.replace(
+				'"tests":"Synthetic tests evidence for this orchestration fixture."',
+				`"tests":"${'Evidence. '.repeat(401)}"`,
+			),
+			'Every check needs 20 to 4000 characters of evidence: tests has more.',
 		],
 	])(
 		'sends %s back to review with why it was not accepted',

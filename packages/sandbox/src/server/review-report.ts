@@ -123,11 +123,14 @@ export function checkHasEvidence(value: unknown): boolean {
 function passProblem(report: ReviewReport): string | null {
 	if (report.findings.length > 0)
 		return `A passing report has an empty findings list, and this one lists ${report.findings.length}: report them with "verdict": "fail", or leave out what is not a defect.`;
-	const thin = REVIEW_CHECKS.filter(
+	const unproven = REVIEW_CHECKS.filter(
 		(key) => !checkHasEvidence(report.checks[key]),
-	);
-	return thin.length > 0
-		? `Every check needs 20 to 4000 characters of evidence, and ${thin.join(', ')} ${thin.length === 1 ? 'has' : 'have'} none.`
+	).map((key) => {
+		const value = report.checks[key];
+		return `${key} has ${typeof value === 'string' && value.length > 4_000 ? 'more' : 'less'}`;
+	});
+	return unproven.length > 0
+		? `Every check needs 20 to 4000 characters of evidence: ${unproven.join(', ')}.`
 		: null;
 }
 
