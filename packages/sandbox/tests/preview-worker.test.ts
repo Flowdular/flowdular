@@ -1,6 +1,7 @@
 import {
 	mkdir,
 	mkdtemp,
+	readdir,
 	readFile,
 	realpath,
 	symlink,
@@ -15,6 +16,7 @@ import { createIsolatedPreviewRuntime } from '../src/server/preview-worker-manag
 import {
 	disposeProcessPreviewRuntime,
 	processPreviewRuntime,
+	type PreviewComposition,
 } from '../src/server/preview-runtime.ts';
 import { createSession, sessionPaths } from '../src/server/sessions.ts';
 
@@ -546,6 +548,137 @@ export function createServerComposition(context) {
 				adapter: 'recorded',
 				results: [{ ...result, evidenceId: expect.any(String) }],
 			});
+		} finally {
+			runtime.dispose();
+		}
+	}, 90_000);
+
+	it("lists exactly the composed modules in system.core's catalog, all active", async () => {
+		const { root, session, modulePath } = await previewSession(
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		await linkSupportModules(root);
+		const writeManifest = (version: string) =>
+			writeFile(
+				join(modulePath, 'module.json'),
+				JSON.stringify({
+					id: 'preview.core',
+					version,
+					dependencies: [{ id: 'system.core' }],
+				}),
+			);
+		await writeManifest('0.1.0');
+		const paths = sessionPaths(
+			await realpath(root),
+			session.id,
+			session.moduleSuffix,
+		);
+		const draftTree = async () =>
+			(await readdir(paths.workspace, { recursive: true })).sort();
+		const draftBefore = await draftTree();
+		const projectBefore = await readFile(join(root, 'flowdular.json'), 'utf8');
+		const origin = 'http://sandbox.test';
+		const signedIn = async (composition: PreviewComposition) => {
+			const signIn = await composition.request(
+				new Request(`${origin}/api/auth/sign-in`, {
+					method: 'POST',
+					headers: { origin, 'content-type': 'application/json' },
+					body: JSON.stringify(composition.credentials),
+				}),
+			);
+			expect(signIn.status).toBe(200);
+			const cookie = signIn.headers.getSetCookie()[0]!.split(';')[0]!;
+			return async (path: string) => {
+				const response = await composition.request(
+					new Request(`${origin}${path}`, { headers: { cookie } }),
+				);
+				expect(response.status).toBe(200);
+				return response.json();
+			};
+		};
+		type Catalog = {
+			modules: {
+				id: string;
+				name: string;
+				version: string;
+				enabled: boolean;
+				active: boolean;
+			}[];
+		};
+		const runtime = createIsolatedPreviewRuntime(root, {
+			requestTimeoutMs: 30_000,
+		});
+		try {
+			const composition = await runtime.compose(session);
+			expect(composition.error).toBeNull();
+			expect(composition.modules.map((module) => module.id)).toEqual([
+				'system.core',
+				'preview.core',
+			]);
+			const read = await signedIn(composition);
+
+			expect(await read('/api/system/modules/active')).toEqual({
+				modules: ['preview.core', 'system.core'],
+			});
+			const catalog = (await read('/api/system/modules')) as Catalog;
+			expect(
+				catalog.modules.map(({ id, name, version, enabled, active }) => ({
+					id,
+					name,
+					version,
+					enabled,
+					active,
+				})),
+			).toEqual([
+				{
+					id: 'preview.core',
+					name: 'preview.core',
+					version: '0.1.0',
+					enabled: true,
+					active: true,
+				},
+				{
+					id: 'system.core',
+					name: 'System Core',
+					version: JSON.parse(
+						await readFile(join(SOURCE_MODULES, 'system/module.json'), 'utf8'),
+					).version,
+					enabled: true,
+					active: true,
+				},
+			]);
+			const overview = (await read('/api/system/overview')) as {
+				moduleCount: number;
+				enabledModuleCount: number;
+				modules: { id: string }[];
+			};
+			expect(overview.moduleCount).toBe(2);
+			expect(overview.enabledModuleCount).toBe(2);
+			expect(overview.modules.map((module) => module.id).sort()).toEqual([
+				'preview.core',
+				'system.core',
+			]);
+
+			/* A source change composes a new generation; its catalog follows the
+			   draft and the previous generation's catalog does not linger. */
+			await writeManifest('0.2.0');
+			const next = await runtime.compose(session);
+			expect(next.revision).not.toBe(composition.revision);
+			const nextCatalog = (await (
+				await signedIn(next)
+			)('/api/system/modules')) as Catalog;
+			expect(
+				nextCatalog.modules.find((module) => module.id === 'preview.core')
+					?.version,
+			).toBe('0.2.0');
+			expect(await readdir(join(paths.data, 'preview-catalog'))).toEqual([
+				next.revision,
+			]);
+
+			expect(await draftTree()).toEqual(draftBefore);
+			expect(await readFile(join(root, 'flowdular.json'), 'utf8')).toBe(
+				projectBefore,
+			);
 		} finally {
 			runtime.dispose();
 		}
