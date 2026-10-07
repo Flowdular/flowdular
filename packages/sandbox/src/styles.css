@@ -589,6 +589,25 @@
 	overflow-wrap: anywhere;
 }
 
+.review-checks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-sm);
+}
+
+.review-checks > li,
+.review-finding__where {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
 /* The specification the operator approves, and what the session changed in it.
    Long lists stay readable: they wrap, they never scroll sideways, and only an
    identifier is monospaced. */

@@ -526,6 +526,157 @@ describe('transcript entries', () => {
 		expect(html).not.toContain('HANDOFF');
 	});
 
+	/* Trimmed from the run 5 auto-review turns: the same prose, fence, check
+	   keys, finding format and closing handoff line. */
+	const reviewChecks = {
+		correctness:
+			'Base reference/auto-review-base/ is empty, so the whole module was reviewed as new. EQUIPMENT-CREATE maps to equipment-service.ts:178 and tests/module.test.ts:93.',
+		security:
+			'Tenant identity comes only from principalFromContext (endpoints.ts:44); endpoints.test.ts:192 asserts 401 and 403 on all five routes.',
+		compatibility:
+			'module.json id equipment.core 0.1.0 matches package.json 0.1.0 and spec specVersion 0.1.0.',
+		lifecycle:
+			'Updates and retires lock the row with SELECT ... FOR UPDATE in one write transaction (database-repository.ts:228-263).',
+		tests:
+			'Suites: tests/module.test.ts, tests/endpoints.test.ts and tests/migrations.test.ts. The tests gate is pending on the current bytes.',
+		ui: 'No rendered inspection was possible: this sandbox gives the review no preview. screenState covers loading, denied, error, empty and populated (state.ts:243).',
+	};
+	function reviewMessage(body: string): string {
+		return [
+			"I've re-reviewed the whole equipment module and my verdict is **pass**, with no defects found.",
+			'',
+			'- **Tests on the current files are still pending.** The orchestrator needs to rerun tests before eject.',
+			'- **The spec is unchanged** and still approved at its current hash.',
+			'',
+			'```auto-review',
+			body,
+			'```',
+			'',
+			'HANDOFF: none - review passes; the operator still needs to look at the rendered screens',
+		].join('\n');
+	}
+	function reviewEntry(text: string): ChatPaneProps['entries'][number] {
+		return {
+			sequence: 1429,
+			at: 1,
+			kind: 'agent',
+			role: 'business-manager',
+			module: 'equipment',
+			text,
+		};
+	}
+	const folded = (html: string) =>
+		html.replace(/<details[\s\S]*?<\/details>/g, '');
+
+	it('shows a review verdict as a summary with the report folded away', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const html = transcript([
+			reviewEntry(
+				reviewMessage(
+					JSON.stringify(
+						{ verdict: 'pass', checks: reviewChecks, findings: [] },
+						null,
+						2,
+					),
+				),
+			),
+		]);
+		const visible = folded(html);
+
+		expect(visible).toContain(
+			'<strong>Tests on the current files are still pending.</strong>',
+		);
+		expect(visible).toContain('Passes review');
+		for (const check of [
+			'Correctness',
+			'Security',
+			'Compatibility',
+			'Lifecycle',
+			'Tests',
+			'UI',
+		])
+			expect(visible).toContain(`<span>${check}</span>`);
+		expect(visible.match(/Evidence given/g)).toHaveLength(6);
+		expect(visible).toContain('No findings.');
+		expect(visible).not.toContain('auto-review-base');
+		expect(visible).not.toContain('principalFromContext');
+		expect(visible).not.toContain('findings&quot;');
+		expect(visible).not.toContain('"findings"');
+		expect(visible).not.toContain('HANDOFF');
+		expect(html).toMatch(
+			/<details>\s*<summary>Full review report<\/summary>[\s\S]*auto-review-base[\s\S]*principalFromContext[\s\S]*<\/details>/,
+		);
+	});
+
+	it('lists each review finding with its severity and file, in Polish too', () => {
+		registerSandboxTranslations();
+		setActiveLocale('pl');
+		const html = transcript([
+			reviewEntry(
+				reviewMessage(
+					JSON.stringify(
+						{
+							verdict: 'fail',
+							checks: { ...reviewChecks, ui: 'Not checked.' },
+							findings: [
+								'High; modules/equipment/src/client/EquipmentView.tsrx:117-148 and src/client/api.ts:16-23; any list load; the in-repair count the list endpoint answers is discarded and never shown; load and render inRepairCount.',
+								'Medium; modules/equipment/tests; no client tests; the UI parts of EQUIPMENT-RETIRE are unverified; add client tests.',
+								'The search field has no length limit.',
+							],
+						},
+						null,
+						2,
+					),
+				),
+			),
+		]);
+		const visible = folded(html);
+
+		expect(visible).toContain('Wymaga poprawek');
+		expect(visible.match(/Z dowodami/g)).toHaveLength(5);
+		expect(visible.match(/Bez dowodów/g)).toHaveLength(1);
+		expect(visible).toContain('Wysoka');
+		expect(visible).toContain('Średnia');
+		expect(visible).toContain(
+			'modules/equipment/src/client/EquipmentView.tsrx:117-148 and src/client/api.ts:16-23',
+		);
+		expect(visible).toContain(
+			'any list load; the in-repair count the list endpoint answers is discarded and never shown; load and render inRepairCount.',
+		);
+		expect(visible).toContain('The search field has no length limit.');
+		expect(visible).not.toContain('High;');
+		expect(visible).not.toContain('auto-review-base');
+		expect(html).toMatch(/<details>[\s\S]*auto-review-base[\s\S]*<\/details>/);
+		setActiveLocale('en');
+	});
+
+	it('renders a review block that is not a verdict as before', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const malformed = JSON.stringify(
+			{ verdict: 'pass', checks: reviewChecks, findings: [] },
+			null,
+			2,
+		).slice(0, 200);
+		for (const body of [
+			malformed,
+			JSON.stringify({ verdict: 'maybe', checks: reviewChecks, findings: [] }),
+		]) {
+			const html = transcript([reviewEntry(reviewMessage(body))]);
+			const visible = folded(html);
+
+			expect(visible).toContain('<pre class="ui-code">');
+			expect(visible).toContain('auto-review-base');
+			expect(visible).toContain(
+				'<strong>Tests on the current files are still pending.</strong>',
+			);
+			expect(visible).not.toContain('Evidence given');
+			expect(html).not.toContain('Full review report');
+			expect(visible).not.toContain('HANDOFF');
+		}
+	});
+
 	it('keeps a long activity line whole for the ellipsis and its title', () => {
 		registerSandboxTranslations();
 		setActiveLocale('en');

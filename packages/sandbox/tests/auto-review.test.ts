@@ -135,6 +135,7 @@ describe('review evidence', () => {
 			'```auto-review\n{}\n```',
 			report.replace('"findings":[]', '"findings":["unfixed bug"]'),
 			report.replace('"pass"', '"fail"'),
+			report.replace('No rendered UI changes in this module diff.', 'n/a'),
 		]) {
 			expect(
 				await recordAutoReview(

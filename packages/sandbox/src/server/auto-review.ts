@@ -10,6 +10,7 @@ import {
 } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { referenceSource } from './reference.ts';
+import { passingReviewReport } from './review-report.ts';
 import {
 	basePathOf,
 	modulePathOf,
@@ -17,14 +18,6 @@ import {
 	type SessionPaths,
 } from './sessions.ts';
 
-const CHECKS = [
-	'correctness',
-	'security',
-	'compatibility',
-	'lifecycle',
-	'tests',
-	'ui',
-] as const;
 const IGNORED = new Set(['node_modules', 'dist', '.turbo', '.git']);
 
 /* Hash every deliverable byte, including tests, specs, config and deletions.
@@ -49,35 +42,6 @@ export async function moduleReviewRevision(root: string): Promise<string> {
 	}
 	await walk(root, '');
 	return hash.digest('hex');
-}
-
-function reportFrom(text: string): Record<string, unknown> | null {
-	if (text.length > 32_000) return null;
-	const blocks = [...text.matchAll(/```auto-review\s*\n([\s\S]*?)\n```/g)];
-	if (blocks.length !== 1) return null;
-	try {
-		const report = JSON.parse(blocks[0]![1]!);
-		if (
-			!report ||
-			report.verdict !== 'pass' ||
-			!Array.isArray(report.findings) ||
-			report.findings.length !== 0
-		)
-			return null;
-		if (
-			!report.checks ||
-			!CHECKS.every(
-				(key) =>
-					typeof report.checks[key] === 'string' &&
-					report.checks[key].trim().length >= 20 &&
-					report.checks[key].length <= 4_000,
-			)
-		)
-			return null;
-		return report;
-	} catch {
-		return null;
-	}
 }
 
 function recordPath(paths: SessionPaths, module: SessionModule): string {
@@ -124,9 +88,8 @@ export async function recordAutoReview(
 ): Promise<boolean> {
 	const path = recordPath(paths, module);
 	await rm(path, { force: true });
-	const report = reportFrom(closing);
 	if (
-		!report ||
+		!passingReviewReport(closing) ||
 		before !==
 			(await moduleReviewRevision(modulePathOf(paths, module.directory)))
 	)
@@ -158,7 +121,7 @@ export async function inspectAutoReview(
 			record &&
 			record.module === module.id &&
 			typeof record.closing === 'string' &&
-			reportFrom(record.closing) &&
+			passingReviewReport(record.closing) &&
 			record.revision ===
 				(await moduleReviewRevision(modulePathOf(paths, module.directory)))
 		) {
