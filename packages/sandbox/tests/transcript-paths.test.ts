@@ -53,11 +53,6 @@ it('finds a session path after any separator, in a file URL and in quotes with s
 			"'C:\\Users\\me\\My Apps\\blog\\.flowdular\\sandbox\\sessions\\id\\workspace\\modules\\a.ts'",
 		),
 	).toBe("'.\\modules\\a.ts'");
-	expect(
-		redactText(
-			'cd /Users/me/My Apps/blog/.flowdular/sandbox/sessions/x/workspace/modules/blog',
-		),
-	).toBe('cd ./modules/blog');
 });
 
 it('finds a session path whose directories hold separators', () => {
@@ -85,6 +80,21 @@ it('keeps the paths around a session path', () => {
 	expect(
 		redactText('see https://example.com/docs/.flowdular/sandbox/readme'),
 	).toBe('see https://example.com/docs/.flowdular/sandbox/readme');
+});
+
+it('never reaches back past the path to an earlier one', () => {
+	for (const text of [
+		'cd /tmp && ls ~/apps/blog/.flowdular/sandbox',
+		'cd /Users/me/x && ls ../blog/.flowdular/sandbox',
+		'I ran /usr/bin/pnpm and saved ./.flowdular/ui-preview/list.png',
+		'Moved /tmp/x to https://example.com/docs/.flowdular/x',
+		'see /tmp/notes and Apps/blog/.flowdular/x',
+		'"a" see /tmp/notes and Apps/blog/.flowdular/x',
+	])
+		expect(redactText(text), text).toBe(text);
+	expect(
+		redactText('/Users/me/.flowdular/x (see /tmp) and ~/blog/.flowdular/y'),
+	).toBe('.flowdular/x (see /tmp) and ~/blog/.flowdular/y');
 });
 
 it('redacts a long line without spaces in linear time', () => {

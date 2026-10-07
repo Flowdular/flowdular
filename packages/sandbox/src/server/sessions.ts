@@ -220,8 +220,8 @@ const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
    sandbox directory reads from .flowdular on, and a session workspace path
    reads relative to the workspace. Each path is found from its .flowdular
    segment back to where it starts, so a directory name may hold any
-   character and a path may hold spaces; the walk back is bounded, so a long
-   line costs linear time. */
+   character, and inside quotes a path may hold spaces; the walk back is
+   bounded, so a long line costs linear time. */
 const SANDBOX_SEGMENT = /[\\/]\.flowdular[\\/]/g;
 const SESSION_WORKSPACE =
 	/[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"`]+[\\/]workspace(?=[\\/\s'"`)\]>,;:]|$)/my;
@@ -252,19 +252,27 @@ function opens(char: string | undefined): boolean {
 }
 
 /* The nearest slash or drive before the segment that opens the text or
-   follows whitespace, a quote or a separator. A URL authority (//) is no
-   path, except in a file URL; a quote or a line break ends the search. */
+   follows whitespace, a quote or a separator. Whitespace ends the search
+   outside a quoted string, as do a quote, a line break, a relative start
+   (~/, ./, ../) and a URL authority (//) other than a file URL: what lies
+   before them is not this path. */
 function localPathStart(
 	text: string,
 	marker: number,
 	limit: number,
 ): number | null {
+	let quoted: boolean | undefined;
 	for (let index = marker; index >= limit; index -= 1) {
 		const char = text[index]!;
-		if (char === '\n' || char === '"' || char === "'" || char === '`')
-			return null;
+		if (char === '\n' || isQuote(char)) return null;
+		if (/\s/.test(char)) {
+			quoted ??= insideQuotes(text, index, limit);
+			if (!quoted) return null;
+			continue;
+		}
 		if (char !== '/' && char !== '\\') continue;
 		const before = text[index - 1];
+		if (before === '~' || before === '.') return null;
 		if (
 			before === ':' &&
 			/[A-Za-z]/.test(text[index - 2] ?? '') &&
@@ -273,10 +281,31 @@ function localPathStart(
 			return index - 2;
 		if (!opens(before)) continue;
 		if (text[index + 1] !== '/') return index;
-		if (text.slice(index - 5, index) === 'file:' && opens(text[index - 6]))
-			return index - 5;
+		return text.slice(index - 5, index) === 'file:' && opens(text[index - 6])
+			? index - 5
+			: null;
 	}
 	return null;
+}
+
+function isQuote(char: string): boolean {
+	return char === '"' || char === "'" || char === '`';
+}
+
+/* Whether a position sits inside a quoted string of its line: the nearest
+   quote before it is an opening one, the odd occurrence of its kind. */
+function insideQuotes(text: string, index: number, limit: number): boolean {
+	let line = index;
+	while (line > limit && text[line - 1] !== '\n') line -= 1;
+	for (let at = index - 1; at >= line; at -= 1) {
+		const quote = text[at]!;
+		if (!isQuote(quote)) continue;
+		let count = 0;
+		for (let scan = line; scan <= at; scan += 1)
+			if (text[scan] === quote) count += 1;
+		return count % 2 === 1;
+	}
+	return false;
 }
 
 /* A single turn is bounded so one pathological gate output cannot fill the
