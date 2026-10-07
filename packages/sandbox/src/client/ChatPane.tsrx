@@ -98,7 +98,7 @@ function eventLabel(entry: ChatEntry): string {
 		case 'activity':
 			return t('sandbox.chat.activity.' + event.phase);
 		case 'reasoning':
-			return event.text.slice(0, 160);
+			return event.text;
 		case 'tool.started':
 			return `${event.tool} ${event.detail}`;
 		case 'tool.completed':

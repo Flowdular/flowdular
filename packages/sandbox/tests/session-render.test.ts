@@ -525,4 +525,25 @@ describe('transcript entries', () => {
 		);
 		expect(html).not.toContain('HANDOFF');
 	});
+
+	it('keeps a long activity line whole for the ellipsis and its title', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const reasoning = `${'The spec leaves the category open, '.repeat(5)}so I will draft the spec using platform and recommended defaults.`;
+		const html = transcript([
+			{
+				sequence: 1,
+				at: 1,
+				kind: 'event',
+				role: 'business-manager',
+				event: { type: 'reasoning', text: reasoning },
+			},
+		]);
+
+		expect(reasoning.length).toBeGreaterThan(160);
+		expect(html).toContain(`title="${reasoning}"`);
+		expect(html).toContain(
+			`<span class="chat__event-text">${reasoning}</span>`,
+		);
+	});
 });
