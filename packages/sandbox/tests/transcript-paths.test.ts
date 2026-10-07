@@ -95,6 +95,33 @@ it('never reaches back past the path to an earlier one', () => {
 	expect(
 		redactText('/Users/me/.flowdular/x (see /tmp) and ~/blog/.flowdular/y'),
 	).toBe('.flowdular/x (see /tmp) and ~/blog/.flowdular/y');
+	expect(redactText("It's /tmp/notes and Apps/blog/.flowdular/x")).toBe(
+		"It's /tmp/notes and Apps/blog/.flowdular/x",
+	);
+});
+
+it('reads quotes from the line start and apostrophes as letters', () => {
+	const spaced = (file: string) =>
+		`/Users/me/My Apps/blog/.flowdular/sandbox/sessions/x/workspace/${file}`;
+	expect(redactText(`cp "${spaced('a.ts')}" "${spaced('b.ts')}"`)).toBe(
+		'cp "./a.ts" "./b.ts"',
+	);
+	expect(
+		redactText(`"/Users/me/blog/.flowdular/a" and "${spaced('b.ts')}"`),
+	).toBe('".flowdular/a" and "./b.ts"');
+	expect(redactText(`${'x'.repeat(2_000)} "${spaced('a.ts')}"`)).toBe(
+		`${'x'.repeat(2_000)} "./a.ts"`,
+	);
+	expect(
+		redactText(`{"message":"Can't open the user's file ${spaced('a.ts')}"}`),
+	).toBe(`{"message":"Can't open the user's file ./a.ts"}`);
+	for (const step of ['modules/..', '.'])
+		expect(
+			redactText(
+				`Error in /Users/me/${step}/blog/.flowdular/sandbox/sessions/x/workspace/a.ts`,
+			),
+			step,
+		).toBe('Error in ./a.ts');
 });
 
 it('redacts a long line without spaces in linear time', () => {

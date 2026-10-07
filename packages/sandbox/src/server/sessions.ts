@@ -230,13 +230,16 @@ const PATH_LOOKBACK = 1024;
 function redactLocalPaths(text: string): string {
 	let output = '';
 	let copied = 0;
+	const quoted = quoteState(text);
 	for (const match of text.matchAll(SANDBOX_SEGMENT)) {
 		const marker = match.index!;
+		const inQuotes = quoted(marker);
 		if (copied > 0 && marker <= copied) continue;
 		const start = localPathStart(
 			text,
 			marker,
 			Math.max(copied, marker - PATH_LOOKBACK),
+			inQuotes,
 		);
 		if (start === null) continue;
 		SESSION_WORKSPACE.lastIndex = marker;
@@ -251,6 +254,45 @@ function opens(char: string | undefined): boolean {
 	return char === undefined || /[\s'"`=(\[<>:;,]/.test(char);
 }
 
+/* A quote character, unless it is an apostrophe between two letters. */
+function isQuote(text: string, index: number): boolean {
+	const char = text[index];
+	if (char === '"' || char === '`') return true;
+	return (
+		char === "'" &&
+		!(
+			/\p{L}/u.test(text[index - 1] ?? '') &&
+			/\p{L}/u.test(text[index + 1] ?? '')
+		)
+	);
+}
+
+/* Whether each position, asked in increasing order, sits inside a quoted
+   string of its line. One forward pass from the line start answers them all. */
+function quoteState(text: string): (position: number) => boolean {
+	let scanned = 0;
+	let open: string | null = null;
+	return (position) => {
+		for (; scanned < position; scanned += 1) {
+			const char = text[scanned]!;
+			if (char === '\n') open = null;
+			else if (isQuote(text, scanned))
+				open = open === null ? char : open === char ? null : open;
+		}
+		return open !== null;
+	};
+}
+
+/* A slash that ends the ~, . or .. a token starts with: what follows is a
+   relative path, not a local one. */
+function relativeStart(text: string, index: number): boolean {
+	let at = index - 1;
+	if (text[at] === '~') return opens(text[at - 1]);
+	if (text[at] !== '.') return false;
+	if (text[at - 1] === '.') at -= 1;
+	return opens(text[at - 1]);
+}
+
 /* The nearest slash or drive before the segment that opens the text or
    follows whitespace, a quote or a separator. Whitespace ends the search
    outside a quoted string, as do a quote, a line break, a relative start
@@ -260,19 +302,18 @@ function localPathStart(
 	text: string,
 	marker: number,
 	limit: number,
+	inQuotes: boolean,
 ): number | null {
-	let quoted: boolean | undefined;
 	for (let index = marker; index >= limit; index -= 1) {
 		const char = text[index]!;
-		if (char === '\n' || isQuote(char)) return null;
+		if (char === '\n' || isQuote(text, index)) return null;
 		if (/\s/.test(char)) {
-			quoted ??= insideQuotes(text, index, limit);
-			if (!quoted) return null;
+			if (!inQuotes) return null;
 			continue;
 		}
 		if (char !== '/' && char !== '\\') continue;
+		if (relativeStart(text, index)) return null;
 		const before = text[index - 1];
-		if (before === '~' || before === '.') return null;
 		if (
 			before === ':' &&
 			/[A-Za-z]/.test(text[index - 2] ?? '') &&
@@ -286,26 +327,6 @@ function localPathStart(
 			: null;
 	}
 	return null;
-}
-
-function isQuote(char: string): boolean {
-	return char === '"' || char === "'" || char === '`';
-}
-
-/* Whether a position sits inside a quoted string of its line: the nearest
-   quote before it is an opening one, the odd occurrence of its kind. */
-function insideQuotes(text: string, index: number, limit: number): boolean {
-	let line = index;
-	while (line > limit && text[line - 1] !== '\n') line -= 1;
-	for (let at = index - 1; at >= line; at -= 1) {
-		const quote = text[at]!;
-		if (!isQuote(quote)) continue;
-		let count = 0;
-		for (let scan = line; scan <= at; scan += 1)
-			if (text[scan] === quote) count += 1;
-		return count % 2 === 1;
-	}
-	return false;
 }
 
 /* A single turn is bounded so one pathological gate output cannot fill the
