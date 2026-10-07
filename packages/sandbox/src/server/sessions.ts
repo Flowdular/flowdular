@@ -214,6 +214,17 @@ const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
 	],
 	[/postgres(?:ql)?:\/\/[^:\s/]+:[^@\s]+@/gi, 'postgres://[redacted]@'],
 	[/https:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@'],
+	/* Local paths name the operator's home and project layout. A session
+	   workspace path reads relative to the workspace, any other path under the
+	   sandbox directory from .flowdular on. */
+	[
+		/(?<=^|[\s'"`=(])(?:[A-Za-z]:)?[\\/][^\s'"`]*?[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"`]+[\\/]workspace(?=[\\/\s'"`)]|$)/gm,
+		'.',
+	],
+	[
+		/(?<=^|[\s'"`=(])(?:[A-Za-z]:)?[\\/][^\s'"`]*?[\\/](?=\.flowdular[\\/])/gm,
+		'',
+	],
 ];
 
 /* A single turn is bounded so one pathological gate output cannot fill the

@@ -751,6 +751,19 @@ function namedFileOwner(
 	};
 }
 
+/* Consecutive repair turns in a chain after this handoff. A review turn is
+   not a repair: it neither adds to the count nor resets it, so the review
+   after a fix always gets its turn and a fix that fails again still stops. */
+export function countRepairs(repairs: number, handoff: HandoffPlan): number {
+	if (handoff.kind !== 'continue') return repairs;
+	const reviewing =
+		handoff.repair === true &&
+		(handoff.gates?.length ?? 0) > 0 &&
+		handoff.gates!.every((gate) => gate.id === 'auto-review');
+	if (reviewing) return repairs;
+	return handoff.repair ? repairs + 1 : 0;
+}
+
 export interface HandoffContext {
 	readonly reviewing?: boolean;
 	readonly routing: RoutingContext;

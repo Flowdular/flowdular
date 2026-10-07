@@ -140,7 +140,7 @@ function editSession(root: string): Promise<SandboxSession> {
 /* Records what the driver was handed, so a refused turn is visible as a driver
    that never ran. */
 function recordingDriver(
-	sink: { prompt: string; role: string },
+	sink: { prompt: string; role: string; instruction?: string },
 	options: {
 		readonly file?: string;
 		readonly content?: string;
@@ -157,6 +157,7 @@ function recordingDriver(
 		async *run(request: CodingAgentTurnRequest) {
 			sink.prompt = request.prompt;
 			sink.role = request.role;
+			sink.instruction = request.systemInstruction;
 			yield {
 				type: 'turn.started',
 				driver: 'fake',
@@ -1214,6 +1215,19 @@ describe('auto-review turn lifecycle', () => {
 			);
 		},
 	);
+	it('tells a review turn that the operator renders the screen', async () => {
+		const { root, session } = await setup();
+		const sink = { prompt: '', role: '', instruction: '' };
+		await drive(
+			context(root, recordingDriver(sink, { closing: REVIEW_RESPONSE })),
+			session.id,
+			{ message: '$auto-review', role: 'backend-engineer' },
+		);
+		expect(sink.instruction).toContain(
+			'Nobody in the sandbox can render the screen: the operator inspects it in the preview.',
+		);
+	});
+
 	it('returns findings to an implementation phase without issuing a pass', async () => {
 		const { root, session, paths } = await setup();
 		const result = await drive(
@@ -1266,19 +1280,30 @@ describe('auto-review turn lifecycle', () => {
 		[
 			'prose quoting a failing verdict beside a malformed report',
 			`The draft said "verdict": "fail" before the tests ran.\n\n${REVIEW_RESPONSE.replace('"findings":[]', '"findings":[],')}`,
+			'The auto-review block is not valid JSON: ',
 		],
 		[
 			'two report blocks',
 			`${failing.slice(0, failing.indexOf('\nHANDOFF:'))}\n\nCorrected after reading the tests:\n\n${REVIEW_RESPONSE}`,
+			'The reply has 2 auto-review blocks; write exactly one.',
 		],
 		[
 			'prose quoting a failing verdict and no report',
 			'The last review ended with "verdict": "fail"; nothing new to add.\n\nHANDOFF: none - reviewed',
+			'The reply has no auto-review block.',
 		],
-	])('keeps the gate output for %s', async (_, closing) => {
-		const { outcome, gate, own } = await review(closing);
-		expect(gate?.status).toBe('failed');
-		expect(gate?.output).toBe(own);
-		expect(outcome.handoff.prompt).not.toContain('$module-update');
-	});
+	])(
+		'sends %s back to review with what made it unreadable',
+		async (_, closing, problem) => {
+			const { outcome, gate } = await review(closing);
+			expect(gate?.status).toBe('failed');
+			expect(gate?.output).toMatch(/^The review report could not be read: /);
+			expect(gate?.output).toContain(problem);
+			expect(gate?.output).toContain(
+				'Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.',
+			);
+			expect(outcome.handoff.prompt).toContain(problem);
+			expect(outcome.handoff.prompt).not.toContain('$module-update');
+		},
+	);
 });

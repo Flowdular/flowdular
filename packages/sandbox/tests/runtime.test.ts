@@ -16,6 +16,7 @@ import { DEFAULT_AGENT_ROLES } from '@flowdular/coding-agent';
 import {
 	assertBrief,
 	classifyByRules,
+	countRepairs,
 	parsePlan,
 	planHandoff,
 	routeRole,
@@ -1261,6 +1262,40 @@ describe('boot shell', () => {
 		expect(html).toMatch(
 			/<noscript[\s\S]*\.flowdular-splash\s*{\s*display:\s*none;/,
 		);
+	});
+});
+
+describe('repair counting', () => {
+	const handoff = {
+		kind: 'continue' as const,
+		role: 'frontend-engineer',
+		roleName: 'Frontend engineer',
+		reason: '',
+		prompt: '',
+	};
+	const gate = (id: string) =>
+		({ id, status: 'failed', durationMs: 0, command: '' }) as never;
+
+	it('counts a repair, resets on ordinary work and leaves a review out', () => {
+		expect(
+			countRepairs(1, { ...handoff, repair: true, gates: [gate('tests')] }),
+		).toBe(2);
+		expect(countRepairs(2, handoff)).toBe(0);
+		expect(
+			countRepairs(2, {
+				...handoff,
+				repair: true,
+				gates: [gate('auto-review')],
+			}),
+		).toBe(2);
+		expect(
+			countRepairs(1, {
+				...handoff,
+				repair: true,
+				gates: [gate('auto-review'), gate('tests')],
+			}),
+		).toBe(2);
+		expect(countRepairs(2, { ...handoff, kind: 'review' })).toBe(2);
 	});
 });
 

@@ -43,6 +43,7 @@ import {
 	SPEC_OWNER_ROLE,
 	answeringRole,
 	assertBrief,
+	countRepairs,
 	listWorkspaceModules,
 	planWork,
 } from './planning.ts';
@@ -959,8 +960,7 @@ export function createSandboxRoutes(
 							}),
 						);
 					}
-					if (outcome.handoff.kind === 'continue')
-						repairs = outcome.handoff.repair ? repairs + 1 : 0;
+					repairs = countRepairs(repairs, outcome.handoff);
 					const limited =
 						repairs > MAX_REPAIR_LOOPS && outcome.handoff.kind === 'continue';
 					const continues =
@@ -991,6 +991,21 @@ export function createSandboxRoutes(
 								kind: 'system',
 								role: outcome.session.role,
 								text: `Stopped after ${repairs} consecutive gate-repair turns. Read the gate output and change the request, or fix the module by hand.`,
+							}),
+						);
+					} else if (
+						!continues &&
+						outcome.handoff.kind === 'continue' &&
+						outcome.session.autoContinue &&
+						!controller.signal.aborted
+					) {
+						publish(
+							channel,
+							'entry',
+							await appendChatEntry(runtime.workspaceRoot, outcome.session, {
+								kind: 'system',
+								role: outcome.session.role,
+								text: `Paused after ${depth + 1} turns in a row so you can read the transcript. Continue when you are ready.`,
 							}),
 						);
 					} else if (continues) {

@@ -62,7 +62,7 @@ import {
 import type { PlatformClient } from './platform-client.ts';
 import { questionsInstruction, readQuestions } from './questions.ts';
 import { listSkills, writeAgentPointer } from './reference.ts';
-import { readReviewReport } from './review-report.ts';
+import { readReviewReport, reviewReportProblem } from './review-report.ts';
 import {
 	materializeSampleData,
 	sampleDataInstruction,
@@ -856,6 +856,7 @@ export async function* runTurn(
 			...(reviewing
 				? [
 						'Read the complete active-module change against reference/auto-review-base/. This turn is read-only. Preserve the intended next-specialist handoff from the implementation turn after a passing review.',
+						'Nobody in the sandbox can render the screen: the operator inspects it in the preview. For the UI check, cite the component code, its states and the tests as evidence; a missing rendered inspection is not a finding.',
 					]
 				: []),
 			...(session.modules.length > 1
@@ -1159,11 +1160,17 @@ export async function* runTurn(
 		const index = gates.findIndex(
 			(gate) => gate.id === 'auto-review' && gate.status === 'failed',
 		);
+		const problem = reviewReportProblem(closing);
 		if (index >= 0 && readReviewReport(closing)?.report.verdict === 'fail') {
 			gates[index] = {
 				...gates[index]!,
 				output:
 					'Use $module-update to fix the findings in your preceding review. Preserve unrelated behavior, add regression tests, and finish implementation before requesting another review.',
+			};
+		} else if (index >= 0 && problem) {
+			gates[index] = {
+				...gates[index]!,
+				output: `The review report could not be read: ${problem} Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.`,
 			};
 		}
 	}

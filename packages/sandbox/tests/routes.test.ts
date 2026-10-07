@@ -1551,6 +1551,77 @@ describe('detached turns', () => {
 		);
 	});
 
+	it('says why a chain pauses at its turn limit', async () => {
+		const root = await workspace();
+		let turns = 0;
+		const chaining: CodingAgentDriver = {
+			...fakeDriver({ handoff: 'HANDOFF: frontend-engineer - next' }),
+			async *run(request) {
+				turns += 1;
+				yield* fakeDriver({
+					handoff:
+						turns % 2 === 1
+							? 'HANDOFF: frontend-engineer - the endpoint exists'
+							: 'HANDOFF: backend-engineer - the screen exists',
+					delayMs: 5,
+				}).run(request);
+			},
+		};
+		const runtime = fakeRuntime(root, chaining);
+		/* Every gate passes, so no turn is a repair and only the turn limit
+		   stops the chain. */
+		const call = api(runtime, 4320, {
+			executeGates: async ({ session, gates, modules }) =>
+				gates.map((id) => ({
+					id,
+					module: (modules ?? session.modules)[0]!.directory,
+					status: 'passed' as const,
+					durationMs: 1,
+					command: `fake ${id}`,
+					output: '',
+				})),
+		});
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		await writeFile(
+			join(paths.modulePath, 'spec', 'module.yaml'),
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n',
+		);
+		await writeFile(
+			join(paths.modulePath, 'module.json'),
+			'{"id":"booking.core"}\n',
+		);
+		const approvedText = await readFile(
+			join(paths.modulePath, 'spec', 'module.yaml'),
+			'utf8',
+		);
+		await updateSession(root, session.id, {
+			autoContinue: true,
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(approvedText),
+				specApprovedAt: Date.now(),
+			})),
+		});
+
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Build it.',
+					role: 'backend-engineer',
+					driver: 'fake',
+				},
+			}),
+		);
+		expect(turns).toBe(4);
+		const paused = (await readChat(root, session)).at(-1);
+		expect(paused?.kind).toBe('system');
+		expect(paused?.text).toBe(
+			'Paused after 4 turns in a row so you can read the transcript. Continue when you are ready.',
+		);
+	});
+
 	it('refuses to delete a running session unless told to stop it', async () => {
 		const root = await workspace();
 		const runtime = fakeRuntime(
