@@ -23,10 +23,15 @@ import {
 	type PendingQuestion,
 	type PendingQuestions,
 } from '../server/questions.ts';
+import {
+	readReviewReport,
+	type ReviewReading,
+} from '../server/review-report.ts';
 import { GateCard } from './GateCard.tsrx';
 import { GateIssues } from './GateIssues.tsrx';
 import { Markdown } from './Markdown.tsrx';
 import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
+import { ReviewReportCard } from './ReviewReportCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
 import {
 	keepsFollowing,
@@ -147,6 +152,8 @@ interface StreamBlock {
 	/* The decisions this message asked for, read once so the transcript can
    list them instead of showing the operator raw JSON. */
 	readonly questions: readonly PendingQuestion[];
+	/* A review verdict, shown as its summary rather than as the JSON. */
+	readonly review: ReviewReading | null;
 }
 
 /* One stream in the order it happened: a message, then the tool activity that
@@ -182,19 +189,19 @@ function streamBlocks(entries: readonly ChatEntry[]): readonly StreamBlock[] {
 			block.entry?.kind === 'agent'
 				? readQuestions(block.entry.text ?? '')
 				: null;
+		const words =
+			reading?.kind === 'valid' ? reading.remainder : block.entry?.text ?? '';
+		const review =
+			block.entry?.kind === 'agent' ? readReviewReport(words) : null;
 		return {
 			key: block.key,
 			entry: block.entry,
 			events: block.events,
 			speech: block.entry
-				? spoken(
-						block.entry,
-						reading?.kind === 'valid'
-							? reading.remainder
-							: block.entry.text ?? '',
-					)
+				? spoken(block.entry, review ? review.remainder : words)
 				: '',
 			questions: reading?.kind === 'valid' ? reading.questions : [],
+			review,
 		};
 	});
 }
@@ -634,6 +641,9 @@ export function ChatPane(props: ChatPaneProps) @{
 								</>
 							} @else {
 								<p class="chat__text">{block.speech}</p>
+							}
+							@if (block.review) {
+								<ReviewReportCard review={block.review!} />
 							}
 							@if (block.questions.length > 0) {
 								<ul>

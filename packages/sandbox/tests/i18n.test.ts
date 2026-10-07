@@ -4,6 +4,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SandboxSessionState } from '../src/server/sessions.ts';
+import {
+	REVIEW_CHECKS,
+	REVIEW_SEVERITIES,
+} from '../src/server/review-report.ts';
 import en from '../src/client/locales/en.json';
 import pl from '../src/client/locales/pl.json';
 import {
@@ -118,6 +122,15 @@ describe('sandbox translations', () => {
 			}
 			for (const target of ['target.workspace', 'target.gitPr']) {
 				expectTranslated('sandbox.eject.' + target);
+			}
+			for (const check of REVIEW_CHECKS) {
+				expectTranslated('sandbox.review.check.' + check);
+			}
+			for (const severity of REVIEW_SEVERITIES) {
+				expectTranslated('sandbox.review.severity.' + severity);
+			}
+			for (const verdict of ['pass', 'fail']) {
+				expectTranslated('sandbox.review.verdict.' + verdict);
 			}
 		}
 		setActiveLocale('en');
