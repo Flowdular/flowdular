@@ -315,6 +315,8 @@
 	"chat.send": "Send",
 	"chat.working": "Working…",
 	"chat.delivered": "Delivered",
+	"chat.driverUnavailable": "{driver} (unavailable)",
+	"chat.driverUnavailableHint": "{driver} is not available in this sandbox right now. Pick another coding agent, or reload the page once it is back.",
 	"diff.empty.title": "No changes yet",
 	"diff.empty.hint": "Files the agent writes in this session appear here as a reviewable diff.",
 	"diff.file.one": "{count} file",

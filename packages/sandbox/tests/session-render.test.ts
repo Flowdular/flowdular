@@ -6,6 +6,7 @@ import { SpecEditor } from '../src/client/SpecEditor.tsrx';
 import { GateResults } from '../src/client/GateResults.tsrx';
 import { SessionBar } from '../src/client/SessionBar.tsrx';
 import type { SandboxSession } from '../src/server/sessions.ts';
+import type { DriverSummary } from '../src/client/api.ts';
 import {
 	registerSandboxTranslations,
 	setActiveLocale,
@@ -695,5 +696,117 @@ describe('transcript entries', () => {
 		expect(html).toContain(
 			`<span class="chat__event-text">${reasoning}</span>`,
 		);
+	});
+});
+
+describe('coding agent picker', () => {
+	function agent(id: string, label: string, offered: boolean): DriverSummary {
+		return {
+			id,
+			label,
+			kind: 'local-cli',
+			requiresLoopback: true,
+			description: '',
+			offered,
+			blockedReason: null,
+			availability: {
+				available: offered,
+				detail: offered ? `${id} is installed.` : `${id} exited with code 1.`,
+				version: null,
+			},
+		};
+	}
+	function composer(
+		drivers: readonly DriverSummary[],
+		driver: string,
+	): { picker: string; html: string } {
+		const noop = () => {};
+		const html = renderToString(ChatPane, {
+			entries: [],
+			delivered: false,
+			archived: false,
+			roles: [],
+			drivers,
+			modules: [],
+			specs: [],
+			role: 'auto',
+			module: '',
+			driver,
+			message: '',
+			running: false,
+			selection: null,
+			autoContinue: false,
+			pendingQuestions: null,
+			answersError: '',
+			pendingBrief: '',
+			onStart: noop,
+			onContinue: noop,
+			onApprove: noop,
+			onRequestChanges: noop,
+			onEditSpec: noop,
+			onAutoContinue: noop,
+			onRole: noop,
+			onModule: noop,
+			onDriver: noop,
+			onMessage: noop,
+			onSend: noop,
+			onAnswers: noop,
+			onStop: noop,
+			onClearSelection: noop,
+		}).html.replace(/<!--[\s\S]*?-->/g, '');
+		const picker =
+			/<select[^>]*aria-label="Coding agent"[^>]*>[\s\S]*?<\/select>/.exec(
+				html,
+			)?.[0] ?? '';
+		return { picker, html };
+	}
+
+	function option(picker: string, value: string): string {
+		return (
+			new RegExp(`<option value="${value}"[^>]*>[^<]*</option>`).exec(
+				picker,
+			)?.[0] ?? ''
+		);
+	}
+
+	it('keeps the session agent selected while it is not offered, and says so', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const { picker, html } = composer(
+			[
+				agent('claude-code', 'Claude Code', false),
+				agent('codex', 'Codex CLI', true),
+			],
+			'claude-code',
+		);
+		const session = option(picker, 'claude-code');
+		expect(session).toContain('Claude Code (unavailable)');
+		expect(session).toMatch(/\sdisabled\b/);
+		expect(session).toMatch(/\sselected\b/);
+		expect(option(picker, 'codex')).not.toMatch(/\sselected\b/);
+		expect(html).toContain(
+			'Claude Code is not available in this sandbox right now.',
+		);
+
+		setActiveLocale('pl');
+		expect(
+			composer([agent('codex', 'Codex CLI', true)], 'retired-agent').html,
+		).toContain('retired-agent (niedostępny)');
+	});
+
+	it('marks nothing when the session agent is offered', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const { picker, html } = composer(
+			[
+				agent('claude-code', 'Claude Code', true),
+				agent('codex', 'Codex CLI', true),
+			],
+			'codex',
+		);
+		expect(option(picker, 'codex')).toMatch(/\sselected\b/);
+		expect(option(picker, 'claude-code')).not.toMatch(/\sdisabled\b/);
+		expect(picker).not.toContain('unavailable');
+		expect(html).not.toContain('is not available in this sandbox');
 	});
 });
