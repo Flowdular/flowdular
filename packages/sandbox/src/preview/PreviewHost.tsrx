@@ -67,6 +67,12 @@ function previewState() {
 	return { store, state: store.state };
 }
 
+/* Workspace activation belongs to an application's own catalog. A preview
+   shows every module the session composes; the system.core it composes as a
+   dependency reads no catalog of the session and would answer that no draft is
+   active. */
+const previewActiveModules = async () => null;
+
 /* The preview runs against the session's own authentication runtime, so the
    draft module sees a real principal, real scopes, and a real CSRF token
    instead of a stub. The credential belongs to one ephemeral database. */
@@ -369,6 +375,7 @@ export function PreviewHost(props?: RenderRouteProps) @{
 				identity={identityFor(principal, contributions, moduleId)}
 				initialView={initialView || contributions[0]!.navigation?.[0]?.viewId ||
 					'overview'}
+				loadActiveModules={previewActiveModules}
 				onSignOut={() => undefined}
 				onSwitchTenant={() => undefined}
 			/>
