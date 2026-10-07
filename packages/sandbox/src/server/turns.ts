@@ -121,6 +121,10 @@ export interface TurnInput {
 	readonly module?: string;
 	readonly driver?: string;
 	readonly signal?: AbortSignal;
+	/* Set by a caller that runs a `continue` handoff as its next turn. Such a
+	   turn leaves the session editing, and the caller writes the gate verdict
+	   if its chain stops there. */
+	readonly chained?: boolean;
 }
 
 /* A diff of one draft module, named by the module directory it belongs to. */
@@ -1034,8 +1038,9 @@ export async function* runTurn(
 				changed.has(module.directory) ||
 				failing.some((gate) => gate.module === module.directory),
 		);
-		/* Module validation reads a module through its manifest, so a draft the
-		   scaffold has not created yet is left to the specification gate. */
+		/* Before the scaffold a draft has no build to check, and module
+		   validation fails on the enabled but unregistered draft, so the gates a
+		   written file brings in wait for the manifest. */
 		const manifested: string[] = [];
 		for (const module of gated)
 			if (
@@ -1239,7 +1244,9 @@ export async function* runTurn(
 				? 'awaiting-approval'
 				: handoff.kind === 'question'
 					? 'awaiting-answers'
-					: gateOutcomeState(gates, diffs.length > 0),
+					: handoff.kind === 'continue' && input.chained
+						? 'editing'
+						: gateOutcomeState(gates, diffs.length > 0),
 		role: roleId,
 		driver: driverId,
 	});

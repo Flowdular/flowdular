@@ -111,7 +111,11 @@ import {
 	type TurnChannel,
 	type TurnSubscriber as Subscriber,
 } from './turn-lifecycle.ts';
-import { notifySessionChanged, watchSession } from './session-events.ts';
+import {
+	followSessionRecords,
+	notifySessionChanged,
+	watchSession,
+} from './session-events.ts';
 
 const SANDBOX_COOKIE = 'flowdular_sandbox';
 /* Every sandbox mutation carries this header. A cross-site form post cannot
@@ -887,9 +891,27 @@ export function createSandboxRoutes(
 		running.set(sessionId, channel);
 		notifySessionChanged(sessionId);
 		previous?.controller.abort('superseded');
+		const unfollow = followSessionRecords(sessionId, (session) =>
+			publish(channel, 'session', session),
+		);
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		/* A chained turn leaves the session editing for the turn after it; a
+		   chain that stops there instead owes the session that turn's verdict. */
+		const settle = async (outcome: TurnOutcome): Promise<SandboxSession> => {
+			const state = gateOutcomeState(outcome.gates, outcome.diffs.length > 0);
+			const session = await updateSession(runtime.workspaceRoot, sessionId, {
+				state,
+			});
+			if (platform && session.registeredWithPlatform) {
+				await platform
+					.updateSessionState(session.id, state)
+					.catch(() => undefined);
+			}
+			return session;
+		};
 
 		void (async () => {
+			let owed: TurnOutcome | null = null;
 			try {
 				if (previous) await waitForTurn(previous);
 				await updateSession(runtime.workspaceRoot, sessionId, {
@@ -911,17 +933,21 @@ export function createSandboxRoutes(
 						TURN_TIMEOUT_MS,
 					);
 					timer.unref?.();
+					owed = null;
 					const iterator = runTurn(turnContext(platform), {
 						sessionId,
 						...next,
 						signal: controller.signal,
+						chained: true,
 					});
 					let step = await iterator.next();
 					while (!step.done) {
 						publish(channel, 'entry', step.value);
 						step = await iterator.next();
 					}
-					const outcome: TurnOutcome = step.value;
+					let outcome: TurnOutcome = step.value;
+					/* A refused turn hands on too, but leaves its own state. */
+					owed = outcome.session.state === 'editing' ? outcome : null;
 					if (controller.signal.reason === 'timeout') {
 						publish(
 							channel,
@@ -933,6 +959,20 @@ export function createSandboxRoutes(
 							}),
 						);
 					}
+					if (outcome.handoff.kind === 'continue')
+						repairs = outcome.handoff.repair ? repairs + 1 : 0;
+					const limited =
+						repairs > MAX_REPAIR_LOOPS && outcome.handoff.kind === 'continue';
+					const continues =
+						!limited &&
+						outcome.handoff.kind === 'continue' &&
+						outcome.session.autoContinue &&
+						depth + 1 < CHAIN_LIMIT &&
+						!controller.signal.aborted;
+					if (owed && !continues) {
+						outcome = { ...outcome, session: await settle(owed) };
+						owed = null;
+					}
 					/* The chain below sends the handoff prompt as planned; open
 					   views receive the redacted copy. */
 					publish(channel, 'completed', {
@@ -941,12 +981,7 @@ export function createSandboxRoutes(
 						handoff: redactHandoff(outcome.handoff),
 					});
 					next = null;
-					if (outcome.handoff.kind === 'continue')
-						repairs = outcome.handoff.repair ? repairs + 1 : 0;
-					if (
-						repairs > MAX_REPAIR_LOOPS &&
-						outcome.handoff.kind === 'continue'
-					) {
+					if (limited) {
 						/* Hand back to the operator with the reason on the transcript
 						   rather than starting another turn that costs tokens. */
 						publish(
@@ -958,12 +993,7 @@ export function createSandboxRoutes(
 								text: `Stopped after ${repairs} consecutive gate-repair turns. Read the gate output and change the request, or fix the module by hand.`,
 							}),
 						);
-					} else if (
-						outcome.handoff.kind === 'continue' &&
-						outcome.session.autoContinue &&
-						depth + 1 < CHAIN_LIMIT &&
-						!controller.signal.aborted
-					) {
+					} else if (continues) {
 						depth += 1;
 						await updateSession(runtime.workspaceRoot, sessionId, {
 							chainDepth: depth,
@@ -986,12 +1016,15 @@ export function createSandboxRoutes(
 							: 'The turn failed.',
 				});
 			} finally {
+				/* Stopped, or failed, between two turns of the chain. */
+				if (owed) await settle(owed).catch(() => undefined);
 				clearTimeout(timer);
 				/* A timed-out or superseded waiter still represents its predecessor.
 				   Keep the chain owned until the actual writer has drained. */
 				if (previous) await previous.finished;
 				if (running.get(sessionId) === channel) running.delete(sessionId);
 				notifySessionChanged(sessionId);
+				unfollow();
 				publish(channel, 'ended', { sessionId });
 				channel.subscribers.clear();
 				release();

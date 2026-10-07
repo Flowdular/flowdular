@@ -687,7 +687,7 @@ export async function writeSession(
 			'\t',
 		)}\n`,
 	);
-	notifySessionChanged(session.id);
+	notifySessionChanged(session.id, session);
 	return session;
 }
 

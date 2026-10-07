@@ -3,6 +3,7 @@ import { Button, Icon, Tag } from '@flowdular/ui';
 import type { SandboxSession } from '../server/sessions.ts';
 import type { WorkspaceModuleSummary } from './api.ts';
 import { useTranslation } from './i18n.ts';
+import { sessionStateLabel } from './session-labels.ts';
 
 export interface SessionBarProps {
 	readonly session: SandboxSession;
@@ -41,6 +42,7 @@ function stateTone(
 export function SessionBar(props: SessionBarProps) @{
 	const { t } = useTranslation();
 	const delivered = Boolean(props.session.ejectedAt);
+	const stateLabel = sessionStateLabel(props.session);
 	const modules = props.session.modules;
 	const held = new Set(modules.map((module) => module.id));
 	const candidates = props.workspaceModules.filter(
@@ -62,11 +64,7 @@ export function SessionBar(props: SessionBarProps) @{
 					: t('sandbox.session.modules', { count: modules.length })}
 			</small>
 		</span>
-		<Tag tone={stateTone(props.session.state)} dot>
-			{delivered
-				? t('sandbox.session.state.delivered')
-				: t('sandbox.session.state.' + props.session.state)}
-		</Tag>
+		<Tag tone={stateTone(props.session.state)} dot>{stateLabel}</Tag>
 		@if (modules.length > 1) {
 			<select
 				class="chat__picker"

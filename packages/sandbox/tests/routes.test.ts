@@ -34,16 +34,23 @@ import {
 } from '../src/server/platform-client.ts';
 import type { SandboxRuntime } from '../src/server/runtime.ts';
 import {
+	basePathOf,
 	createSession,
 	readChat,
 	readSession,
 	sessionPaths,
 	updateSession,
 	type ChatEntry,
+	type SandboxSession,
 } from '../src/server/sessions.ts';
 import { MAX_OPTION_LENGTH } from '../src/server/questions.ts';
+import { followSessionRecords } from '../src/server/session-events.ts';
+import { processTurnChannels } from '../src/server/turn-lifecycle.ts';
 import { hashSpec } from '../src/server/spec.ts';
 import { settledSession } from './settle.ts';
+import { registerSandboxTranslations } from '../src/client/i18n.ts';
+import { sessionStateLabel } from '../src/client/session-labels.ts';
+import { newerSession } from '../src/client/state.ts';
 import type { InstallResult } from '../src/server/workspace-install.ts';
 
 async function workspace(): Promise<string> {
@@ -1832,6 +1839,218 @@ describe('session state after the gates', () => {
 			'continue',
 		);
 		expect(view.session.state).toBe('failed');
+	});
+
+	/* The run 5 shakedown: while a chain ran, the chip said "previewing" and
+	   then "failed" while the session record said editing. */
+	it('publishes the state the session takes at every step of a chain that repairs a failed gate', async () => {
+		registerSandboxTranslations();
+		const root = await workspace();
+		const { control, executeGates } = gateVerdicts();
+		control.verdict = 'failed';
+		/* Every turn waits for the test after its first event, so the test
+		   compares what the view shows with the record while nothing writes. */
+		const waiting: (() => void)[] = [];
+		const base = fakeDriver({
+			handoff: 'HANDOFF: none - done',
+			file: 'modules/booking/src/index.ts',
+			delayMs: 0,
+		});
+		const driver: CodingAgentDriver = {
+			...base,
+			async *run(request: CodingAgentTurnRequest) {
+				let held = false;
+				for await (const event of base.run(request)) {
+					yield event;
+					if (!held) {
+						held = true;
+						await new Promise<void>((resolve) => waiting.push(resolve));
+					}
+				}
+			},
+		};
+		const release = async () => {
+			await settledSession(async () => waiting.length === 0);
+			waiting.shift()!();
+		};
+		const call = api(fakeRuntime(root, driver), 4320, { executeGates });
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const spec =
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		await writeFile(join(paths.modulePath, 'spec', 'module.yaml'), spec);
+		await updateSession(root, session.id, {
+			state: 'previewing',
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(spec),
+				specApprovedAt: Date.now(),
+			})),
+		});
+
+		/* What the open view shows: the session it loaded, then every record
+		   the turn stream carries. */
+		let shown = (
+			(await (
+				await call('GET', `/sandbox/api/sessions/${session.id}`)
+			).json()) as { session: SandboxSession }
+		).session;
+		const published: string[] = [];
+		const stream = eventReader(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Add the endpoint.',
+					role: 'backend-engineer',
+					driver: 'fake',
+				},
+			}),
+		);
+		const readUntil = async (
+			done: (event: { event: string; data: unknown }) => boolean,
+		) => {
+			for (;;) {
+				const next = await stream.next();
+				const record =
+					next.event === 'session'
+						? (next.data as SandboxSession)
+						: next.event === 'completed'
+							? (next.data as { session: SandboxSession }).session
+							: null;
+				if (record) {
+					shown = newerSession(shown, record);
+					published.push(record.state);
+				}
+				if (done(next)) return;
+			}
+		};
+		const turnStarted = (next: { event: string; data: unknown }) =>
+			next.event === 'entry' &&
+			(next.data as ChatEntry).event?.type === 'turn.started';
+		const expectShownMatchesRecord = async (state: string) => {
+			const record = await readSession(root, session.id);
+			expect(record.state).toBe(state);
+			expect(shown.state).toBe(record.state);
+			expect(sessionStateLabel(shown)).toBe(sessionStateLabel(record));
+		};
+
+		await readUntil(turnStarted);
+		await expectShownMatchesRecord('editing');
+
+		/* The first turn's gates fail and the chain hands the repair on. */
+		await release();
+		await readUntil(turnStarted);
+		await expectShownMatchesRecord('editing');
+		expect(published).not.toContain('failed');
+
+		control.verdict = 'passed';
+		await release();
+		await readUntil((next) => next.event === 'ended');
+		await expectShownMatchesRecord('previewing');
+		expect(published).not.toContain('failed');
+		expect(published.at(-1)).toBe('previewing');
+		const chat = await readChat(root, session);
+		expect(
+			chat.filter((entry) => entry.gate?.status === 'failed').length,
+		).toBeGreaterThan(0);
+		expect(chat.findLast((entry) => entry.handoff)?.handoff?.kind).toBe(
+			'review',
+		);
+	});
+
+	it('leaves the gate verdict when the chain is stopped between two turns', async () => {
+		const root = await workspace();
+		const { control, executeGates } = gateVerdicts();
+		control.verdict = 'failed';
+		const call = api(
+			fakeRuntime(
+				root,
+				fakeDriver({
+					handoff: 'HANDOFF: none - done',
+					file: 'modules/booking/src/index.ts',
+					delayMs: 0,
+				}),
+			),
+			4320,
+			{ executeGates },
+		);
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const spec =
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		await writeFile(join(paths.modulePath, 'spec', 'module.yaml'), spec);
+		await updateSession(root, session.id, {
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(spec),
+				specApprovedAt: Date.now(),
+			})),
+		});
+		/* The operator's Stop lands after the chain chose the repair turn and
+		   before that turn starts. */
+		const unfollow = followSessionRecords(session.id, (record) => {
+			if (record.chainDepth === 1)
+				processTurnChannels(root).get(session.id)?.controller.abort('stopped');
+		});
+
+		const events = await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Add the endpoint.',
+					role: 'backend-engineer',
+					driver: 'fake',
+				},
+			}),
+		);
+		unfollow();
+		expect(events.filter((entry) => entry.event === 'completed')).toHaveLength(
+			1,
+		);
+		const record = await readSession(root, session.id);
+		expect(record.chainDepth).toBe(1);
+		expect(record.state).toBe('failed');
+		expect(
+			events.findLast((entry) => entry.event === 'session')?.data,
+		).toMatchObject({ state: 'failed' });
+	});
+
+	it('keeps the state a refused turn wrote when the chain stops after it', async () => {
+		const root = await workspace();
+		const call = api(
+			fakeRuntime(root, fakeDriver({ handoff: 'HANDOFF: none - done' })),
+		);
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		/* A specification nobody approved and the session has not changed, so
+		   the implementer is refused and the business manager writes the delta. */
+		const spec =
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+		for (const directory of [
+			paths.modulePath,
+			basePathOf(paths, session.moduleSuffix),
+		]) {
+			await mkdir(join(directory, 'spec'), { recursive: true });
+			await writeFile(join(directory, 'spec', 'module.yaml'), spec);
+		}
+		await mkdir(join(paths.modulePath, 'src'), { recursive: true });
+		await writeFile(join(paths.modulePath, 'src', 'index.ts'), 'export {};\n');
+		await updateSession(root, session.id, { autoContinue: false });
+
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Add the endpoint.',
+					role: 'backend-engineer',
+					driver: 'fake',
+				},
+			}),
+		);
+		expect(
+			(await readChat(root, session)).findLast((entry) => entry.handoff)
+				?.handoff,
+		).toMatchObject({ kind: 'continue', role: 'business-manager' });
+		expect((await readSession(root, session.id)).state).toBe('planned');
 	});
 
 	it('settles a stale validating state from a check and tells open views', async () => {
