@@ -70,3 +70,20 @@ export function ReviewReportCard(props: { readonly review: ReviewReading }) @{
 		</details>
 	</section>
 }
+
+/* A report the gate cannot read: the gate card beside it says why, and the
+   blocks as written stay one click away. */
+export function UnreadableReviewCard(props: { readonly raw: string }) @{
+	const { t } = useTranslation();
+	<section class="chat__gate">
+		<header class="chat__meta">
+			<Icon name="alert" size={14} />
+			<span>{t('sandbox.review.title')}</span>
+			<Tag tone="warning">{t('sandbox.review.unreadable')}</Tag>
+		</header>
+		<details>
+			<summary>{t('sandbox.review.raw')}</summary>
+			<pre class="ui-code">{props.raw}</pre>
+		</details>
+	</section>
+}

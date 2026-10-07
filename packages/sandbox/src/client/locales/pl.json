@@ -44,6 +44,7 @@
 	"review.severity.low": "Niska",
 	"review.noFindings": "Brak uwag.",
 	"review.raw": "Pełny raport z review",
+	"review.unreadable": "Nie udało się odczytać",
 	"handoff.continue": "Kolejny krok",
 	"handoff.approval": "Twoja akceptacja",
 	"handoff.question": "Pytanie",

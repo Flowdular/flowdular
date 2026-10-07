@@ -25,13 +25,17 @@ import {
 } from '../server/questions.ts';
 import {
 	readReviewReport,
+	splitReviewBlocks,
 	type ReviewReading,
 } from '../server/review-report.ts';
 import { GateCard } from './GateCard.tsrx';
 import { GateIssues } from './GateIssues.tsrx';
 import { Markdown } from './Markdown.tsrx';
 import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
-import { ReviewReportCard } from './ReviewReportCard.tsrx';
+import {
+	ReviewReportCard,
+	UnreadableReviewCard,
+} from './ReviewReportCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
 import {
 	keepsFollowing,
@@ -154,6 +158,9 @@ interface StreamBlock {
 	readonly questions: readonly PendingQuestion[];
 	/* A review verdict, shown as its summary rather than as the JSON. */
 	readonly review: ReviewReading | null;
+	/* The auto-review blocks of a report the gate cannot read, kept out of
+   the words. */
+	readonly unreadableReview: string | null;
 }
 
 /* One stream in the order it happened: a message, then the tool activity that
@@ -193,15 +200,20 @@ function streamBlocks(entries: readonly ChatEntry[]): readonly StreamBlock[] {
 			reading?.kind === 'valid' ? reading.remainder : block.entry?.text ?? '';
 		const review =
 			block.entry?.kind === 'agent' ? readReviewReport(words) : null;
+		const unreadable =
+			block.entry?.kind === 'agent' && !review
+				? splitReviewBlocks(words)
+				: null;
 		return {
 			key: block.key,
 			entry: block.entry,
 			events: block.events,
 			speech: block.entry
-				? spoken(block.entry, review ? review.remainder : words)
+				? spoken(block.entry, (review ?? unreadable)?.remainder ?? words)
 				: '',
 			questions: reading?.kind === 'valid' ? reading.questions : [],
 			review,
+			unreadableReview: unreadable?.raw ?? null,
 		};
 	});
 }
@@ -651,6 +663,8 @@ export function ChatPane(props: ChatPaneProps) @{
 							}
 							@if (block.review) {
 								<ReviewReportCard review={block.review!} />
+							} @else if (block.unreadableReview !== null) {
+								<UnreadableReviewCard raw={block.unreadableReview!} />
 							}
 							@if (block.questions.length > 0) {
 								<ul>

@@ -42,6 +42,7 @@
 	"review.severity.low": "Low",
 	"review.noFindings": "No findings.",
 	"review.raw": "Full review report",
+	"review.unreadable": "Could not be read",
 	"handoff.continue": "Next step",
 	"handoff.approval": "Your approval",
 	"handoff.question": "Question",
