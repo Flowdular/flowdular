@@ -333,6 +333,8 @@
 	"chat.send": "Wyślij",
 	"chat.working": "Trwa praca…",
 	"chat.delivered": "Dostarczono",
+	"chat.driverUnavailable": "{driver} (niedostępny)",
+	"chat.driverUnavailableHint": "Agent {driver} jest teraz niedostępny w tym sandboxie. Wybierz innego agenta programistycznego albo odśwież stronę, gdy znów będzie dostępny.",
 	"diff.empty.title": "Nie ma jeszcze zmian",
 	"diff.empty.hint": "Pliki zapisane przez agenta w tej sesji pojawią się tutaj jako diff do przeglądu.",
 	"diff.file.one": "{count} plik",

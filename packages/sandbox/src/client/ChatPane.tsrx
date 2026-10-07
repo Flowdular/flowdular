@@ -221,6 +221,13 @@ function handoffIcon(kind: HandoffPlan['kind']): string {
 export function ChatPane(props: ChatPaneProps) @{
 	const { t } = useTranslation();
 	const offered = props.drivers.filter((driver) => driver.offered);
+	/* The next turn asks for props.driver whatever the picker shows, so an
+   agent that is not offered right now stays the selected option. */
+	const unavailable =
+		props.driver && !offered.some((driver) => driver.id === props.driver)
+			? props.drivers.find((driver) => driver.id === props.driver)?.label ??
+				props.driver
+			: '';
 	const stream = streamBlocks(props.entries);
 	const isActive = (entry: ChatEntry) =>
 		props.running && entry.sequence === props.entries.at(-1)?.sequence &&
@@ -835,6 +842,12 @@ export function ChatPane(props: ChatPaneProps) @{
 					value={props.driver}
 					onChange={(event) => props.onDriver(event.currentTarget.value)}
 				>
+					@if (unavailable) {
+						<option value={props.driver} disabled>{t(
+							'sandbox.chat.driverUnavailable',
+							{ driver: unavailable },
+						)}</option>
+					}
 					@for (const driver of offered; key driver.id) {
 						<option value={driver.id}>{driver.label}</option>
 					}
@@ -862,6 +875,11 @@ export function ChatPane(props: ChatPaneProps) @{
 						? <TurnActivity lastUpdateAt={props.entries.at(-1)?.at} />
 						: t('sandbox.chat.delivered')}
 				</p>
+			} @else if (unavailable) {
+				<p class="chat__composer-status">{t(
+					'sandbox.chat.driverUnavailableHint',
+					{ driver: unavailable },
+				)}</p>
 			}
 		</form>
 	</section>
