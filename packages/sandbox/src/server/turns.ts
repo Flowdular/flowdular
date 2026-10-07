@@ -1156,6 +1156,7 @@ export async function* runTurn(
 		);
 	}
 
+	let reviewRejected = false;
 	if (reviewing && !reviewPassed && !failed) {
 		const index = gates.findIndex(
 			(gate) => gate.id === 'auto-review' && gate.status === 'failed',
@@ -1168,6 +1169,7 @@ export async function* runTurn(
 					'Use $module-update to fix the findings in your preceding review. Preserve unrelated behavior, add regression tests, and finish implementation before requesting another review.',
 			};
 		} else if (index >= 0 && problem) {
+			reviewRejected = true;
 			gates[index] = {
 				...gates[index]!,
 				output: `The review report was not accepted: ${problem} Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.`,
@@ -1209,6 +1211,7 @@ export async function* runTurn(
 		specApproved: closingGate.approved,
 		brief: session.brief || message,
 		reviewing,
+		reviewRejected,
 		questions: asked,
 		previous:
 			transcript.filter((entry) => entry.handoff).at(-1)?.handoff ?? null,

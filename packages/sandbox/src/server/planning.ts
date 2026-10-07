@@ -35,6 +35,7 @@ import {
 	moduleSuffixOf,
 	type ChatEntry,
 	type HandoffPlan,
+	type PendingHandoff,
 	type SandboxSession,
 	type SessionModule,
 	type SessionPaths,
@@ -770,6 +771,9 @@ export function countRepairs(repairs: number, handoff: HandoffPlan): number {
 
 export interface HandoffContext {
 	readonly reviewing?: boolean;
+	/* Set on a review turn whose report the gate did not accept: unreadable,
+	   or a pass that cannot pass. The reviewer writes it again. */
+	readonly reviewRejected?: boolean;
 	readonly routing: RoutingContext;
 	/* The role that just finished its turn. */
 	readonly role: string;
@@ -1055,6 +1059,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 			readonly resendQuestions?: boolean;
 			readonly gates?: readonly GateSummary[];
 			readonly author?: string;
+			readonly pending?: PendingHandoff | null;
 		} = {},
 	): HandoffPlan => ({
 		kind,
@@ -1067,6 +1072,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		...(options.resendQuestions ? { resendQuestions: true } : {}),
 		...(options.gates ? { gates: options.gates } : {}),
 		...(options.author ? { author: options.author } : {}),
+		...(options.pending ? { pending: options.pending } : {}),
 	});
 
 	if (context.failed) {
@@ -1148,11 +1154,27 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	};
 
+	/* The next specialist a repaired turn named survives the repair turns
+	   after it, and once only the review is left to pass that specialist
+	   takes over: the review comes after every implementer's part. */
+	const carried =
+		context.instructed === true &&
+		context.previous?.repair === true &&
+		!context.reviewing
+			? (context.previous.pending ?? null)
+			: null;
+	const declaredNext = context.reviewing
+		? null
+		: validateDeclared(context).role;
+	const failedGates = context.gates.filter((gate) => gate.status !== 'passed');
+	const handingOn =
+		(declaredNext !== null || carried !== null) &&
+		!resume &&
+		failedGates.every((gate) => gate.id === 'auto-review');
 	/* A failure is fixed by a role that may write the file its fix goes in,
 	   in the module it belongs to, even when the finished turn worked
 	   somewhere else. What another role owns waits for the turn after. */
-	const failedGates = context.gates.filter((gate) => gate.status !== 'passed');
-	if (failedGates.length > 0) {
+	if (failedGates.length > 0 && !handingOn) {
 		/* A repair turn that changed nothing is not sent the same errors
 		   again: the next attempt goes to another role that may write them,
 		   or to the operator when none may. */
@@ -1179,8 +1201,10 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 				(module) => module.directory,
 			),
 			fallback: context.reviewing
-				? (scopedHandoff(context, validateDeclared(context).role).role ??
-					context.role)
+				? context.reviewRejected
+					? context.role
+					: (scopedHandoff(context, validateDeclared(context).role).role ??
+						context.role)
 				: author,
 			exclude: idle,
 		});
@@ -1200,28 +1224,61 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 			);
 		}
 		const sent = failedGatesOf(repair.assigned);
+		const named = declaredNext ? scopedHandoff(context, declaredNext) : null;
+		const recorded = `Recorded gate results:\n${context.gates.map((gate) => `${gateLabel(gate)}: ${gate.status}`).join('\n')}`;
+		/* A missing, stale or rejected review asks for a review turn, which
+		   is read-only: worded as a repair, a specialist may refuse it as a
+		   gate it cannot fix. Findings to fix stay a repair. */
+		const name = roleName(roles, repair.role);
+		const review = sent.every(
+			(gate) =>
+				gate.id === 'auto-review' &&
+				/\$(auto-review|module-update)\b/.exec(gate.output)?.[1] !==
+					'module-update',
+		);
 		return plan(
 			'continue',
 			repair.role,
 			[
 				idleNote,
-				`The ${gatesFailed(sent)}, so the responsible specialist fixes ${sent.length === 1 ? 'it' : 'them'} before delivery.`,
+				review
+					? context.reviewRejected
+						? `The review report was not accepted, so ${name} reviews modules/${repair.module} again.`
+						: `${name} reviews modules/${repair.module} before delivery.`
+					: `The ${gatesFailed(sent)}, so the responsible specialist fixes ${sent.length === 1 ? 'it' : 'them'} before delivery.`,
 			]
 				.filter(Boolean)
 				.join(' '),
 			bounded(
-				[
-					`Continue as ${roleName(roles, repair.role)}. The ${gatesFailed(sent)}. Fix the reported files within your role, preserve other work, and end with your handoff line.`,
-					`Recorded gate results:\n${context.gates.map((gate) => `${gateLabel(gate)}: ${gate.status}`).join('\n')}`,
-					...sent.map((gate) => repairSection(gate, repair.assigned)),
-					...deferredSection(repair.deferred, roles),
-				].join('\n\n'),
+				(review
+					? [
+							`This turn is the review of modules/${repair.module} by ${name}. Run $auto-review now on that module. The turn is read-only: change no files.`,
+							...sent.map((gate) => gate.output.slice(0, GATE_PROMPT_OUTPUT)),
+							recorded,
+							...deferredSection(repair.deferred, roles),
+							'End the reply with exactly one auto-review block of valid JSON, then your handoff line.',
+						]
+					: [
+							`Continue as ${name}. The ${gatesFailed(sent)}. Fix the reported files within your role, preserve other work, and end with your handoff line.`,
+							recorded,
+							...sent.map((gate) => repairSection(gate, repair.assigned)),
+							...deferredSection(repair.deferred, roles),
+						]
+				).join('\n\n'),
 			),
 			repair.module,
 			{
 				repair: true,
 				gates: sent.map((gate) => sentGate(gate, repair.assigned)),
 				author,
+				pending:
+					named?.role && !named.stop
+						? {
+								role: named.role,
+								reason: context.declared!.reason,
+								module: named.module,
+							}
+						: carried,
 			},
 		);
 	}
@@ -1262,6 +1319,21 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 				context.declared?.reason ?? '',
 				context.brief,
 			),
+		);
+	}
+
+	if (carried && declaredNext === null) {
+		return plan(
+			'continue',
+			carried.role,
+			carried.reason ||
+				`${roleName(roles, carried.role)} owns what remains after this turn.`,
+			continuePrompt(
+				roleName(roles, carried.role),
+				carried.reason,
+				context.brief,
+			),
+			carried.module,
 		);
 	}
 

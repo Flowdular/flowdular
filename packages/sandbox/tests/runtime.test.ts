@@ -1495,6 +1495,202 @@ describe('handoff planning', () => {
 		expect(planHandoff({ ...base }).repair).toBeUndefined();
 	});
 
+	const REVIEW_TURN =
+		/^This turn is the review of modules\/profile by Backend engineer\. Run \$auto-review now on that module\. The turn is read-only: change no files\./;
+
+	describe('a handoff a gate repair interrupts', () => {
+		const gate = (id: 'tests' | 'auto-review', failed: boolean) => ({
+			id,
+			module: 'profile',
+			status: failed ? ('failed' as const) : ('passed' as const),
+			command: id,
+			output: failed ? 'FAIL' : '',
+			durationMs: 1,
+		});
+		const backend = {
+			...base,
+			role: 'backend-engineer',
+			routing: { ...routing, hasManifest: true, hasServer: true },
+		};
+		/* Run 7: the backend hands the client on, but its tests fail. */
+		const interrupted = planHandoff({
+			...backend,
+			declared: {
+				role: 'frontend-engineer',
+				reason: 'the server API is ready; the client needs the list',
+			},
+			gates: [gate('tests', true)],
+		});
+		const repaired = {
+			...backend,
+			instructed: true,
+			declared: { role: null, reason: 'the failing tests are fixed' },
+		};
+
+		it('is kept on the repair and through the repair turns after it', () => {
+			expect(interrupted).toMatchObject({
+				role: 'backend-engineer',
+				repair: true,
+				pending: {
+					role: 'frontend-engineer',
+					reason: 'the server API is ready; the client needs the list',
+					module: 'profile',
+				},
+			});
+			expect(
+				planHandoff({
+					...repaired,
+					previous: interrupted,
+					gates: [gate('tests', true)],
+				}).pending,
+			).toEqual(interrupted.pending);
+		});
+
+		it.each([
+			['nothing', [gate('tests', false)]],
+			['only the review', [gate('tests', false), gate('auto-review', true)]],
+		])(
+			'goes to that specialist when the repairs leave %s to pass',
+			(_, gates) => {
+				const plan = planHandoff({ ...repaired, previous: interrupted, gates });
+				expect(plan).toMatchObject({
+					kind: 'continue',
+					role: 'frontend-engineer',
+					module: 'profile',
+				});
+				expect(plan.repair).toBeUndefined();
+				expect(plan.prompt).toContain(
+					'Continue this work as Frontend engineer.',
+				);
+				expect(plan.prompt).toContain('the client needs the list');
+			},
+		);
+
+		it('yields to the specialist the repair turn names itself', () => {
+			expect(
+				planHandoff({
+					...repaired,
+					previous: interrupted,
+					declared: { role: 'agentic-engineer', reason: 'add the tool' },
+					gates: [gate('tests', false)],
+				}).role,
+			).toBe('agentic-engineer');
+		});
+
+		it('is not carried into a turn the operator asked for', () => {
+			expect(
+				planHandoff({
+					...repaired,
+					instructed: false,
+					previous: interrupted,
+					gates: [gate('tests', false)],
+				}).kind,
+			).toBe('review');
+		});
+	});
+
+	describe('a review the gate did not pass', () => {
+		const review = (output: string) => ({
+			...base,
+			role: 'backend-engineer',
+			routing: {
+				...routing,
+				hasManifest: true,
+				hasServer: true,
+				hasClient: true,
+			},
+			reviewing: true,
+			instructed: true,
+			declared: {
+				role: 'frontend-engineer',
+				reason: 'the client is still the scaffold',
+			},
+			gates: [
+				{
+					id: 'auto-review' as const,
+					module: 'profile',
+					status: 'failed' as const,
+					command: 'auto-review',
+					output,
+					durationMs: 1,
+				},
+			],
+		});
+
+		/* Run 7: the reviewer wrote two blocks, and the frontend engineer was
+		   sent a read-only review turn that built nothing. */
+		it('goes back to its reviewer when the report was not accepted', () => {
+			const plan = planHandoff({
+				...review(
+					'The review report was not accepted: The reply has 2 auto-review blocks; write exactly one. Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.',
+				),
+				reviewRejected: true,
+			});
+			expect(plan).toMatchObject({ role: 'backend-engineer', repair: true });
+			expect(plan.reason).toBe(
+				'The review report was not accepted, so Backend engineer reviews modules/profile again.',
+			);
+			expect(plan.prompt).toMatch(REVIEW_TURN);
+			expect(plan.prompt).toContain(
+				'The review report was not accepted: The reply has 2 auto-review blocks',
+			);
+			expect(plan.prompt).not.toContain('Fix the reported files');
+		});
+
+		it('sends a failing report to the specialist that fixes it', () => {
+			const plan = planHandoff(
+				review(
+					'Use $module-update to fix the findings in your preceding review.',
+				),
+			);
+			expect(plan.role).toBe('frontend-engineer');
+			expect(plan.prompt).toContain('Fix the reported files');
+			expect(plan.prompt).not.toMatch(REVIEW_TURN);
+		});
+	});
+
+	/* Run 7, 19:23: a review request worded as a gate repair was refused as
+	   "a failure I can't fix", and the turn wrote no report. */
+	it('asks for a missing review as a read-only review turn', () => {
+		const plan = planHandoff({
+			...base,
+			role: 'backend-engineer',
+			routing: {
+				...routing,
+				hasManifest: true,
+				hasServer: true,
+				hasClient: true,
+			},
+			declared: { role: null, reason: 'the fixes are in' },
+			gates: [
+				{
+					id: 'auto-review' as const,
+					module: 'profile',
+					status: 'failed' as const,
+					command: 'auto-review',
+					output:
+						'Run $auto-review for this module. If defects need fixes, hand off to the owning implementation skill; do not edit in the review turn.',
+					durationMs: 1,
+				},
+			],
+		});
+		expect(plan).toMatchObject({
+			kind: 'continue',
+			role: 'backend-engineer',
+			repair: true,
+		});
+		expect(plan.reason).toBe(
+			'Backend engineer reviews modules/profile before delivery.',
+		);
+		expect(plan.prompt).toMatch(REVIEW_TURN);
+		expect(plan.prompt).toContain('do not edit in the review turn');
+		expect(plan.prompt).toContain(
+			'End the reply with exactly one auto-review block of valid JSON, then your handoff line.',
+		);
+		expect(plan.prompt).not.toContain('Fix the reported files');
+		expect(countRepairs(2, plan)).toBe(2);
+	});
+
 	it.each([
 		[
 			'module-schema',

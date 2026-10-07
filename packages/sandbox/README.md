@@ -550,7 +550,10 @@ result did not pass runs again after every turn, whatever the role's own gates,
 so its recorded result stays failed until it passes. A repair turn that changed
 no file is named in the next handoff and its specialist is not sent the same
 errors in the next turn; when no other specialist is assigned them, the chain
-stops for the operator. When the same turn also asks questions, the questions
+stops for the operator. A specialist the repaired turn handed on to waits
+through its repair turns and takes over once only the review is left to pass,
+so the review never runs before that specialist's part. When the same turn
+also asks questions, the questions
 come first and the handoff names the failed gate: the gates run again after the
 answering turn, and a failure that remains then gets its repair turn. After the
 business manager applied an implementer's answers, that implementer resumes
@@ -847,7 +850,9 @@ scope.
 ### Auto-review
 
 At the final completion handoff, a missing or stale `auto-review` result routes the
-same specialist to a separate read-only review turn. The report covers correctness,
+same specialist to a separate read-only review turn. A report the gate cannot
+accept (no readable block, or a pass with findings or thin evidence) goes back
+to the same reviewer with the reason. The report covers correctness,
 security, compatibility, lifecycle, tests and UI, with specific evidence. Findings
 return to implementation. A passing report is stored by the server outside the
 agent workspace and tied to every module file's content. Later edits invalidate it.
