@@ -45,13 +45,15 @@ function preferredRole(path: string): string {
 	return 'backend-engineer';
 }
 
-function ownerOf(
+export function mayWrite(role: AgentRoleDefinition, path: string): boolean {
+	return role.allowedPaths.some((pattern) => matchesGlob(path, pattern));
+}
+
+export function ownerOf(
 	path: string,
 	roles: readonly AgentRoleDefinition[],
 ): string | null {
-	const candidates = roles.filter((role) =>
-		role.allowedPaths.some((pattern) => matchesGlob(path, pattern)),
-	);
+	const candidates = roles.filter((role) => mayWrite(role, path));
 	const preferred = preferredRole(path);
 	return (
 		(

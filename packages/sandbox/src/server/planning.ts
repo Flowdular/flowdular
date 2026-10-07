@@ -19,7 +19,12 @@ import {
 	type GateResult,
 	type GateSummary,
 } from './gates.ts';
-import { planGateRepair, type GateFailure } from './gate-repair.ts';
+import {
+	mayWrite,
+	ownerOf,
+	planGateRepair,
+	type GateFailure,
+} from './gate-repair.ts';
 import {
 	QUESTIONS_LIMITS,
 	SPEC_OWNER_ROLE,
@@ -789,6 +794,99 @@ function validateDeclared(context: HandoffContext): {
 	return { role: declared, note: '' };
 }
 
+/* A module file a handoff line names: a path under a module directory, or a
+   manifest. One qualified with a module outside the session is a reference
+   no turn here could write. */
+const NAMED_PATH =
+	/(?:^|[\s(`'"])(?:\.\/)?(?:modules\/([a-z0-9-]+)\/)?((?:spec|src|tests|translations|migrations|preview|adapters|templates)\/[^\s,;:()`'"]*|module\.json|package\.json)/g;
+
+interface NamedPath {
+	readonly path: string;
+	readonly module: string;
+}
+
+function namedPaths(
+	text: string,
+	modules: readonly string[],
+	active: string,
+): NamedPath[] {
+	const named = new Map<string, NamedPath>();
+	for (const match of text.matchAll(NAMED_PATH)) {
+		const module = match[1] ?? active;
+		if (!modules.includes(module)) continue;
+		const file = match[2]!.replace(/\.+$/, '');
+		const path = /(\/|\.[^/]+)$/.test(file) ? file : `${file}/`;
+		named.set(`${module}/${path}`, { path, module });
+	}
+	return [...named.values()];
+}
+
+/* Work a handoff line names outside the finishing role's write paths goes to
+   a role that may write it, in the module it names, by the rule a gate repair
+   follows. A role that may write none of it is never chosen, and nobody is
+   when no role may. */
+function scopedHandoff(
+	context: HandoffContext,
+	proposed: string | null,
+): {
+	readonly role: string | null;
+	readonly module: string;
+	readonly rerouted: boolean;
+	readonly note: string;
+	/* Why the chain stops, when no role may write the named work. */
+	readonly stop: string | null;
+} {
+	const roles = context.routing.roles;
+	const current = roles.find((role) => role.id === context.role);
+	const outside = context.declared?.role
+		? namedPaths(
+				context.declared.reason,
+				context.routing.session.modules.map((module) => module.directory),
+				context.module,
+			).filter((named) => !current || !mayWrite(current, named.path))
+		: [];
+	const candidate = roles.find((role) => role.id === proposed);
+	const unchanged = {
+		role: proposed,
+		module: context.module,
+		rerouted: false,
+		note: '',
+		stop: null,
+	};
+	if (
+		outside.length === 0 ||
+		(candidate && outside.some((named) => mayWrite(candidate, named.path)))
+	)
+		return unchanged;
+	const listed = outside
+		.map((named) =>
+			named.module === context.module
+				? named.path
+				: `modules/${named.module}/${named.path}`,
+		)
+		.join(', ');
+	for (const named of outside) {
+		const owner =
+			ownerOf(named.path, roles) ??
+			roles.find((role) => mayWrite(role, named.path))?.id ??
+			null;
+		if (!owner) continue;
+		return {
+			...unchanged,
+			role: owner,
+			module: named.module,
+			rerouted: true,
+			note: `${candidate?.name ?? roleName(roles, context.role)} may not write ${listed}, so ${roleName(roles, owner)} takes it.`,
+		};
+	}
+	return {
+		...unchanged,
+		role: null,
+		note: `No specialist in this session may write ${listed}.`,
+		stop: `${roleName(roles, context.role)} handed on work in ${listed}, which no specialist in this session may write, so the chain stops here. Make that change by hand, or say what should change.`,
+	};
+}
+
 function gatesFailed(gates: readonly GateResult[]): string {
 	const labels = gates.map(gateLabel);
 	return labels.length === 1
@@ -1023,7 +1121,8 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 				(module) => module.directory,
 			),
 			fallback: context.reviewing
-				? (validateDeclared(context).role ?? context.role)
+				? (scopedHandoff(context, validateDeclared(context).role).role ??
+					context.role)
 				: author,
 			exclude: idle,
 		});
@@ -1074,9 +1173,13 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 	const validated = validateDeclared(context);
 	const declared = validated.role;
 	const routed = routeRole(context.routing).role;
-	const next = declared ?? (routed === context.role ? null : routed);
-	const withNote = (reason: string) =>
-		validated.note ? `${reason} ${validated.note}` : reason;
+	const scoped = scopedHandoff(
+		context,
+		declared ?? (routed === context.role ? null : routed),
+	);
+	const next = scoped.role;
+	const note = scoped.note || validated.note;
+	const withNote = (reason: string) => (note ? `${reason} ${note}` : reason);
 	const finished = context.declared !== null && context.declared.role === null;
 
 	/* A turn that finished without touching a file did not finish the work: it
@@ -1136,6 +1239,8 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
+	if (scoped.stop) return plan('blocked', context.role, scoped.stop);
+
 	if (!next) {
 		return plan(
 			context.changed ? 'review' : 'question',
@@ -1148,18 +1253,16 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
+	const reported =
+		declared || scoped.rerouted ? (context.declared?.reason ?? '') : '';
 	return plan(
 		'continue',
 		next,
 		withNote(
-			(declared && context.declared?.reason) ||
-				`${roleName(roles, next)} owns what remains after this turn.`,
+			reported || `${roleName(roles, next)} owns what remains after this turn.`,
 		),
-		continuePrompt(
-			roleName(roles, next),
-			declared ? (context.declared?.reason ?? '') : '',
-			context.brief,
-		),
+		continuePrompt(roleName(roles, next), reported, context.brief),
+		scoped.module,
 	);
 }
 
