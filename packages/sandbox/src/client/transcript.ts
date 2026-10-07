@@ -87,10 +87,12 @@ export function keepsFollowing(
 }
 
 export function shortToolDetail(detail: string): string {
-	if (!/^(?:\/|[A-Za-z]:[\\/]|modules[\\/])/.test(detail)) return detail;
+	if (!/^(?:\/|[A-Za-z]:[\\/]|\.[\\/]|modules[\\/])/.test(detail))
+		return detail;
 	return detail
 		.replaceAll('\\', '/')
 		.replace(/^.*?\/\.flowdular\/sandbox\/sessions\/[^/]+\/workspace\//, '')
+		.replace(/^\.\//, '')
 		.replace(/^modules\//, '');
 }
 

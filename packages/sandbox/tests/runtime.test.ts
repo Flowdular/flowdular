@@ -16,6 +16,7 @@ import { DEFAULT_AGENT_ROLES } from '@flowdular/coding-agent';
 import {
 	assertBrief,
 	classifyByRules,
+	countRepairs,
 	parsePlan,
 	planHandoff,
 	routeRole,
@@ -1261,6 +1262,60 @@ describe('boot shell', () => {
 		expect(html).toMatch(
 			/<noscript[\s\S]*\.flowdular-splash\s*{\s*display:\s*none;/,
 		);
+	});
+});
+
+describe('repair counting', () => {
+	const handoff = {
+		kind: 'continue' as const,
+		role: 'frontend-engineer',
+		roleName: 'Frontend engineer',
+		reason: '',
+		prompt: '',
+	};
+	const gate = (id: string) =>
+		({ id, status: 'failed', durationMs: 0, command: '' }) as never;
+
+	it('counts a repair, resets on ordinary work and leaves a review out', () => {
+		expect(
+			countRepairs(1, { ...handoff, repair: true, gates: [gate('tests')] }),
+		).toBe(2);
+		expect(countRepairs(2, handoff)).toBe(0);
+		expect(
+			countRepairs(2, {
+				...handoff,
+				repair: true,
+				gates: [gate('auto-review')],
+			}),
+		).toBe(2);
+		expect(
+			countRepairs(1, {
+				...handoff,
+				repair: true,
+				gates: [gate('auto-review'), gate('tests')],
+			}),
+		).toBe(2);
+		expect(countRepairs(2, { ...handoff, kind: 'review' })).toBe(2);
+	});
+
+	it('counts the fix a failed review asks for, but not the review after it', () => {
+		const review = {
+			...handoff,
+			repair: true,
+			gates: [gate('auto-review')],
+		};
+		const fix = {
+			...review,
+			prompt:
+				'The auto-review gate failed.\n\nUse $module-update to fix the findings in your preceding review, then $auto-review runs again.',
+		};
+		const reread = {
+			...review,
+			prompt:
+				'The review report was not accepted. Run $auto-review again; it is not $module-update work.',
+		};
+		expect(countRepairs(1, fix)).toBe(2);
+		expect(countRepairs(1, reread)).toBe(1);
 	});
 });
 

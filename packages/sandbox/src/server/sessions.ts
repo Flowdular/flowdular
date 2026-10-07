@@ -216,6 +216,119 @@ const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
 	[/https:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@'],
 ];
 
+/* Local paths name the operator's home and project layout. A path under the
+   sandbox directory reads from .flowdular on, and a session workspace path
+   reads relative to the workspace. Each path is found from its .flowdular
+   segment back to where it starts, so a directory name may hold any
+   character, and inside quotes a path may hold spaces; the walk back is
+   bounded, so a long line costs linear time. */
+const SANDBOX_SEGMENT = /[\\/]\.flowdular[\\/]/g;
+const SESSION_WORKSPACE =
+	/[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"`]+[\\/]workspace(?=[\\/\s'"`)\]>,;:]|$)/my;
+const PATH_LOOKBACK = 1024;
+
+function redactLocalPaths(text: string): string {
+	let output = '';
+	let copied = 0;
+	const quoted = quoteState(text);
+	for (const match of text.matchAll(SANDBOX_SEGMENT)) {
+		const marker = match.index!;
+		const inQuotes = quoted(marker);
+		if (copied > 0 && marker <= copied) continue;
+		const start = localPathStart(
+			text,
+			marker,
+			Math.max(copied, marker - PATH_LOOKBACK),
+			inQuotes,
+		);
+		if (start === null) continue;
+		SESSION_WORKSPACE.lastIndex = marker;
+		const workspace = SESSION_WORKSPACE.exec(text);
+		output += `${text.slice(copied, start)}${workspace ? '.' : ''}`;
+		copied = workspace ? marker + workspace[0].length : marker + 1;
+	}
+	return output + text.slice(copied);
+}
+
+function opens(char: string | undefined): boolean {
+	return char === undefined || /[\s'"`=(\[<>:;,]/.test(char);
+}
+
+/* A quote character, unless it is an apostrophe between two letters. */
+function isQuote(text: string, index: number): boolean {
+	const char = text[index];
+	if (char === '"' || char === '`') return true;
+	return (
+		char === "'" &&
+		!(
+			/\p{L}/u.test(text[index - 1] ?? '') &&
+			/\p{L}/u.test(text[index + 1] ?? '')
+		)
+	);
+}
+
+/* Whether each position, asked in increasing order, sits inside a quoted
+   string of its line. One forward pass from the line start answers them all. */
+function quoteState(text: string): (position: number) => boolean {
+	let scanned = 0;
+	let open: string | null = null;
+	return (position) => {
+		for (; scanned < position; scanned += 1) {
+			const char = text[scanned]!;
+			if (char === '\n') open = null;
+			else if (isQuote(text, scanned))
+				open = open === null ? char : open === char ? null : open;
+		}
+		return open !== null;
+	};
+}
+
+/* A slash that ends the ~, . or .. a token starts with: what follows is a
+   relative path, not a local one. */
+function relativeStart(text: string, index: number): boolean {
+	let at = index - 1;
+	if (text[at] === '~') return opens(text[at - 1]);
+	if (text[at] !== '.') return false;
+	if (text[at - 1] === '.') at -= 1;
+	return opens(text[at - 1]);
+}
+
+/* The nearest slash or drive before the segment that opens the text or
+   follows whitespace, a quote or a separator. Whitespace ends the search
+   outside a quoted string, as do a quote, a line break, a relative start
+   (~/, ./, ../) and a URL authority (//) other than a file URL: what lies
+   before them is not this path. */
+function localPathStart(
+	text: string,
+	marker: number,
+	limit: number,
+	inQuotes: boolean,
+): number | null {
+	for (let index = marker; index >= limit; index -= 1) {
+		const char = text[index]!;
+		if (char === '\n' || isQuote(text, index)) return null;
+		if (/\s/.test(char)) {
+			if (!inQuotes) return null;
+			continue;
+		}
+		if (char !== '/' && char !== '\\') continue;
+		if (relativeStart(text, index)) return null;
+		const before = text[index - 1];
+		if (
+			before === ':' &&
+			/[A-Za-z]/.test(text[index - 2] ?? '') &&
+			opens(text[index - 3])
+		)
+			return index - 2;
+		if (!opens(before)) continue;
+		if (text[index + 1] !== '/') return index;
+		return text.slice(index - 5, index) === 'file:' && opens(text[index - 6])
+			? index - 5
+			: null;
+	}
+	return null;
+}
+
 /* A single turn is bounded so one pathological gate output cannot fill the
    disk, and the file is rotated once it grows past the cap so a session that
    runs for days cannot grow without limit. */
@@ -226,6 +339,7 @@ export function redactText(value: string): string {
 	let safe = value;
 	for (const [pattern, replacement] of TRANSCRIPT_REDACTIONS)
 		safe = safe.replace(pattern, replacement);
+	safe = redactLocalPaths(safe);
 	return safe.length > ENTRY_TEXT_LIMIT
 		? `${safe.slice(0, ENTRY_TEXT_LIMIT)}\n[truncated at ${ENTRY_TEXT_LIMIT} characters]`
 		: safe;

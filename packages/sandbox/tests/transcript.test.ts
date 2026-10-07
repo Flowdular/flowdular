@@ -94,6 +94,10 @@ describe('transcript operations', () => {
 				'C:\\app\\.flowdular\\sandbox\\sessions\\id\\workspace\\reference\\guide.md',
 			),
 		).toBe('reference/guide.md');
+		expect(shortToolDetail('./modules/blog/src/api.ts')).toBe(
+			'blog/src/api.ts',
+		);
+		expect(shortToolDetail('./reference/guide.md')).toBe('reference/guide.md');
 		expect(shortToolDetail('pnpm test')).toBe('pnpm test');
 		expect(shortToolDetail('echo \\n')).toBe('echo \\n');
 		expect(shortToolDetail('/tmp/external.ts')).toBe('/tmp/external.ts');

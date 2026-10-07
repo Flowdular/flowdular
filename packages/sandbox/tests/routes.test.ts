@@ -1551,6 +1551,158 @@ describe('detached turns', () => {
 		);
 	});
 
+	const PAUSED =
+		'Paused after 4 turns in a row so you can read the transcript. Continue when you are ready.';
+
+	/* A session whose specification the operator approved, so turns implement,
+	   with gates that report what the test scripts. */
+	async function approvedChain(
+		root: string,
+		driver: CodingAgentDriver,
+		options: {
+			readonly autoContinue?: boolean;
+			readonly gate?: (id: string) => { failed: boolean; output: string };
+		} = {},
+	) {
+		const call = api(fakeRuntime(root, driver), 4320, {
+			executeGates: async ({ session, gates, modules }) =>
+				gates.map((id) => {
+					const scripted = options.gate?.(id) ?? { failed: false, output: '' };
+					return {
+						id,
+						module: (modules ?? session.modules)[0]!.directory,
+						status: scripted.failed ? ('failed' as const) : ('passed' as const),
+						durationMs: 1,
+						command: `fake ${id}`,
+						output: scripted.output,
+					};
+				}),
+		});
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const spec =
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		await writeFile(join(paths.modulePath, 'spec', 'module.yaml'), spec);
+		await writeFile(
+			join(paths.modulePath, 'module.json'),
+			'{"id":"booking.core"}\n',
+		);
+		await updateSession(root, session.id, {
+			autoContinue: options.autoContinue ?? true,
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(spec),
+				specApprovedAt: Date.now(),
+			})),
+		});
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Build it.',
+					role: 'backend-engineer',
+					driver: 'fake',
+				},
+			}),
+		);
+		return readChat(root, session);
+	}
+
+	/* A driver whose turn n ends with handoffs[n - 1] and, when files is set,
+	   writes a new file, so each turn changed something. */
+	function scriptedDriver(
+		handoffs: readonly string[],
+		prompts: string[],
+		files = false,
+	): CodingAgentDriver {
+		return {
+			...fakeDriver({ handoff: handoffs[0]! }),
+			async *run(request) {
+				prompts.push(request.prompt);
+				yield* fakeDriver({
+					handoff: handoffs[(prompts.length - 1) % handoffs.length]!,
+					...(files
+						? { file: `modules/booking/src/domain/turn-${prompts.length}.ts` }
+						: {}),
+					delayMs: 5,
+				}).run(request);
+			},
+		};
+	}
+
+	it('says why a chain pauses at its turn limit', async () => {
+		const prompts: string[] = [];
+		/* Every gate passes, so no turn is a repair and only the turn limit
+		   stops the chain. */
+		const chat = await approvedChain(
+			await workspace(),
+			scriptedDriver(
+				[
+					'HANDOFF: frontend-engineer - the endpoint exists',
+					'HANDOFF: backend-engineer - the screen exists',
+				],
+				prompts,
+			),
+		);
+		expect(prompts).toHaveLength(4);
+		expect(chat.at(-1)?.kind).toBe('system');
+		expect(chat.at(-1)?.text).toBe(PAUSED);
+	});
+
+	it('says nothing about a pause when the chain stops for another reason', async () => {
+		const prompts: string[] = [];
+		/* The fourth turn asks a question instead of handing on. */
+		const limit = await approvedChain(
+			await workspace(),
+			scriptedDriver(
+				[
+					'HANDOFF: frontend-engineer - the endpoint exists',
+					'HANDOFF: backend-engineer - the screen exists',
+					'HANDOFF: frontend-engineer - the endpoint exists',
+					'HANDOFF: none - which rooms can be booked?',
+				],
+				prompts,
+			),
+		);
+		expect(prompts).toHaveLength(4);
+		expect(limit.map((entry) => entry.text)).not.toContain(PAUSED);
+
+		const single: string[] = [];
+		const off = await approvedChain(
+			await workspace(),
+			scriptedDriver(
+				['HANDOFF: frontend-engineer - the endpoint exists'],
+				single,
+			),
+			{ autoContinue: false },
+		);
+		expect(single).toHaveLength(1);
+		expect(off.some((entry) => entry.text?.startsWith('Paused after'))).toBe(
+			false,
+		);
+	});
+
+	it('lets the review after a run of repairs take its turn', async () => {
+		const prompts: string[] = [];
+		/* Run 6: two turns fail the tests, the third passes them and only the
+		   review is left. The review must not be stopped as a third repair. */
+		const chat = await approvedChain(
+			await workspace(),
+			scriptedDriver(['HANDOFF: none - done'], prompts, true),
+			{
+				gate: (id) =>
+					id === 'auto-review'
+						? { failed: true, output: 'Run $auto-review for this module.' }
+						: { failed: id === 'tests' && prompts.length <= 2, output: '' },
+			},
+		);
+		expect(prompts).toHaveLength(4);
+		expect(prompts[3]).toContain('$auto-review');
+		expect(
+			chat.some((entry) => entry.text?.includes('consecutive gate-repair')),
+		).toBe(false);
+	});
+
 	it('refuses to delete a running session unless told to stop it', async () => {
 		const root = await workspace();
 		const runtime = fakeRuntime(

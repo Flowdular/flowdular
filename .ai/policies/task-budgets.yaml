@@ -33,7 +33,7 @@ sandbox:
     messageLength: 1 to 20000 characters (packages/sandbox/src/server/turns.ts)
     briefLength: at least 8 characters (planning.ts assertBrief)
     gateTimeout: 5 minutes per gate, output capped at 12000 characters (gates.ts)
-    gateFailure: a role whose write paths cover the failing file repairs, a repair that changed nothing is not repeated by the same role, and a gate that failed runs after every turn until it passes; at most maxRepairLoops consecutive repair turns per chain, then the chain returns to the operator
+    gateFailure: a role whose write paths cover the failing file repairs, a repair that changed nothing is not repeated by the same role, and a gate that failed runs after every turn until it passes; at most maxRepairLoops consecutive repair turns per chain, then the chain returns to the operator; a review turn neither counts toward nor resets that count
     byokReads: 400 listed files, 128 KB per read (packages/coding-agent/src/drivers/byok.ts)
   review:
     chainedTurns: stop and read the transcript after four automatic handoffs on one brief

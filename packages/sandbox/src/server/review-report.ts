@@ -38,19 +38,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/* The one reading of a review turn's closing reply, shared by the gate that
-   records it and the transcript that shows it. */
-export function readReviewReport(text: string): ReviewReading | null {
-	if (text.length > MAX_REPLY_LENGTH || !text.includes('```auto-review'))
-		return null;
-	const blocks = [...text.matchAll(REPORT_BLOCK)];
-	if (blocks.length !== 1) return null;
+type ReviewInspection =
+	| { readonly reading: ReviewReading; readonly problem?: undefined }
+	| { readonly reading?: undefined; readonly problem: string };
+
+function inspectReviewReply(text: string): ReviewInspection {
+	if (text.length > MAX_REPLY_LENGTH)
+		return {
+			problem: `The reply is longer than ${MAX_REPLY_LENGTH} characters.`,
+		};
+	const blocks = text.includes('```auto-review')
+		? [...text.matchAll(REPORT_BLOCK)]
+		: [];
+	if (blocks.length !== 1)
+		return {
+			problem:
+				blocks.length === 0
+					? 'The reply has no auto-review block, with its opening and closing fences on lines of their own.'
+					: `The reply has ${blocks.length} auto-review blocks; write exactly one.`,
+		};
 	const block = blocks[0]!;
 	let report: unknown;
 	try {
 		report = JSON.parse(block[1]!);
-	} catch {
-		return null;
+	} catch (error) {
+		return {
+			problem: `The auto-review block is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
 	if (
 		!isRecord(report) ||
@@ -59,22 +73,43 @@ export function readReviewReport(text: string): ReviewReading | null {
 		!Array.isArray(report.findings) ||
 		!report.findings.every((finding) => typeof finding === 'string')
 	)
-		return null;
+		return {
+			problem:
+				'The auto-review block needs "verdict" set to "pass" or "fail", a "checks" object and a "findings" list of strings.',
+		};
 	const start = block.index!;
 	return {
-		report: {
-			verdict: report.verdict,
-			checks: report.checks,
-			findings: report.findings,
+		reading: {
+			report: {
+				verdict: report.verdict,
+				checks: report.checks,
+				findings: report.findings,
+			},
+			raw: block[1]!,
+			remainder: [
+				text.slice(0, start).trimEnd(),
+				text.slice(start + block[0].length).trimStart(),
+			]
+				.filter(Boolean)
+				.join('\n\n'),
 		},
-		raw: block[1]!,
-		remainder: [
-			text.slice(0, start).trimEnd(),
-			text.slice(start + block[0].length).trimStart(),
-		]
-			.filter(Boolean)
-			.join('\n\n'),
 	};
+}
+
+/* The one reading of a review turn's closing reply, shared by the gate that
+   records it and the transcript that shows it. */
+export function readReviewReport(text: string): ReviewReading | null {
+	return inspectReviewReply(text).reading ?? null;
+}
+
+/* Why a closing reply records no review the gate accepts, for the review
+   turn that has to write it again: no readable report, or a pass that cannot
+   pass. Null for a passing report and for a readable fail. */
+export function reviewReportProblem(text: string): string | null {
+	const inspection = inspectReviewReply(text);
+	if (!inspection.reading) return inspection.problem;
+	const { report } = inspection.reading;
+	return report.verdict === 'pass' ? passProblem(report) : null;
 }
 
 export function checkHasEvidence(value: unknown): boolean {
@@ -85,13 +120,26 @@ export function checkHasEvidence(value: unknown): boolean {
 	);
 }
 
+function passProblem(report: ReviewReport): string | null {
+	if (report.findings.length > 0)
+		return `A passing report has an empty findings list, and this one lists ${report.findings.length}: report them with "verdict": "fail", or leave out what is not a defect.`;
+	const unproven = REVIEW_CHECKS.filter(
+		(key) => !checkHasEvidence(report.checks[key]),
+	).map((key) => {
+		const value = report.checks[key];
+		return `${key} has ${typeof value === 'string' && value.length > 4_000 ? 'more' : 'less'}`;
+	});
+	return unproven.length > 0
+		? `Every check needs 20 to 4000 characters of evidence: ${unproven.join(', ')}.`
+		: null;
+}
+
 export function passingReviewReport(text: string): boolean {
 	const reading = readReviewReport(text);
 	return (
 		reading !== null &&
 		reading.report.verdict === 'pass' &&
-		reading.report.findings.length === 0 &&
-		REVIEW_CHECKS.every((key) => checkHasEvidence(reading.report.checks[key]))
+		passProblem(reading.report) === null
 	);
 }
 

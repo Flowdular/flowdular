@@ -142,10 +142,10 @@ For TSRX, loop keys can read only the loop item: precompute a key on each item i
 		name: 'UX designer',
 		purpose:
 			'Design the screens, their states, and their copy on the shared design system.',
-		allowedPaths: ['src/client/**'],
+		allowedPaths: ['src/client/**', 'design/**'],
 		gates: ['typecheck', 'format'],
 		handoff: ['frontend-engineer', 'business-manager'],
-		instruction: `You own screen structure, states and copy in src/client. Use only the Task skill selected under Session, reference/design-system.md and the relevant shared component source. reference/example-module/src/client/CatalogView.tsrx is the screen example.
+		instruction: `You own screen structure, states and copy in src/client, and screen designs in design/. Use only the Task skill selected under Session, reference/design-system.md and the relevant shared component source. reference/example-module/src/client/CatalogView.tsrx is the screen example.
 
 Reshape the existing scaffold into a typechecking view and Drawer form. Leave fetch, api.ts and data wiring to the frontend engineer. Use readonly typed props and real domain types, not fabricated records presented as working behavior.
 

@@ -140,7 +140,7 @@ function editSession(root: string): Promise<SandboxSession> {
 /* Records what the driver was handed, so a refused turn is visible as a driver
    that never ran. */
 function recordingDriver(
-	sink: { prompt: string; role: string },
+	sink: { prompt: string; role: string; instruction?: string },
 	options: {
 		readonly file?: string;
 		readonly content?: string;
@@ -157,6 +157,7 @@ function recordingDriver(
 		async *run(request: CodingAgentTurnRequest) {
 			sink.prompt = request.prompt;
 			sink.role = request.role;
+			sink.instruction = request.systemInstruction;
 			yield {
 				type: 'turn.started',
 				driver: 'fake',
@@ -1214,6 +1215,25 @@ describe('auto-review turn lifecycle', () => {
 			);
 		},
 	);
+	it('tells a review turn that the operator renders the screen', async () => {
+		const { root, session } = await setup();
+		const sink = { prompt: '', role: '', instruction: '' };
+		await drive(
+			context(root, recordingDriver(sink, { closing: REVIEW_RESPONSE })),
+			session.id,
+			{ message: '$auto-review', role: 'backend-engineer' },
+		);
+		const note =
+			'Nobody in the sandbox can render the screen: the operator inspects it in the preview. For the UI check, cite the component code, its states and the tests as evidence; a missing rendered inspection is not a finding.';
+		expect(sink.instruction).toContain(note);
+		/* The skill the review turn reads says the same. */
+		const skill = await readFile(
+			new URL('../../../.ai/skills/auto-review/SKILL.md', import.meta.url),
+			'utf8',
+		);
+		expect(skill.replace(/\s+/g, ' ')).toContain(note);
+	});
+
 	it('returns findings to an implementation phase without issuing a pass', async () => {
 		const { root, session, paths } = await setup();
 		const result = await drive(
@@ -1266,19 +1286,54 @@ describe('auto-review turn lifecycle', () => {
 		[
 			'prose quoting a failing verdict beside a malformed report',
 			`The draft said "verdict": "fail" before the tests ran.\n\n${REVIEW_RESPONSE.replace('"findings":[]', '"findings":[],')}`,
+			'The auto-review block is not valid JSON: ',
 		],
 		[
 			'two report blocks',
 			`${failing.slice(0, failing.indexOf('\nHANDOFF:'))}\n\nCorrected after reading the tests:\n\n${REVIEW_RESPONSE}`,
+			'The reply has 2 auto-review blocks; write exactly one.',
 		],
 		[
 			'prose quoting a failing verdict and no report',
 			'The last review ended with "verdict": "fail"; nothing new to add.\n\nHANDOFF: none - reviewed',
+			'The reply has no auto-review block, with its opening and closing fences on lines of their own.',
 		],
-	])('keeps the gate output for %s', async (_, closing) => {
-		const { outcome, gate, own } = await review(closing);
-		expect(gate?.status).toBe('failed');
-		expect(gate?.output).toBe(own);
-		expect(outcome.handoff.prompt).not.toContain('$module-update');
-	});
+		[
+			'a passing verdict that lists a finding',
+			REVIEW_RESPONSE.replace(
+				'"findings":[]',
+				'"findings":["Low; src/client/List.tsrx:4; any list; the caption repeats the title; drop it"]',
+			),
+			'A passing report has an empty findings list, and this one lists 1: report them with "verdict": "fail", or leave out what is not a defect.',
+		],
+		[
+			'a passing verdict with a check left without evidence',
+			REVIEW_RESPONSE.replace(
+				'"ui":"Synthetic ui evidence for this orchestration fixture."',
+				'"ui":"n/a"',
+			),
+			'Every check needs 20 to 4000 characters of evidence: ui has less.',
+		],
+		[
+			'a passing verdict with a check longer than its limit',
+			REVIEW_RESPONSE.replace(
+				'"tests":"Synthetic tests evidence for this orchestration fixture."',
+				`"tests":"${'Evidence. '.repeat(401)}"`,
+			),
+			'Every check needs 20 to 4000 characters of evidence: tests has more.',
+		],
+	])(
+		'sends %s back to review with why it was not accepted',
+		async (_, closing, problem) => {
+			const { outcome, gate } = await review(closing);
+			expect(gate?.status).toBe('failed');
+			expect(gate?.output).toMatch(/^The review report was not accepted: /);
+			expect(gate?.output).toContain(problem);
+			expect(gate?.output).toContain(
+				'Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.',
+			);
+			expect(outcome.handoff.prompt).toContain(problem);
+			expect(outcome.handoff.prompt).not.toContain('$module-update');
+		},
+	);
 });

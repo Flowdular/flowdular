@@ -48,6 +48,7 @@ moduleRoles:
   modules/{module}/src/index.ts: [backend-engineer]
   modules/{module}/migrations/**: [backend-engineer]
   modules/{module}/src/client/**: [ux-designer, frontend-engineer]
+  modules/{module}/design/**: [ux-designer]
   modules/{module}/src/agent/**: [agentic-engineer]
   modules/{module}/tests/**:
     [backend-engineer, frontend-engineer, agentic-engineer]

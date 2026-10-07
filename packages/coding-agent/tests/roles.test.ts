@@ -44,6 +44,12 @@ describe('agent roles', () => {
 		expect(() => parseRoleDocument('# just markdown')).toThrow(/front matter/);
 	});
 
+	it('lets the UX designer write the screen designs its skill asks for', () => {
+		expect(findRole(DEFAULT_AGENT_ROLES, 'ux-designer').allowedPaths).toContain(
+			'design/**',
+		);
+	});
+
 	it('lets a workspace override a bundled role by id', async () => {
 		const root = await workspace();
 		await mkdir(join(root, SANDBOX_ROLE_DIRECTORY), { recursive: true });
