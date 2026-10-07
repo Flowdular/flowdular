@@ -235,6 +235,30 @@ describe('module layout validation', () => {
 		}
 	});
 
+	it('names the bundle key without the module prefix, also when the bundle holds the prefixed form', async () => {
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'translations/en.json': complete['translations/en.json'].replace(
+				'{',
+				'{"billing.table.caption":"Invoices",',
+			),
+			'translations/pl.json': complete['translations/pl.json'].replace(
+				'{',
+				'{"billing.table.caption":"Faktury",',
+			),
+			'src/client/index.ts': "t('billing.table.caption');\n",
+		});
+		try {
+			const issues = await moduleLayoutIssues(root, manifest);
+			expect(codes(issues)).toEqual(['error:TRANSLATION_KEY_MISSING']);
+			expect(issues[0]?.message).toBe(
+				`Translation key "table.caption" is missing from translations/en.json; the client reads it as t('billing.table.caption'). The bundle has "billing.table.caption", but bundle keys leave out the "billing." prefix.`,
+			);
+		} finally {
+			await dispose();
+		}
+	});
+
 	it('rejects raw tables and direct TanStack imports in a module', async () => {
 		const { root, dispose } = await moduleRoot({
 			...complete,

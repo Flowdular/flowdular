@@ -9,6 +9,7 @@ import {
 	readdir,
 	rm,
 	stat,
+	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
@@ -188,6 +189,7 @@ async function routingContext(
 	context: TurnContext,
 	session: SandboxSession,
 	paths: SessionPaths,
+	module: SessionModule,
 	modulePath: string,
 	message: string,
 	entries: readonly ChatEntry[],
@@ -198,6 +200,7 @@ async function routingContext(
 		paths,
 		roles: context.roles,
 		message,
+		module: module.directory,
 		hasSpec: await exists(join(modulePath, 'spec/module.yaml')),
 		hasManifest: await exists(join(modulePath, 'module.json')),
 		hasServer: await hasServerSurface(modulePath),
@@ -348,7 +351,9 @@ async function listFiles(root: string, directory = root): Promise<string[]> {
    specification, while a business manager may already have written
    translations there. Those files step aside for the scaffold and come back
    over the skeleton, so what the specialist wrote wins over the generated
-   placeholder. */
+   placeholder. A translation bundle is merged key by key instead: the
+   skeleton's client reads the skeleton's keys, and a bundle without them
+   paints raw keys and fails the translation gate. */
 async function withScaffoldClearance<T>(
 	modulePath: string,
 	run: () => Promise<T>,
@@ -370,9 +375,42 @@ async function withScaffoldClearance<T>(
 		return await run();
 	} finally {
 		for (const file of extras) {
-			await cp(join(stash, file), join(modulePath, file), { force: true });
+			await restoreStashed(stash, modulePath, file);
 		}
 		await rm(stash, { recursive: true, force: true });
+	}
+}
+
+async function restoreStashed(
+	stash: string,
+	modulePath: string,
+	file: string,
+): Promise<void> {
+	const target = join(modulePath, file);
+	if (/^translations[\\/][^\\/]+\.json$/.test(file)) {
+		const generated = await readJsonObject(target);
+		const written = await readJsonObject(join(stash, file));
+		if (generated && written) {
+			await writeFile(
+				target,
+				`${JSON.stringify({ ...generated, ...written }, null, '\t')}\n`,
+			);
+			return;
+		}
+	}
+	await cp(join(stash, file), target, { force: true });
+}
+
+async function readJsonObject(
+	path: string,
+): Promise<Record<string, unknown> | null> {
+	try {
+		const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+		return value && typeof value === 'object' && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: null;
+	} catch {
+		return null;
 	}
 }
 
@@ -631,6 +669,7 @@ export async function* runTurn(
 						context,
 						session,
 						paths,
+						active,
 						modulePath,
 						message,
 						transcript,
@@ -1136,6 +1175,7 @@ export async function* runTurn(
 			context,
 			session,
 			paths,
+			active,
 			modulePath,
 			message,
 			[],

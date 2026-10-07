@@ -1114,6 +1114,40 @@ describe('turn routing', () => {
 		).toBe('agentic-engineer');
 	});
 
+	it('sends a request that names module files to a role that may write them', () => {
+		const built = {
+			...base,
+			hasSpec: true,
+			hasManifest: true,
+			hasServer: true,
+			hasClient: true,
+		};
+		const translations = routeRole({
+			...built,
+			message:
+				'Change the wording: add the missing keys to translations/en.json and translations/pl.json.',
+		});
+		expect(translations).toMatchObject({ role: 'business-manager' });
+		expect(translations.reason).toContain(
+			'translations/en.json, translations/pl.json',
+		);
+		expect(
+			routeRole({
+				...built,
+				module: 'profile',
+				message:
+					'The screen shows stale totals; fix modules/profile/src/server/summary.ts.',
+			}).role,
+		).toBe('backend-engineer');
+		expect(
+			routeRole({
+				...built,
+				message:
+					'Show the same layout as modules/other/translations/en.json describes.',
+			}).role,
+		).toBe('frontend-engineer');
+	});
+
 	it('sends an answer back to the specialist who asked the question', () => {
 		expect(
 			routeRole({

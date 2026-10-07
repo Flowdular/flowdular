@@ -543,6 +543,9 @@ export interface RoutingContext {
 	readonly specApproved: boolean | null;
 	/* The handoff that ended the previous turn, when there was one. */
 	readonly lastHandoff?: HandoffPlan | null;
+	/* The draft module directory the turn works in; absent reads as the
+	   session's first module. */
+	readonly module?: string;
 }
 
 /* Who takes the turn that answers a question. Any role but the specification
@@ -681,6 +684,8 @@ export function routeRole(context: RoutingContext): {
 					: 'The request is about the specification.',
 		};
 	}
+	const named = namedFileOwner(context);
+	if (named) return named;
 	if (AGENT_WORDS.test(context.message)) {
 		return {
 			role: has('agentic-engineer'),
@@ -710,6 +715,30 @@ export function routeRole(context: RoutingContext): {
 	return {
 		role: has('backend-engineer'),
 		reason: 'Default owner for a change with no clearer signal.',
+	};
+}
+
+/* A request that names files in the module goes to a role that may write
+   them, by the rule a gate repair follows, before its words are weighed: a
+   role that may write none of them would only hand the work on. */
+function namedFileOwner(
+	context: RoutingContext,
+): { readonly role: string; readonly reason: string } | null {
+	const module = context.module ?? context.session.modules[0]?.directory ?? '';
+	const named = namedPaths(context.message, [module], module);
+	if (named.length === 0) return null;
+	const preferred = ownerOf(named[0]!.path, context.roles);
+	const covering = context.roles.filter((role) =>
+		named.every((file) => mayWrite(role, file.path)),
+	);
+	const role =
+		covering.find((candidate) => candidate.id === preferred)?.id ??
+		covering[0]?.id ??
+		preferred;
+	if (!role) return null;
+	return {
+		role,
+		reason: `The request names ${named.map((file) => file.path).join(', ')}, which ${roleName(context.roles, role)} may write.`,
 	};
 }
 
