@@ -1034,8 +1034,9 @@ export async function* runTurn(
 				changed.has(module.directory) ||
 				failing.some((gate) => gate.module === module.directory),
 		);
-		/* Module validation reads a module through its manifest, so a draft the
-		   scaffold has not created yet is left to the specification gate. */
+		/* Before the scaffold a draft has no build to check, and module
+		   validation fails on the enabled but unregistered draft, so the gates a
+		   written file brings in wait for the manifest. */
 		const manifested: string[] = [];
 		for (const module of gated)
 			if (

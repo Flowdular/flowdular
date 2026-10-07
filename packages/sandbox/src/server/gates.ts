@@ -92,7 +92,8 @@ interface GateDefinition {
 	   is read as the errors it reports. */
 	readonly envelope?: true;
 	/* Module files the gate checks, relative to the module. A turn that wrote
-	   one runs the gate whatever its role lists. */
+	   one runs the gate whatever its role lists. Auto-review has none: any
+	   write invalidates its evidence, and the review handoff records it. */
 	readonly reads?: readonly string[];
 }
 
@@ -146,6 +147,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			cwd: context.workspaceRoot,
 		}),
 		envelope: true,
+		reads: ['spec/**'],
 		refuse: async (context) => {
 			const refusal = liveAdapterRefusal(
 				(
@@ -204,6 +206,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 		summary: 'Every imported package is declared by the module manifest.',
 		scope: 'module',
 		command: () => null,
+		reads: ['package.json', 'src/**'],
 		inspect: async (context) => {
 			const report = await checkDeclaredDependencies(context.modulePath);
 			if (report.missing.length === 0)
@@ -231,6 +234,10 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			'The module satisfies the deterministic rules: declared permissions, a permission on every endpoint, tenant identity from the principal, forced row-level security, mirrored migrations, complete locales and no interpolated statement.',
 		scope: 'module',
 		command: () => null,
+		/* The specification and its terminology are what the build is measured
+		   against, and the business manager changes them ahead of the build;
+		   the key check covers the bundles. */
+		reads: ['src/**', 'migrations/**'],
 		inspect: async (context) => {
 			const specPath = join(context.modulePath, 'spec', 'module.yaml');
 			let spec = '';
@@ -262,6 +269,13 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			args: ['--noEmit', '-p', 'tsconfig.json'],
 			cwd: context.modulePath,
 		}),
+		reads: [
+			'tsconfig.json',
+			'package.json',
+			'src/**',
+			'tests/**',
+			'translations/**',
+		],
 	},
 	{
 		id: 'tests',
@@ -272,6 +286,19 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			args: ['run', '--passWithNoTests=false'],
 			cwd: context.modulePath,
 		}),
+		reads: [
+			'package.json',
+			'tsconfig.json',
+			'vitest.config.ts',
+			'src/**',
+			'tests/**',
+			'translations/**',
+			'migrations/**',
+			'preview/**',
+			'adapters/**',
+			'templates/**',
+			'research-fixtures.json',
+		],
 	},
 	{
 		id: 'format',
@@ -282,6 +309,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			args: ['--check', '.'],
 			cwd: context.modulePath,
 		}),
+		reads: ['**'],
 	},
 ];
 

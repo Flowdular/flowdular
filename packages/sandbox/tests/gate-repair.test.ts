@@ -954,7 +954,8 @@ describe('handoff scope, replaying the recorded run 5 frontend turn', () => {
 
 		await terms();
 		expect(ran.flat()).toContain('spec-schema');
-		expect(ran.flat()).not.toContain('module-schema');
+		for (const gate of ['module-schema', 'tests', 'typecheck', 'format'])
+			expect(ran.flat()).not.toContain(gate);
 
 		/* What the scaffold leaves: a manifest, a screen and empty bundles. */
 		await writeModule(module, {
@@ -969,6 +970,91 @@ describe('handoff scope, replaying the recorded run 5 frontend turn', () => {
 		expect(
 			translated.gates.find((gate) => gate.id === 'module-schema')?.status,
 		).toBe('passed');
+	});
+});
+
+/* The run 5 shakedown on npm 0.6.2 (chat sequences 1254 to 1323): after the
+   UX designer edited src/client/EquipmentView.tsrx only typecheck, format and
+   dependencies ran, and after the business manager edited both bundles only
+   spec-schema and dependencies. Neither role lists the tests, and the
+   business manager lists no compiler, formatter or key check. */
+function shakedownDriver(): CodingAgentDriver {
+	return {
+		id: 'fake',
+		label: 'Fake',
+		kind: 'byok',
+		requiresLoopback: false,
+		description: 'test driver',
+		probe: async () => ({ available: true, detail: 'ok', version: '1' }),
+		async *run(request: CodingAgentTurnRequest) {
+			yield {
+				type: 'turn.started',
+				driver: 'fake',
+				role: request.role,
+				resumeId: null,
+			};
+			const module = join(request.workspacePath, 'modules', 'equipment');
+			if (request.role === 'ux-designer')
+				await writeModule(module, {
+					'src/client/EquipmentView.tsrx': [
+						"export const title = t('equipment.page.title');",
+						"export const subtitle = t('equipment.page.subtitle');",
+						'',
+					].join('\n'),
+				});
+			if (request.role === 'business-manager') {
+				const keys = {
+					'nav.equipment': 'Equipment',
+					'page.title': 'Equipment',
+					'page.subtitle': 'Equipment register',
+				};
+				await writeModule(module, {
+					'translations/en.json': `${JSON.stringify(keys)}\n`,
+					'translations/pl.json': `${JSON.stringify(keys)}\n`,
+				});
+			}
+			yield {
+				type: 'assistant.message',
+				text: 'Done.\n\nHANDOFF: none - done',
+			};
+			yield {
+				type: 'turn.completed',
+				resumeId: null,
+				usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+				costUsd: null,
+				finishReason: 'stop',
+			};
+		},
+	};
+}
+
+describe('gates for the files a turn wrote, replaying the run 5 shakedown', () => {
+	it('runs the tests, the compiler, the formatter and the key check after a client turn and after a translation turn', async () => {
+		const { root, session, module } = await approvedSession(RUN5_FILES);
+		const context = run5Context(root, module, shakedownDriver(), []);
+
+		for (const [role, message, written] of [
+			[
+				'ux-designer',
+				'Show the load error inside the card.',
+				'src/client/EquipmentView.tsrx',
+			],
+			[
+				'business-manager',
+				'Remove the unused error key from both bundles.',
+				'translations/en.json',
+			],
+		] as const) {
+			const outcome = await drive(context, session.id, { message, role });
+			expect(outcome.diffs.map((diff) => diff.path)).toContain(written);
+			const ran = outcome.gates.map((gate) => gate.id);
+			for (const gate of ['tests', 'typecheck', 'format', 'module-schema'])
+				expect(ran, `${gate} after the ${role} turn`).toContain(gate);
+			/* The rules measure the build against the specification, which the
+			   business manager may have changed with the bundles. */
+			if (role === 'business-manager')
+				expect(ran).not.toContain('module-rules');
+		}
 	});
 });
 
