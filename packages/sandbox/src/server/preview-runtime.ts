@@ -45,6 +45,7 @@ import {
 } from '@flowdular/server';
 import { replaceLocalFile } from './local-file.ts';
 import { createIsolatedPreviewRuntime } from './preview-worker-manager.ts';
+import { CATALOG_MODULE_ID, writePreviewCatalog } from './preview-catalog.ts';
 import {
 	resolvePreviewModules,
 	type PreviewModuleSource,
@@ -273,6 +274,7 @@ async function loadDraftComposition(
 	workspaceRoot: string,
 	context: Omit<PlatformServerContext, 'workspaceRoot'>,
 	revision: string,
+	catalogRoot: string,
 ): Promise<{
 	readonly composition: DraftComposition | null;
 	readonly moduleScopes: readonly string[];
@@ -299,7 +301,7 @@ async function loadDraftComposition(
 			agentDefinitions: context.agentDefinitions.forModule(module.id),
 			dataClasses: context.dataClasses.forModule(module.id),
 			metrics: createModuleMetrics(module.id),
-			workspaceRoot: paths.root,
+			workspaceRoot: module.id === CATALOG_MODULE_ID ? catalogRoot : paths.root,
 		});
 		if (composition.settings) context.settings.declare(composition.settings);
 		let moduleScopes: readonly string[] = [];
@@ -447,6 +449,12 @@ export function createInProcessPreviewRuntime(
 			const adapters = await readSessionAdapters(
 				sources.filter((source) => !source.support),
 			);
+			const catalogRoot = await writePreviewCatalog(
+				paths.data,
+				revision,
+				sources,
+				current?.revision,
+			);
 
 			const { auth, credentials } = current
 				? { auth: current.auth, credentials: current.credentials }
@@ -499,6 +507,7 @@ export function createInProcessPreviewRuntime(
 					workspaceRoot,
 					context,
 					revision,
+					catalogRoot,
 				);
 				if (draft.composition) {
 					drafts.push(draft.composition);
