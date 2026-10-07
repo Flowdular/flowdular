@@ -33,6 +33,7 @@ export interface ReviewFinding {
 
 const MAX_REPLY_LENGTH = 32_000;
 const REPORT_BLOCK = /```auto-review\s*\n([\s\S]*?)\n```/g;
+const REPORT_FENCE = /```auto-review\b[\s\S]*?(?:\n```|$)/g;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -100,6 +101,36 @@ function inspectReviewReply(text: string): ReviewInspection {
    records it and the transcript that shows it. */
 export function readReviewReport(text: string): ReviewReading | null {
 	return inspectReviewReply(text).reading ?? null;
+}
+
+/* Every auto-review fence in a reply, closed or not, apart from the words
+   around it, so a report the gate cannot read is never shown as raw JSON.
+   Null when the reply has no such fence. */
+export function splitReviewBlocks(
+	text: string,
+): { readonly raw: string; readonly remainder: string } | null {
+	if (!text.includes('```auto-review')) return null;
+	const raw: string[] = [];
+	const words: string[] = [];
+	let copied = 0;
+	for (const fence of text.matchAll(REPORT_FENCE)) {
+		words.push(text.slice(copied, fence.index));
+		raw.push(
+			fence[0]
+				.replace(/^```auto-review/, '')
+				.replace(/```$/, '')
+				.trim(),
+		);
+		copied = fence.index! + fence[0].length;
+	}
+	words.push(text.slice(copied));
+	return {
+		raw: raw.join('\n\n'),
+		remainder: words
+			.map((part) => part.trim())
+			.filter(Boolean)
+			.join('\n\n'),
+	};
 }
 
 /* Why a closing reply records no review the gate accepts, for the review

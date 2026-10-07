@@ -651,30 +651,78 @@ describe('transcript entries', () => {
 		setActiveLocale('en');
 	});
 
-	it('renders a review block that is not a verdict as before', () => {
+	it('folds a review report the gate cannot read away from the words', () => {
 		registerSandboxTranslations();
 		setActiveLocale('en');
-		const malformed = JSON.stringify(
+		const valid = JSON.stringify(
 			{ verdict: 'pass', checks: reviewChecks, findings: [] },
 			null,
 			2,
-		).slice(0, 200);
-		for (const body of [
+		);
+		const malformed = valid.slice(0, 200);
+		/* Run 7: a block with bare keys, then a corrected one. */
+		const twoBlocks = [
 			malformed,
-			JSON.stringify({ verdict: 'maybe', checks: reviewChecks, findings: [] }),
-		]) {
-			const html = transcript([reviewEntry(reviewMessage(body))]);
+			'```',
+			'',
+			'The JSON above is malformed. Here is the corrected report.',
+			'',
+			'```auto-review',
+			valid,
+		].join('\n');
+		const unterminated = `${valid}\n\nHANDOFF: none - review passes`;
+		const quotedFence =
+			'{\n  "verdict": "fail",\n  "checks": { "ui": "Quotes a ```tsx fence from reference/auto-review-base/ as evidence." }';
+		for (const [body, closing] of [
+			[malformed, true],
+			[quotedFence, true],
+			[
+				JSON.stringify({
+					verdict: 'maybe',
+					checks: reviewChecks,
+					findings: [],
+				}),
+				true,
+			],
+			[twoBlocks, true],
+			[unterminated, false],
+		] as const) {
+			const message = reviewMessage(body);
+			const html = transcript([
+				reviewEntry(
+					closing ? message : message.slice(0, message.lastIndexOf('\n```')),
+				),
+			]);
 			const visible = folded(html);
 
-			expect(visible).toContain('<pre class="ui-code">');
-			expect(visible).toContain('auto-review-base');
 			expect(visible).toContain(
 				'<strong>Tests on the current files are still pending.</strong>',
 			);
+			expect(visible).toContain('Could not be read');
+			expect(visible).not.toContain('<pre class="ui-code">');
+			expect(visible).not.toContain('auto-review-base');
+			expect(visible).not.toContain('```');
 			expect(visible).not.toContain('Evidence given');
-			expect(html).not.toContain('Full review report');
 			expect(visible).not.toContain('HANDOFF');
+			expect(html).toMatch(
+				/<details>\s*<summary>Full review report<\/summary>[\s\S]*auto-review-base[\s\S]*<\/details>/,
+			);
 		}
+		expect(
+			folded(transcript([reviewEntry(reviewMessage(twoBlocks))])),
+		).toContain('The JSON above is malformed. Here is the corrected report.');
+	});
+
+	it('says a review report could not be read in Polish too', () => {
+		registerSandboxTranslations();
+		setActiveLocale('pl');
+		const html = transcript([reviewEntry(reviewMessage('{"verdict": '))]);
+
+		expect(folded(html)).toContain('Nie udało się odczytać');
+		expect(html).toMatch(
+			/<details>\s*<summary>Pełny raport z review<\/summary>[\s\S]*verdict[\s\S]*<\/details>/,
+		);
+		setActiveLocale('en');
 	});
 
 	it('keeps a long activity line whole for the ellipsis and its title', () => {
