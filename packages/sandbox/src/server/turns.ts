@@ -348,12 +348,13 @@ async function listFiles(root: string, directory = root): Promise<string[]> {
 }
 
 /* The scaffold refuses a target directory that holds anything but the
-   specification, while a business manager may already have written
-   translations there. Those files step aside for the scaffold and come back
+   specification and translations, while a business manager may write other
+   files under spec/. Those files step aside for the scaffold and come back
    over the skeleton, so what the specialist wrote wins over the generated
-   placeholder. A translation bundle is merged key by key instead: the
-   skeleton's client reads the skeleton's keys, and a bundle without them
-   paints raw keys and fails the translation gate. */
+   placeholder. A translation bundle is merged key by key instead, here and
+   not by the application's CLI, which may predate that merge: the skeleton's
+   client reads the skeleton's keys, and a bundle without them paints raw keys
+   and fails the translation gate. */
 async function withScaffoldClearance<T>(
 	modulePath: string,
 	run: () => Promise<T>,
@@ -664,8 +665,8 @@ export async function* runTurn(
 	const requested = input.role ?? 'auto';
 	const routed =
 		requested === 'auto'
-			? routeRole(
-					await routingContext(
+			? routeRole({
+					...(await routingContext(
 						context,
 						session,
 						paths,
@@ -674,8 +675,9 @@ export async function* runTurn(
 						message,
 						transcript,
 						gate.approved,
-					),
-				)
+					)),
+					operatorMessage: true,
+				})
 			: { role: requested, reason: '' };
 	const roleId = routed.role;
 	const role = findRole(context.roles, roleId);
@@ -871,6 +873,11 @@ export async function* runTurn(
 			...(hasSdk
 				? [
 						'Read the actual installed SDK under reference/sdk/packages and reference/sdk/modules. Its package.json maps public exports. These are readable copies inside the workspace; do not follow external SDK symlinks. Search only the API needed for the current task.',
+					]
+				: []),
+			...(gate.approved === true
+				? [
+						`The operator approved the specification of ${active.id} (spec/module.yaml) at its current text, so it is not awaiting approval. Change it only when the request asks for a specification change.`,
 					]
 				: []),
 			'reference/ is read-only. Consult only the code and references needed for this task; do not preload its catalog.',
@@ -1188,6 +1195,9 @@ export async function* runTurn(
 		failed,
 		changed: diffs.length > 0,
 		edited: pathResult.written.length > 0,
+		specWritten: pathResult.written.some((path) =>
+			path.startsWith(`modules/${active.directory}/spec/`),
+		),
 		instructed,
 		specApproved: closingGate.approved,
 		brief: session.brief || message,

@@ -124,8 +124,9 @@ skills.
 
 Files are written through the workspace Prettier, so the format gate passes
 without a rewrite. A directory that already holds `spec/module.yaml` or
-`translations/**` is extended, not rejected, and a failed run leaves nothing
-behind.
+`translations/**` is extended, not rejected: a translation bundle keeps its
+keys and gains the skeleton's, the author's wording winning on a shared key. A
+failed run leaves nothing behind.
 
 ### 3. Implement
 

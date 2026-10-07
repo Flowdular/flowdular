@@ -443,8 +443,7 @@ describe('transcript entries', () => {
 	it('shows an automatic repair message as the errors it sends, not as the operator', () => {
 		registerSandboxTranslations();
 		setActiveLocale('en');
-		const message =
-			'Translation key "equipment.page.title" is used by the client but absent from translations/en.json.';
+		const message = `Translation key "page.title" is missing from translations/en.json; the client reads it as t('equipment.page.title').`;
 		const html = transcript([
 			{
 				sequence: 467,

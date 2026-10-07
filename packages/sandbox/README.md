@@ -474,8 +474,9 @@ Later turns route the same way, against the module the turn targets. Its state
 decides who works next
 (no specification means the business manager, no server means the backend
 engineer, no screen means the frontend engineer), and the words of the request
-only choose between specialists that are already valid for that state. An
-answer to a question goes back to the specialist who asked it. Every routed
+only choose between specialists that are already valid for that state. A
+request that names files of the module goes to a specialist that may write
+them. An answer to a question goes back to the specialist who asked it. Every routed
 turn says who took it and why; the role picker in the composer overrides it for
 one turn, and the module picker beside it overrides which module that turn
 works in.

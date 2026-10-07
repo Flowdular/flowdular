@@ -546,6 +546,10 @@ export interface RoutingContext {
 	/* The draft module directory the turn works in; absent reads as the
 	   session's first module. */
 	readonly module?: string;
+	/* Whether the message is the operator's own text. Only then do the files
+	   it names choose the role: a chained prompt names the previous turn's
+	   files. Absent reads as false. */
+	readonly operatorMessage?: boolean;
 }
 
 /* Who takes the turn that answers a question. Any role but the specification
@@ -645,7 +649,9 @@ const SPEC_WORDS =
 
 /* Routing is deterministic and explainable: the state of the module decides
    who works next, and the words of the request can only move the choice
-   between specialists that are already valid for that state. */
+   between specialists that are already valid for that state. Files the
+   operator names in the module are the exception: a role that may write them
+   takes the request, since any other would only hand it on. */
 export function routeRole(context: RoutingContext): {
 	readonly role: string;
 	readonly reason: string;
@@ -724,6 +730,7 @@ export function routeRole(context: RoutingContext): {
 function namedFileOwner(
 	context: RoutingContext,
 ): { readonly role: string; readonly reason: string } | null {
+	if (!context.operatorMessage) return null;
 	const module = context.module ?? context.session.modules[0]?.directory ?? '';
 	const named = namedPaths(context.message, [module], module);
 	if (named.length === 0) return null;
@@ -735,10 +742,12 @@ function namedFileOwner(
 		covering.find((candidate) => candidate.id === preferred)?.id ??
 		covering[0]?.id ??
 		preferred;
-	if (!role) return null;
+	const definition = context.roles.find((candidate) => candidate.id === role);
+	if (!definition) return null;
+	const writable = named.filter((file) => mayWrite(definition, file.path));
 	return {
-		role,
-		reason: `The request names ${named.map((file) => file.path).join(', ')}, which ${roleName(context.roles, role)} may write.`,
+		role: definition.id,
+		reason: `The request names ${writable.map((file) => file.path).join(', ')}, which ${definition.name} may write.`,
 	};
 }
 
@@ -756,6 +765,9 @@ export interface HandoffContext {
 	/* Whether the agent wrote any file in this turn; `changed` is whether the
 	   session differs from its base at all. Absent reads as written. */
 	readonly edited?: boolean;
+	/* Whether this turn wrote the module's specification. Absent reads as
+	   written. */
+	readonly specWritten?: boolean;
 	/* Whether the turn ran the previous handoff's own prompt rather than an
 	   operator message. Absent reads as an operator message. */
 	readonly instructed?: boolean;
@@ -1241,7 +1253,8 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 	if (
 		finished &&
 		context.routing.session.kind === 'edit-module' &&
-		context.role === SPEC_OWNER_ROLE
+		context.role === SPEC_OWNER_ROLE &&
+		context.specWritten !== false
 	) {
 		const implementer =
 			routed !== context.role && roles.some((role) => role.id === routed)

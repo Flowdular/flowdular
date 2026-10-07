@@ -281,7 +281,7 @@ describe('module scaffolding', () => {
 		}
 	});
 
-	it('keeps author-owned translations and reports them as skipped', async () => {
+	it('merges the skeleton keys into author-written translations, the author wording winning', async () => {
 		const ws = await workspace();
 		try {
 			await mkdir(join(ws.root, 'modules/inventory/translations'), {
@@ -296,11 +296,16 @@ describe('module scaffolding', () => {
 				specPath,
 				apply: true,
 			});
-			expect(result.skipped).toEqual([
-				specPath,
-				'modules/inventory/translations/pl.json',
-			]);
-			expect(await read(ws.root, 'translations/pl.json')).toContain('Magazyn');
+			expect(result.skipped).toEqual([specPath]);
+			expect(result.merged).toEqual(['modules/inventory/translations/pl.json']);
+			const pl = JSON.parse(
+				await read(ws.root, 'translations/pl.json'),
+			) as Record<string, string>;
+			const en = JSON.parse(
+				await read(ws.root, 'translations/en.json'),
+			) as Record<string, string>;
+			expect(pl['module.name']).toBe('Magazyn');
+			expect(Object.keys(en).filter((key) => !(key in pl))).toEqual([]);
 			expect(await read(ws.root, 'translations/en.json')).toContain(
 				'Inventory Core',
 			);

@@ -29,6 +29,12 @@ describe('agent roles', () => {
 		).not.toContain('src/api/**');
 	});
 
+	it('lets the frontend engineer write the translation keys its screens read', () => {
+		expect(
+			findRole(DEFAULT_AGENT_ROLES, 'frontend-engineer').allowedPaths,
+		).toContain('translations/**');
+	});
+
 	it('round-trips a role document', () => {
 		const role = findRole(DEFAULT_AGENT_ROLES, 'frontend-engineer');
 		expect(parseRoleDocument(renderRoleDocument(role))).toEqual(role);

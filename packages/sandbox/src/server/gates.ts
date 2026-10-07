@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
-import { join, matchesGlob } from 'node:path';
+import { join, matchesGlob, relative } from 'node:path';
 import { inspectAutoReview } from './auto-review.ts';
 import { checkDeclaredDependencies } from './dependencies.ts';
 import { checkModuleRules } from './module-rules.ts';
@@ -589,7 +589,12 @@ async function runGate(
 			output: 'This gate does not apply to the session.',
 		};
 	}
-	const printable = `${invocation.command} ${invocation.args.join(' ')}`;
+	/* Shown in the gate card and the repair prompt, so a binary path is given
+	   relative to the module rather than as an absolute local path. */
+	const executable = invocation.command.includes('/')
+		? relative(invocation.cwd, invocation.command)
+		: invocation.command;
+	const printable = `${executable} ${invocation.args.join(' ')}`;
 	if (invocation.command.includes('/')) {
 		try {
 			await access(invocation.command);
@@ -600,7 +605,7 @@ async function runGate(
 				status: 'skipped',
 				durationMs: 0,
 				command: printable,
-				output: `${invocation.command} is not installed in this session workspace. The module's package.json must declare it as a devDependency.`,
+				output: `${executable} is not installed in this session workspace. The module's package.json must declare it as a devDependency.`,
 			};
 		}
 	}

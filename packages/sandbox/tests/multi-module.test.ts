@@ -556,6 +556,19 @@ describe('a turn targets one module', () => {
 		expect(chat.find((entry) => entry.kind === 'user')?.module).toBe('catalog');
 	});
 
+	it('tells the specialist that the specification of its module is approved', async () => {
+		const root = await workspace();
+		const sink = { instruction: '', prompt: '' };
+		const session = await twoModuleSession(root);
+		await drive(turnContext(root, recordingDriver(sink)), session.id, {
+			message: 'Show the VAT field on the catalog screen.',
+			module: 'catalog',
+		});
+		expect(sink.instruction).toContain(
+			'The operator approved the specification of catalog.core (spec/module.yaml) at its current text, so it is not awaiting approval.',
+		);
+	});
+
 	it('defaults to the primary module and keeps the handoff module afterwards', async () => {
 		const root = await workspace();
 		const sink = { instruction: '', prompt: '' };

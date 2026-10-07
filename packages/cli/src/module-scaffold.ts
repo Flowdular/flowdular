@@ -34,6 +34,8 @@ export interface ScaffoldResult {
 	readonly files: readonly string[];
 	/* Planned files that already existed and were left untouched. */
 	readonly skipped: readonly string[];
+	/* Author-written translation bundles the skeleton's keys were added to. */
+	readonly merged: readonly string[];
 }
 
 /* Installed dependencies are not module sources. A directory that holds only a
@@ -102,17 +104,61 @@ async function inspectTarget(
 	return { exists: true, present };
 }
 
+function jsonObject(source: string): Record<string, unknown> | null {
+	try {
+		const value: unknown = JSON.parse(source);
+		return value && typeof value === 'object' && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+/* A translation bundle the author wrote keeps every key it has and gains the
+   skeleton's, since the skeleton's client reads them; the author's wording
+   wins on a shared key. A bundle that is not a JSON object is left alone. */
+async function mergeAuthorBundles(
+	moduleDirectory: string,
+	planned: ReadonlyMap<string, string>,
+	target: TargetState,
+): Promise<ReadonlyMap<string, string>> {
+	const merged = new Map<string, string>();
+	for (const [path, source] of planned) {
+		if (!target.present.has(path) || !/^translations\/[^/]+\.json$/.test(path))
+			continue;
+		const authored = jsonObject(
+			await readFile(join(moduleDirectory, path), 'utf8'),
+		);
+		const generated = jsonObject(source);
+		if (authored && generated)
+			merged.set(
+				path,
+				`${JSON.stringify({ ...generated, ...authored }, null, '\t')}\n`,
+			);
+	}
+	return merged;
+}
+
 /* Every write is tracked so a failure midway leaves the directory exactly as it
    was found: nothing partial for the next attempt to trip over. */
 async function writeScaffold(
 	moduleDirectory: string,
 	files: ReadonlyMap<string, string>,
 	target: TargetState,
+	merged: ReadonlySet<string>,
 ): Promise<void> {
 	const written: string[] = [];
 	const createdDirectories: string[] = [];
+	const replaced = new Map<string, string>();
 	try {
 		for (const [path, source] of files) {
+			if (merged.has(path)) {
+				const absolute = join(moduleDirectory, path);
+				replaced.set(absolute, await readFile(absolute, 'utf8'));
+				await writeFile(absolute, source, 'utf8');
+				continue;
+			}
 			if (target.present.has(path)) continue;
 			const absolute = join(moduleDirectory, path);
 			const created = await mkdir(dirname(absolute), { recursive: true });
@@ -124,6 +170,8 @@ async function writeScaffold(
 		if (!target.exists) {
 			await rm(moduleDirectory, { recursive: true, force: true });
 		} else {
+			for (const [file, source] of replaced)
+				await writeFile(file, source, 'utf8');
 			for (const file of written) await rm(file, { force: true });
 			for (const directory of createdDirectories.reverse()) {
 				await rm(directory, { recursive: true, force: true });
@@ -193,6 +241,8 @@ export async function scaffoldModule(
 	let planned = planScaffold(spec, specSource);
 
 	if ((await sdkModules(workspace)).size) planned = sdkScaffold(planned);
+	const merged = await mergeAuthorBundles(moduleDirectory, planned, target);
+	planned = new Map([...planned, ...merged]);
 
 	let formatted = false;
 	if (request.apply) {
@@ -201,7 +251,7 @@ export async function scaffoldModule(
 			? await formatFiles(moduleDirectory, planned, formatter)
 			: planned;
 		formatted = formatter !== null;
-		await writeScaffold(moduleDirectory, files, target);
+		await writeScaffold(moduleDirectory, files, target, new Set(merged.keys()));
 	}
 
 	const moduleRelative = relative(workspace.root, moduleDirectory);
@@ -211,8 +261,9 @@ export async function scaffoldModule(
 		moduleDirectory: moduleRelative,
 		files: [...planned.keys()].map((path) => join(moduleRelative, path)),
 		skipped: [...planned.keys()]
-			.filter((path) => target.present.has(path))
+			.filter((path) => target.present.has(path) && !merged.has(path))
 			.map((path) => join(moduleRelative, path)),
+		merged: [...merged.keys()].map((path) => join(moduleRelative, path)),
 	};
 }
 

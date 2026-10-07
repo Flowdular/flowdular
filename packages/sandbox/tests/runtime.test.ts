@@ -1114,36 +1114,62 @@ describe('turn routing', () => {
 		).toBe('agentic-engineer');
 	});
 
-	it('sends a request that names module files to a role that may write them', () => {
+	it('sends an operator request that names module files to a role that may write them', () => {
 		const built = {
 			...base,
 			hasSpec: true,
 			hasManifest: true,
 			hasServer: true,
 			hasClient: true,
+			operatorMessage: true,
 		};
 		const translations = routeRole({
 			...built,
 			message:
 				'Change the wording: add the missing keys to translations/en.json and translations/pl.json.',
 		});
-		expect(translations).toMatchObject({ role: 'business-manager' });
-		expect(translations.reason).toContain(
-			'translations/en.json, translations/pl.json',
+		expect(translations).toMatchObject({
+			role: 'business-manager',
+			reason:
+				'The request names translations/en.json, translations/pl.json, which Business manager may write.',
+		});
+		/* A role that may write only some of the files is named with those. */
+		expect(
+			routeRole({
+				...built,
+				message: 'Wire src/client/View.tsrx to src/server/routes.ts.',
+			}),
+		).toMatchObject({
+			role: 'frontend-engineer',
+			reason:
+				'The request names src/client/View.tsrx, which Frontend engineer may write.',
+		});
+		/* Files in another module of the session do not choose the role for
+		   the active one. */
+		const twoModules = {
+			...built,
+			session: {
+				...SESSION,
+				modules: [
+					...SESSION.modules,
+					{ id: 'ledger.core', directory: 'ledger', kind: 'new' as const },
+				],
+			},
+		};
+		const message = 'Fix modules/ledger/translations/en.json.';
+		expect(routeRole({ ...twoModules, module: 'ledger', message }).role).toBe(
+			'business-manager',
 		);
+		expect(routeRole({ ...twoModules, module: 'profile', message }).role).toBe(
+			'backend-engineer',
+		);
+		/* A chained prompt names the previous turn's files, not a request. */
 		expect(
 			routeRole({
 				...built,
-				module: 'profile',
+				operatorMessage: false,
 				message:
-					'The screen shows stale totals; fix modules/profile/src/server/summary.ts.',
-			}).role,
-		).toBe('backend-engineer');
-		expect(
-			routeRole({
-				...built,
-				message:
-					'Show the same layout as modules/other/translations/en.json describes.',
+					'Change the wording: add the missing keys to translations/en.json.',
 			}).role,
 		).toBe('frontend-engineer');
 	});
@@ -1296,6 +1322,45 @@ describe('handoff planning', () => {
 		});
 		expect(self.role).toBe('backend-engineer');
 		expect(self.reason).toContain('named itself');
+	});
+
+	it('routes a chained prompt by module state, not by the files it names', () => {
+		const plan = planHandoff({
+			...base,
+			role: 'frontend-engineer',
+			routing: {
+				...routing,
+				hasManifest: true,
+				hasServer: true,
+				hasClient: true,
+				message:
+					'Continue this work as Frontend engineer.\n\nThe previous specialist reported: added src/server/summary.ts; show it on the screen in src/client/View.tsrx.',
+			},
+		});
+		expect(plan.kind).toBe('review');
+		expect(plan.role).toBe('frontend-engineer');
+	});
+
+	it('hands an edit on to the implementer only when the specification was written', () => {
+		const edit = {
+			...base,
+			routing: {
+				...routing,
+				session: { ...SESSION, kind: 'edit-module' as const },
+				hasManifest: true,
+				hasServer: true,
+				hasClient: true,
+			},
+			declared: { role: null, reason: 'Added the missing keys.' },
+		};
+		expect(planHandoff({ ...edit, specWritten: true })).toMatchObject({
+			kind: 'continue',
+			role: 'backend-engineer',
+		});
+		expect(planHandoff({ ...edit, specWritten: false })).toMatchObject({
+			kind: 'review',
+			role: 'business-manager',
+		});
 	});
 
 	it('stops for the operator while the specification is a draft', () => {

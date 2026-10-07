@@ -3,6 +3,7 @@ import {
 	mkdtemp,
 	readdir,
 	readFile,
+	rm,
 	stat,
 	writeFile,
 } from 'node:fs/promises';
@@ -98,6 +99,22 @@ acceptanceScenarios:
 	).rejects.toMatchObject({ code: 'ENOENT' });
 	// An explicit operator decision on this synthetic test spec, never a host module.
 	const approved = await approveSpecification(root, session);
+	/* A scaffold that fails gives the business manager's files back as they
+	   were: a second manifest with the same id makes the CLI refuse. */
+	const written = await readFile(
+		join(paths.modulePath, 'translations/pl.json'),
+		'utf8',
+	);
+	const clash = join(paths.workspace, 'modules/elsewhere/module.json');
+	await mkdir(join(paths.workspace, 'modules/elsewhere'), { recursive: true });
+	await writeFile(clash, JSON.stringify({ id: 'booking.core' }));
+	expect(await scaffoldFromSpec(context, approved.session)).toContain(
+		'The module scaffold for booking.core failed',
+	);
+	expect(
+		await readFile(join(paths.modulePath, 'translations/pl.json'), 'utf8'),
+	).toBe(written);
+	await rm(join(paths.workspace, 'modules/elsewhere'), { recursive: true });
 	const result = await scaffoldFromSpec(context, approved.session);
 	const manifest = JSON.parse(
 		await readFile(join(paths.modulePath, 'module.json'), 'utf8'),
