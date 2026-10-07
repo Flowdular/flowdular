@@ -1,7 +1,7 @@
 import { sdkModuleManifests } from '@flowdular/kernel/module-manifests';
 import type { Workspace } from './workspace.ts';
 
-export const SDK_VERSION = '0.6.4';
+export const SDK_VERSION = '0.6.5';
 const LIBRARIES = new Set([
 	'ai-provider',
 	'cli-protocol',
