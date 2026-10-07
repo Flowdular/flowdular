@@ -314,6 +314,56 @@ describe('module scaffolding', () => {
 		}
 	});
 
+	it('leaves an author bundle that is not a JSON object as it is', async () => {
+		const ws = await workspace();
+		try {
+			await mkdir(join(ws.root, 'modules/inventory/translations'), {
+				recursive: true,
+			});
+			const authored = '{ "module.name": "Magazyn", }\n';
+			await writeFile(
+				join(ws.root, 'modules/inventory/translations/pl.json'),
+				authored,
+			);
+			const result = await scaffoldModule(ws, {
+				id: 'inventory.core',
+				specPath,
+				apply: true,
+			});
+			expect(result.merged).toEqual([]);
+			expect(result.skipped).toContain(
+				'modules/inventory/translations/pl.json',
+			);
+			expect(await read(ws.root, 'translations/pl.json')).toBe(authored);
+		} finally {
+			await rm(ws.root, { recursive: true, force: true });
+		}
+	});
+
+	it('gives a merged author bundle back byte for byte when a later write fails', async () => {
+		const ws = await workspace();
+		const translations = join(ws.root, 'modules/inventory/translations');
+		try {
+			await mkdir(translations, { recursive: true });
+			const authored = Buffer.from(
+				'{\n\t"module.name": "Stock \xff"\n}\n',
+				'latin1',
+			);
+			await writeFile(join(translations, 'en.json'), authored);
+			await mkdir(join(translations, 'pl.json'));
+			await expect(
+				scaffoldModule(ws, { id: 'inventory.core', specPath, apply: true }),
+			).rejects.toMatchObject({ code: 'EEXIST' });
+			expect(await readFile(join(translations, 'en.json'))).toEqual(authored);
+			expect(await listTree(join(ws.root, 'modules/inventory'))).toEqual([
+				'spec/module.yaml',
+				'translations/en.json',
+			]);
+		} finally {
+			await rm(ws.root, { recursive: true, force: true });
+		}
+	});
+
 	it('refuses a directory that already holds module sources', async () => {
 		const ws = await workspace();
 		try {

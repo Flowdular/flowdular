@@ -126,7 +126,7 @@ Do not write TypeScript, module.json or package.json. Hand a complete specificat
 			'package.json',
 		],
 		gates: ['dependencies', 'module-rules', 'typecheck', 'tests', 'format'],
-		handoff: ['backend-engineer', 'ux-designer'],
+		handoff: ['backend-engineer', 'ux-designer', 'business-manager'],
 		instruction: `You own src/client: contributions, screens, forms, state and API calls. Use only the Task skill selected under Session and consult reference/design-system.md for visual changes. Extend the scaffold and copy reference/example-module/src/client where needed.
 
 Keep fetch calls in api.ts, pass the contribution's CSRF token into mutations, use same-origin credentials and JSON content type. Handle error envelopes. Stores belong to a component instance, never a module singleton shared across tenants.

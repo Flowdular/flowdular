@@ -1363,6 +1363,20 @@ describe('handoff planning', () => {
 		});
 	});
 
+	it('lets the frontend hand bundle wording to the business manager with its request', () => {
+		const plan = planHandoff({
+			...base,
+			role: 'frontend-engineer',
+			declared: {
+				role: 'business-manager',
+				reason:
+					'reword the status labels in translations/en.json and translations/pl.json',
+			},
+		});
+		expect(plan).toMatchObject({ kind: 'continue', role: 'business-manager' });
+		expect(plan.prompt).toContain('reword the status labels');
+	});
+
 	it('stops for the operator while the specification is a draft', () => {
 		const plan = planHandoff({ ...base, specApproved: false });
 		expect(plan.kind).toBe('approval');

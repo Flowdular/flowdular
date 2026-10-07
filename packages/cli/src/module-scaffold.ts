@@ -1,6 +1,7 @@
 import { sdkModules, sdkScaffold } from './sdk.ts';
 import {
 	access,
+	lstat,
 	mkdir,
 	readdir,
 	readFile,
@@ -127,9 +128,9 @@ async function mergeAuthorBundles(
 	for (const [path, source] of planned) {
 		if (!target.present.has(path) || !/^translations\/[^/]+\.json$/.test(path))
 			continue;
-		const authored = jsonObject(
-			await readFile(join(moduleDirectory, path), 'utf8'),
-		);
+		const file = join(moduleDirectory, path);
+		if (!(await lstat(file)).isFile()) continue;
+		const authored = jsonObject(await readFile(file, 'utf8'));
 		const generated = jsonObject(source);
 		if (authored && generated)
 			merged.set(
@@ -150,12 +151,12 @@ async function writeScaffold(
 ): Promise<void> {
 	const written: string[] = [];
 	const createdDirectories: string[] = [];
-	const replaced = new Map<string, string>();
+	const replaced = new Map<string, Buffer>();
 	try {
 		for (const [path, source] of files) {
 			if (merged.has(path)) {
 				const absolute = join(moduleDirectory, path);
-				replaced.set(absolute, await readFile(absolute, 'utf8'));
+				replaced.set(absolute, await readFile(absolute));
 				await writeFile(absolute, source, 'utf8');
 				continue;
 			}
@@ -170,8 +171,7 @@ async function writeScaffold(
 		if (!target.exists) {
 			await rm(moduleDirectory, { recursive: true, force: true });
 		} else {
-			for (const [file, source] of replaced)
-				await writeFile(file, source, 'utf8');
+			for (const [file, source] of replaced) await writeFile(file, source);
 			for (const file of written) await rm(file, { force: true });
 			for (const directory of createdDirectories.reverse()) {
 				await rm(directory, { recursive: true, force: true });

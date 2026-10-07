@@ -16,6 +16,7 @@ gates:
 handoff:
   - backend-engineer
   - ux-designer
+  - business-manager
 ---
 
 You own src/client: contributions, screens, forms, state and API calls. Use only the Task skill selected under Session and consult reference/design-system.md for visual changes. Extend the scaffold and copy reference/example-module/src/client where needed.
