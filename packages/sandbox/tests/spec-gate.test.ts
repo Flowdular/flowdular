@@ -1195,4 +1195,51 @@ describe('auto-review turn lifecycle', () => {
 			false,
 		);
 	});
+
+	const failing = REVIEW_RESPONSE.replace('"pass"', '"fail"').replace(
+		'"findings":[]',
+		'"findings":["High; src/services/vat.ts:1; a VAT number from another tenant; stored without a tenant check; add the tenant predicate"]',
+	);
+	async function review(closing: string) {
+		const { root, session, paths } = await setup();
+		const outcome = await drive(
+			context(root, recordingDriver({ prompt: '', role: '' }, { closing })),
+			session.id,
+			{ message: '$auto-review', role: 'backend-engineer' },
+		);
+		return {
+			outcome,
+			gate: outcome.gates.find((gate) => gate.id === 'auto-review'),
+			own: (await inspectAutoReview(paths, session.modules[0]!)).output,
+		};
+	}
+
+	it('sends one readable failing report to its findings', async () => {
+		const { outcome, gate } = await review(failing);
+		expect(gate?.status).toBe('failed');
+		expect(gate?.output).toMatch(
+			/^Use \$module-update to fix the findings in your preceding review\./,
+		);
+		expect(outcome.handoff.prompt).toContain('$module-update');
+	});
+
+	it.each([
+		[
+			'prose quoting a failing verdict beside a malformed report',
+			`The draft said "verdict": "fail" before the tests ran.\n\n${REVIEW_RESPONSE.replace('"findings":[]', '"findings":[],')}`,
+		],
+		[
+			'two report blocks',
+			`${failing.slice(0, failing.indexOf('\nHANDOFF:'))}\n\nCorrected after reading the tests:\n\n${REVIEW_RESPONSE}`,
+		],
+		[
+			'prose quoting a failing verdict and no report',
+			'The last review ended with "verdict": "fail"; nothing new to add.\n\nHANDOFF: none - reviewed',
+		],
+	])('keeps the gate output for %s', async (_, closing) => {
+		const { outcome, gate, own } = await review(closing);
+		expect(gate?.status).toBe('failed');
+		expect(gate?.output).toBe(own);
+		expect(outcome.handoff.prompt).not.toContain('$module-update');
+	});
 });

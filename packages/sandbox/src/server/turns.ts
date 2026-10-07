@@ -61,6 +61,7 @@ import {
 import type { PlatformClient } from './platform-client.ts';
 import { questionsInstruction, readQuestions } from './questions.ts';
 import { listSkills, writeAgentPointer } from './reference.ts';
+import { readReviewReport } from './review-report.ts';
 import {
 	materializeSampleData,
 	sampleDataInstruction,
@@ -1107,7 +1108,7 @@ export async function* runTurn(
 		const index = gates.findIndex(
 			(gate) => gate.id === 'auto-review' && gate.status === 'failed',
 		);
-		if (index >= 0 && /"verdict"\s*:\s*"fail"/.test(closing)) {
+		if (index >= 0 && readReviewReport(closing)?.report.verdict === 'fail') {
 			gates[index] = {
 				...gates[index]!,
 				output:
