@@ -139,6 +139,17 @@ export function mergeSteps(
 	);
 }
 
+/* The open view receives session records from the turn stream and from
+   reloads that may finish out of order, and keeps the one written last. */
+export function newerSession(
+	shown: SandboxSession | undefined,
+	incoming: SandboxSession,
+): SandboxSession {
+	return shown?.id === incoming.id && shown.updatedAt > incoming.updatedAt
+		? shown
+		: incoming;
+}
+
 export function mergeEntries(
 	existing: readonly ChatEntry[],
 	incoming: readonly ChatEntry[],

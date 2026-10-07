@@ -1,5 +1,5 @@
 import { t } from '@flowdular/client/i18n';
-import type { HandoffPlan } from '../server/sessions.ts';
+import type { HandoffPlan, SandboxSession } from '../server/sessions.ts';
 import type { EjectStep } from './api.ts';
 
 const ROLES = new Set([
@@ -49,6 +49,14 @@ export function roleLabel(id: string, fallback = id): string {
 
 export function gateLabel(id: string): string {
 	return GATES.has(id) ? t('sandbox.gates.name.' + id) : id;
+}
+
+export function sessionStateLabel(
+	session: Pick<SandboxSession, 'state' | 'ejectedAt'>,
+): string {
+	return session.ejectedAt
+		? t('sandbox.session.state.delivered')
+		: t('sandbox.session.state.' + session.state);
 }
 
 export function handoffLabel(handoff: HandoffPlan): string {

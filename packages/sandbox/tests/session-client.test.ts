@@ -76,6 +76,7 @@ describe('session turn transport', () => {
 	function handlers() {
 		return {
 			onEntry: vi.fn(),
+			onSession: vi.fn(),
 			onCompleted: vi.fn(),
 			onEnded: vi.fn(),
 			onFailed: vi.fn(),
@@ -120,6 +121,29 @@ describe('session turn transport', () => {
 		streamTurn('session', input, events);
 		await vi.waitFor(() => expect(events.onEnded).toHaveBeenCalledTimes(1));
 		expect(events.onCompleted).toHaveBeenCalledOnce();
+	});
+	it('hands every session record the chain writes to the view, in order', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(
+					new Response(
+						[
+							'event: session\ndata: {"id":"s","state":"editing","updatedAt":2}\n\n',
+							'event: completed\ndata: {}\n\n',
+							'event: session\ndata: {"id":"s","state":"previewing","updatedAt":3}\n\n',
+						].join(''),
+						{ headers: { 'content-type': 'text/event-stream' } },
+					),
+				),
+		);
+		const events = handlers();
+		streamTurn('session', input, events);
+		await vi.waitFor(() => expect(events.onEnded).toHaveBeenCalledOnce());
+		expect(
+			events.onSession.mock.calls.map(([session]) => session.state),
+		).toEqual(['editing', 'previewing']);
 	});
 	it('does not report an aborted connection as a finished or failed turn', async () => {
 		let rejectFetch!: (reason: Error) => void;

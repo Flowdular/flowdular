@@ -121,6 +121,10 @@ export interface TurnInput {
 	readonly module?: string;
 	readonly driver?: string;
 	readonly signal?: AbortSignal;
+	/* Set by a caller that runs a `continue` handoff as its next turn. Such a
+	   turn leaves the session editing, and the caller writes the gate verdict
+	   if its chain stops there. */
+	readonly chained?: boolean;
 }
 
 /* A diff of one draft module, named by the module directory it belongs to. */
@@ -1240,7 +1244,9 @@ export async function* runTurn(
 				? 'awaiting-approval'
 				: handoff.kind === 'question'
 					? 'awaiting-answers'
-					: gateOutcomeState(gates, diffs.length > 0),
+					: handoff.kind === 'continue' && input.chained
+						? 'editing'
+						: gateOutcomeState(gates, diffs.length > 0),
 		role: roleId,
 		driver: driverId,
 	});

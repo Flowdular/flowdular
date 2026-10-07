@@ -72,6 +72,7 @@ import {
 	latestHandoff,
 	mergeEntries,
 	mergeSteps,
+	newerSession,
 	signalReady,
 	sessionIdFromUrl,
 	type AnswersRefusal,
@@ -197,7 +198,10 @@ export function App(props?: RenderRouteProps) @{
 			return;
 		}
 		sandbox.store.act((transaction) => {
-			transaction.set(sandbox.state.view, loaded);
+			transaction.set(sandbox.state.view, {
+				...loaded,
+				session: newerSession(currentSession() ?? undefined, loaded.session),
+			});
 			transaction.set(sandbox.state.liveEntries, loaded.chat);
 		}, 'sandbox/refresh');
 	};
@@ -217,6 +221,15 @@ export function App(props?: RenderRouteProps) @{
 				sandbox.state.liveEntries,
 				(current) => mergeEntries(current, [entry]),
 				'sandbox/entry',
+			);
+		},
+		onSession: (session) => {
+			if (sandbox.store.get(sandbox.state.activeSessionId) !== id) return;
+			sandbox.store.update(
+				sandbox.state.view,
+				(view) =>
+					view && { ...view, session: newerSession(view.session, session) },
+				'sandbox/session',
 			);
 		},
 		onCompleted: () => {

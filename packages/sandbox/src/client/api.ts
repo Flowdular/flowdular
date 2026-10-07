@@ -741,6 +741,8 @@ export interface TurnOutcomeView {
 
 export interface TurnHandlers {
 	readonly onEntry: (entry: ChatEntry) => void;
+	/* The session record, each time the sandbox writes it while the chain runs. */
+	readonly onSession: (session: SandboxSession) => void;
 	/* One turn of the chain finished; more may follow on the same stream. */
 	readonly onCompleted: (outcome: TurnOutcomeView) => void;
 	/* The chain is over and nothing runs for this session any more. */
@@ -754,6 +756,9 @@ async function consumeTurnStream(
 ): Promise<void> {
 	await readEvents(response, (event, payload) => {
 		if (event === 'entry') handlers.onEntry(payload as unknown as ChatEntry);
+		if (event === 'session') {
+			handlers.onSession(payload as unknown as SandboxSession);
+		}
 		if (event === 'completed') {
 			handlers.onCompleted(payload as unknown as TurnOutcomeView);
 		}

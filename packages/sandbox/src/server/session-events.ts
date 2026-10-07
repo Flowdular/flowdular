@@ -1,3 +1,4 @@
+import type { SandboxSession } from './sessions.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
 /* Change notifications for the open views of one session, so a tab follows
@@ -45,9 +46,55 @@ export function watchSession(
 	};
 }
 
-/* Called on every record write and transcript append, so a session nobody
-   watches costs one map lookup. */
-export function notifySessionChanged(sessionId: string): void {
+/* A running chain's turn stream carries every record its session writes, so
+   the view it feeds shows the state the session is in. In process only, one
+   per running chain, so it is not bounded like the views. */
+export type SessionRecordListener = (session: SandboxSession) => void;
+
+const RECORD_SLOT = Symbol.for('flowdular.sandbox.session-records');
+type RecordListeners = Map<string, Set<SessionRecordListener>>;
+
+export function followSessionRecords(
+	sessionId: string,
+	listener: SessionRecordListener,
+): () => void {
+	const state = globalThis as unknown as Record<
+		symbol,
+		RecordListeners | undefined
+	>;
+	const listeners = (state[RECORD_SLOT] ??= new Map());
+	let set = listeners.get(sessionId);
+	if (!set) {
+		set = new Set();
+		listeners.set(sessionId, set);
+	}
+	set.add(listener);
+	return () => {
+		set.delete(listener);
+		if (set.size === 0 && listeners.get(sessionId) === set) {
+			listeners.delete(sessionId);
+		}
+	};
+}
+
+/* Called on every record write, with the record, and on every transcript
+   append, so a session nobody watches costs two map lookups. */
+export function notifySessionChanged(
+	sessionId: string,
+	record?: SandboxSession,
+): void {
+	if (record) {
+		const listeners = (
+			globalThis as unknown as Record<symbol, RecordListeners | undefined>
+		)[RECORD_SLOT]?.get(sessionId);
+		for (const listener of listeners ?? []) {
+			try {
+				listener(record);
+			} catch {
+				/* Isolated like a watcher. */
+			}
+		}
+	}
 	const watchers = (
 		globalThis as unknown as Record<symbol, Watchers | undefined>
 	)[SLOT]?.get(sessionId);
