@@ -5,6 +5,7 @@ import {
 	readdir,
 	readFile,
 	rm,
+	symlink,
 	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -335,6 +336,30 @@ describe('module scaffolding', () => {
 				'modules/inventory/translations/pl.json',
 			);
 			expect(await read(ws.root, 'translations/pl.json')).toBe(authored);
+		} finally {
+			await rm(ws.root, { recursive: true, force: true });
+		}
+	});
+
+	it('never writes through a symlinked author bundle', async () => {
+		const ws = await workspace();
+		try {
+			const translations = join(ws.root, 'modules/inventory/translations');
+			await mkdir(translations, { recursive: true });
+			const outside = join(ws.root, 'outside.json');
+			const authored = '{\n\t"module.name": "Stock"\n}\n';
+			await writeFile(outside, authored);
+			await symlink(outside, join(translations, 'en.json'));
+			const result = await scaffoldModule(ws, {
+				id: 'inventory.core',
+				specPath,
+				apply: true,
+			});
+			expect(result.merged).toEqual([]);
+			expect(result.skipped).toContain(
+				'modules/inventory/translations/en.json',
+			);
+			expect(await readFile(outside, 'utf8')).toBe(authored);
 		} finally {
 			await rm(ws.root, { recursive: true, force: true });
 		}

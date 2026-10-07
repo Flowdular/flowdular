@@ -788,8 +788,9 @@ async function translationKeyCheck(module: string): Promise<GateResult> {
 	};
 }
 
-/* The frontend engineer as run 5 had it, without translations/: the scope
-   rules these tests cover are about a role naming files it may not write. */
+/* The frontend engineer as run 5 had it, without translations/ and without
+   the business manager to hand to: the scope rules these tests cover are
+   about a role naming files it may not write. */
 const RUN5_ROLES = DEFAULT_AGENT_ROLES.map((role) =>
 	role.id === 'frontend-engineer'
 		? {
@@ -797,6 +798,7 @@ const RUN5_ROLES = DEFAULT_AGENT_ROLES.map((role) =>
 				allowedPaths: role.allowedPaths.filter(
 					(path) => path !== 'translations/**',
 				),
+				handoff: role.handoff.filter((id) => id !== 'business-manager'),
 			}
 		: role,
 );
