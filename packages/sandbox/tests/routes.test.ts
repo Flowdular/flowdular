@@ -1703,6 +1703,47 @@ describe('detached turns', () => {
 		).toBe(false);
 	});
 
+	it('builds the screens a repaired turn handed on before the review', async () => {
+		const prompts: string[] = [];
+		const roles: string[] = [];
+		/* Run 7: the backend hands the client on, its tests fail, and the
+		   repair turn names nobody. The review used to run on the scaffold. */
+		const scripted = scriptedDriver(
+			[
+				'HANDOFF: frontend-engineer - the server API is ready; the client needs the list',
+				'HANDOFF: none - the failing tests are fixed; the client was already handed on',
+				'HANDOFF: none - the screens are built',
+			],
+			prompts,
+		);
+		await approvedChain(
+			await workspace(),
+			{
+				...scripted,
+				async *run(request) {
+					roles.push(request.role);
+					yield* scripted.run(request);
+				},
+			},
+			{
+				gate: (id) =>
+					id === 'auto-review'
+						? { failed: true, output: 'Run $auto-review for this module.' }
+						: { failed: id === 'tests' && prompts.length === 1, output: '' },
+			},
+		);
+		expect(roles).toEqual([
+			'backend-engineer',
+			'backend-engineer',
+			'frontend-engineer',
+			'frontend-engineer',
+		]);
+		expect(prompts[2]).toContain('Continue this work as Frontend engineer.');
+		expect(prompts[2]).toContain('the client needs the list');
+		expect(prompts[2]).not.toContain('$auto-review');
+		expect(prompts[3]).toContain('$auto-review');
+	});
+
 	it('refuses to delete a running session unless told to stop it', async () => {
 		const root = await workspace();
 		const runtime = fakeRuntime(
@@ -2529,6 +2570,31 @@ describe('transcript redaction on the stored and the live path', () => {
 			reason: reason(REDACTED),
 		});
 		expect(completedOf(stream).handoff.reason).toBe(reason(REDACTED));
+	});
+
+	it('redacts the handoff a gate repair carries', async () => {
+		const reason = (url: string) => `the client reads ${url}`;
+		const { stored, stream } = await turnWith(
+			[
+				{
+					type: 'assistant.message',
+					text: `Built.\n\nHANDOFF: frontend-engineer - ${reason(LEAKED)}`,
+				},
+			],
+			async (input) =>
+				(await passing(input)).map((gate) =>
+					gate.id === 'tests'
+						? { ...gate, status: 'failed' as const, output: 'FAIL' }
+						: gate,
+				),
+		);
+		const pending = { role: 'frontend-engineer', reason: reason(REDACTED) };
+		expect(
+			stored.findLast((entry) => entry.handoff)?.handoff?.pending,
+		).toMatchObject(pending);
+		expect(
+			(completedOf(stream).handoff as { pending?: unknown }).pending,
+		).toMatchObject(pending);
 	});
 
 	it('redacts a turn failure sent to open views', async () => {

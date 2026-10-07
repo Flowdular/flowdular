@@ -74,9 +74,19 @@ export interface HandoffPlan {
 	/* On a gate repair: the role whose work the repairs follow. A failure
 	   that names no file goes back to it. */
 	readonly author?: string;
+	/* On a gate repair: the specialist the repaired turn handed on to. It
+	   takes over once only the review is left to pass, so the review never
+	   runs before that specialist's part. */
+	readonly pending?: PendingHandoff;
 	/* The draft module directory the next turn works in. Absent on handoffs
 	   written before a session could target one module of several. */
 	readonly module?: string;
+}
+
+export interface PendingHandoff {
+	readonly role: string;
+	readonly reason: string;
+	readonly module: string;
 }
 
 /* One draft module of a session. The directory is the module directory under
@@ -387,6 +397,14 @@ export function redactHandoff(handoff: HandoffPlan): HandoffPlan {
 		reason: redactText(handoff.reason),
 		prompt: redactText(handoff.prompt),
 		...(handoff.gates ? { gates: handoff.gates.map(redactGate) } : {}),
+		...(handoff.pending
+			? {
+					pending: {
+						...handoff.pending,
+						reason: redactText(handoff.pending.reason),
+					},
+				}
+			: {}),
 	};
 }
 
