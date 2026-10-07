@@ -345,10 +345,14 @@ async function translationIssues(
 		for (const [key, path] of [...missing].sort(([left], [right]) =>
 			left.localeCompare(right),
 		)) {
+			const localKey = key.slice(prefix.length);
+			const prefixed = referenceKeys.has(key)
+				? ` The bundle has "${key}", but bundle keys leave out the "${prefix}" prefix.`
+				: '';
 			issues.push(
 				issue(
 					'TRANSLATION_KEY_MISSING',
-					`Translation key "${key}" is used by the client but absent from translations/${reference[0]}.json.`,
+					`Translation key "${localKey}" is missing from translations/${reference[0]}.json; the client reads it as t('${key}').${prefixed}`,
 					path,
 				),
 			);

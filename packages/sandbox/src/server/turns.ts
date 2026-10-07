@@ -9,6 +9,7 @@ import {
 	readdir,
 	rm,
 	stat,
+	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
@@ -188,6 +189,7 @@ async function routingContext(
 	context: TurnContext,
 	session: SandboxSession,
 	paths: SessionPaths,
+	module: SessionModule,
 	modulePath: string,
 	message: string,
 	entries: readonly ChatEntry[],
@@ -198,6 +200,7 @@ async function routingContext(
 		paths,
 		roles: context.roles,
 		message,
+		module: module.directory,
 		hasSpec: await exists(join(modulePath, 'spec/module.yaml')),
 		hasManifest: await exists(join(modulePath, 'module.json')),
 		hasServer: await hasServerSurface(modulePath),
@@ -345,10 +348,13 @@ async function listFiles(root: string, directory = root): Promise<string[]> {
 }
 
 /* The scaffold refuses a target directory that holds anything but the
-   specification, while a business manager may already have written
-   translations there. Those files step aside for the scaffold and come back
+   specification and translations, while a business manager may write other
+   files under spec/. Those files step aside for the scaffold and come back
    over the skeleton, so what the specialist wrote wins over the generated
-   placeholder. */
+   placeholder. A translation bundle is merged key by key instead, here and
+   not by the application's CLI, which may predate that merge: the skeleton's
+   client reads the skeleton's keys, and a bundle without them paints raw keys
+   and fails the translation gate. */
 async function withScaffoldClearance<T>(
 	modulePath: string,
 	run: () => Promise<T>,
@@ -370,9 +376,42 @@ async function withScaffoldClearance<T>(
 		return await run();
 	} finally {
 		for (const file of extras) {
-			await cp(join(stash, file), join(modulePath, file), { force: true });
+			await restoreStashed(stash, modulePath, file);
 		}
 		await rm(stash, { recursive: true, force: true });
+	}
+}
+
+async function restoreStashed(
+	stash: string,
+	modulePath: string,
+	file: string,
+): Promise<void> {
+	const target = join(modulePath, file);
+	if (/^translations[\\/][^\\/]+\.json$/.test(file)) {
+		const generated = await readJsonObject(target);
+		const written = await readJsonObject(join(stash, file));
+		if (generated && written) {
+			await writeFile(
+				target,
+				`${JSON.stringify({ ...generated, ...written }, null, '\t')}\n`,
+			);
+			return;
+		}
+	}
+	await cp(join(stash, file), target, { force: true });
+}
+
+async function readJsonObject(
+	path: string,
+): Promise<Record<string, unknown> | null> {
+	try {
+		const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+		return value && typeof value === 'object' && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: null;
+	} catch {
+		return null;
 	}
 }
 
@@ -626,17 +665,19 @@ export async function* runTurn(
 	const requested = input.role ?? 'auto';
 	const routed =
 		requested === 'auto'
-			? routeRole(
-					await routingContext(
+			? routeRole({
+					...(await routingContext(
 						context,
 						session,
 						paths,
+						active,
 						modulePath,
 						message,
 						transcript,
 						gate.approved,
-					),
-				)
+					)),
+					operatorMessage: true,
+				})
 			: { role: requested, reason: '' };
 	const roleId = routed.role;
 	const role = findRole(context.roles, roleId);
@@ -832,6 +873,11 @@ export async function* runTurn(
 			...(hasSdk
 				? [
 						'Read the actual installed SDK under reference/sdk/packages and reference/sdk/modules. Its package.json maps public exports. These are readable copies inside the workspace; do not follow external SDK symlinks. Search only the API needed for the current task.',
+					]
+				: []),
+			...(gate.approved === true
+				? [
+						`The operator approved the specification of ${active.id} (spec/module.yaml) at its current text, so it is not awaiting approval. Change it only when the request asks for a specification change.`,
 					]
 				: []),
 			'reference/ is read-only. Consult only the code and references needed for this task; do not preload its catalog.',
@@ -1136,6 +1182,7 @@ export async function* runTurn(
 			context,
 			session,
 			paths,
+			active,
 			modulePath,
 			message,
 			[],
@@ -1148,6 +1195,9 @@ export async function* runTurn(
 		failed,
 		changed: diffs.length > 0,
 		edited: pathResult.written.length > 0,
+		specWritten: pathResult.written.some((path) =>
+			path.startsWith(`modules/${active.directory}/spec/`),
+		),
 		instructed,
 		specApproved: closingGate.approved,
 		brief: session.brief || message,

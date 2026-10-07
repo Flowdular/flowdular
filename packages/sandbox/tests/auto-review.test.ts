@@ -220,6 +220,28 @@ it('fails the real tests gate when the module has no tests', async () => {
 	expect(results).toHaveLength(1);
 	expect(results[0]!.status).toBe('failed');
 	expect(results[0]!.output).toContain('No test files found');
+	expect(results[0]!.command).toBe(
+		'node_modules/.bin/vitest run --passWithNoTests=false',
+	);
+});
+
+it('names a missing gate binary relative to the module, not by its local path', async () => {
+	const { paths, module, directory } = await fixture();
+	const session = {
+		modules: [module],
+	} as unknown as DeliveryContext['session'];
+	const [typecheck] = await runGates({
+		workspaceRoot: paths.workspace,
+		paths,
+		session,
+		gates: ['typecheck'],
+	});
+	expect(typecheck).toMatchObject({
+		status: 'skipped',
+		command: 'node_modules/.bin/tsrx-tsc --noEmit -p tsconfig.json',
+	});
+	expect(typecheck!.output).toMatch(/^node_modules\/\.bin\/tsrx-tsc is not/);
+	expect(JSON.stringify(typecheck)).not.toContain(directory);
 });
 
 it('does not let an empty delivery plan omit required gates', async () => {

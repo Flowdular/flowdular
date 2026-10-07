@@ -532,6 +532,45 @@ describe('approving the specification of a change', () => {
 		expect(sink.prompt).toContain('VAT');
 	});
 
+	it.each([
+		['spec/decisions.md', { kind: 'continue', role: 'backend-engineer' }],
+		['translations/en.json', { kind: 'review', role: 'business-manager' }],
+	])(
+		'after the approval, plans the turn that follows a business manager writing %s',
+		async (file, expected) => {
+			const root = await workspace();
+			const sink = { prompt: '', role: '' };
+			const driver = recordingDriver(sink, {
+				file: `modules/parties/${file}`,
+				content: file.endsWith('.json')
+					? '{"party.vat":"VAT number"}\n'
+					: 'A VAT number is optional.\n',
+			});
+			const context = turnContext(root, driver);
+			const call = api(fakeRuntime(root, driver));
+			const session = await editSession(root);
+			await writeFile(draftSpecPath(root, session), CHANGED_SPEC, 'utf8');
+			const approved = await call(
+				'POST',
+				`/sandbox/api/sessions/${session.id}/approve`,
+				{
+					body: {
+						module: 'parties',
+						specHash: await reviewedHash(draftSpecPath(root, session)),
+					},
+				},
+			);
+			expect(approved.status).toBe(200);
+
+			const outcome = await drive(context, session.id, {
+				message: 'Note the VAT rule.',
+				role: 'business-manager',
+			});
+			expect(sink.role).toBe('business-manager');
+			expect(outcome.handoff).toMatchObject(expected);
+		},
+	);
+
 	it('re-opens the gate when the specification changes after the approval', async () => {
 		const root = await workspace();
 		const sink = { prompt: '', role: '' };

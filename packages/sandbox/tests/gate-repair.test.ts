@@ -282,8 +282,7 @@ async function moduleSchema(module: string): Promise<GateResult> {
 							issues: [
 								{
 									code: 'TRANSLATION_KEY_MISSING',
-									message:
-										'Translation key "equipment.page.title" is used by the client but absent from translations/en.json.',
+									message: `Translation key "page.title" is missing from translations/en.json; the client reads it as t('equipment.page.title').`,
 									path: 'src/client/EquipmentView.tsrx',
 									severity: 'error',
 								},
@@ -572,7 +571,7 @@ describe('gate repair, replaying the recorded equipment session', () => {
 
 		const prompt = seen.at(-1)!.prompt;
 		expect(prompt).toContain(
-			'TRANSLATION_KEY_MISSING modules/equipment/module.json src/client/EquipmentView.tsrx: Translation key "equipment.page.title" is used by the client but absent from translations/en.json.',
+			`TRANSLATION_KEY_MISSING modules/equipment/module.json src/client/EquipmentView.tsrx: Translation key "page.title" is missing from translations/en.json; the client reads it as t('equipment.page.title').`,
 		);
 		expect(prompt).not.toContain('"protocolVersion"');
 		expect(prompt).not.toContain('"reports"');
@@ -593,8 +592,7 @@ describe('gate repair, replaying the recorded equipment session', () => {
 						file: 'modules/equipment/module.json',
 						code: 'TRANSLATION_KEY_MISSING',
 						path: 'src/client/EquipmentView.tsrx',
-						message:
-							'Translation key "equipment.page.title" is used by the client but absent from translations/en.json.',
+						message: `Translation key "page.title" is missing from translations/en.json; the client reads it as t('equipment.page.title').`,
 					},
 				],
 			},
@@ -753,7 +751,7 @@ async function translationKeyCheck(module: string): Promise<GateResult> {
 			if (!(match[1]! in bundle))
 				issues.push({
 					code: 'TRANSLATION_KEY_MISSING',
-					message: `Translation key "equipment.${match[1]}" is used by the client but absent from translations/en.json.`,
+					message: `Translation key "${match[1]}" is missing from translations/en.json; the client reads it as t('equipment.${match[1]}').`,
 					path: `src/client/${file}`,
 					severity: 'error',
 				});
@@ -790,12 +788,27 @@ async function translationKeyCheck(module: string): Promise<GateResult> {
 	};
 }
 
+/* The frontend engineer as run 5 had it, without translations/ and without
+   the business manager to hand to: the scope rules these tests cover are
+   about a role naming files it may not write. */
+const RUN5_ROLES = DEFAULT_AGENT_ROLES.map((role) =>
+	role.id === 'frontend-engineer'
+		? {
+				...role,
+				allowedPaths: role.allowedPaths.filter(
+					(path) => path !== 'translations/**',
+				),
+				handoff: role.handoff.filter((id) => id !== 'business-manager'),
+			}
+		: role,
+);
+
 function run5Context(
 	root: string,
 	module: string,
 	driver: CodingAgentDriver,
 	ran: string[][],
-	roles = DEFAULT_AGENT_ROLES,
+	roles = RUN5_ROLES,
 ): TurnContext {
 	return {
 		...turnContext(root, module, driver),
@@ -904,7 +917,7 @@ describe('handoff scope, replaying the recorded run 5 frontend turn', () => {
 				roles,
 			}),
 			[],
-			DEFAULT_AGENT_ROLES.filter((role) => role.id !== 'business-manager'),
+			RUN5_ROLES.filter((role) => role.id !== 'business-manager'),
 		);
 
 		const client = await drive(context, session.id, {
@@ -1245,13 +1258,14 @@ describe('repair routing and the role write paths', () => {
 	});
 
 	it('never hands the work a handoff line names to a role that may not write it, whichever choice named that role', () => {
+		const run5 = { ...base, routing: { ...base.routing, roles: RUN5_ROLES } };
 		const gates = [
 			failed({ id: 'module-rules', module: 'equipment', status: 'passed' }),
 		];
 		/* The frontend engineer may not hand to the business manager, so the
 		   state routing chose the backend engineer. */
 		const routed = planHandoff({
-			...base,
+			...run5,
 			gates,
 			declared: {
 				role: 'business-manager',
@@ -1266,7 +1280,7 @@ describe('repair routing and the role write paths', () => {
 		expect(routed.prompt).toContain('add the listed keys');
 		expect(
 			planHandoff({
-				...base,
+				...run5,
 				gates,
 				declared: {
 					role: 'ux-designer',
@@ -1277,13 +1291,13 @@ describe('repair routing and the role write paths', () => {
 
 		/* Work named in another module of the session is done there. */
 		const elsewhere = planHandoff({
-			...base,
+			...run5,
 			routing: {
-				...base.routing,
+				...run5.routing,
 				session: {
-					...base.routing.session,
+					...run5.routing.session,
 					modules: [
-						...base.routing.session.modules,
+						...run5.routing.session.modules,
 						{ id: 'rooms.core', directory: 'rooms', kind: 'new' },
 					],
 				} as unknown as SandboxSession,
@@ -1310,7 +1324,7 @@ describe('repair routing and the role write paths', () => {
 			],
 		] as const)
 			expect(
-				planHandoff({ ...base, gates, declared: { role, reason } }).role,
+				planHandoff({ ...run5, gates, declared: { role, reason } }).role,
 			).toBe(role);
 	});
 
