@@ -40,6 +40,7 @@ import { diffTrees, type FileDiff } from './diff.ts';
 import {
 	GATE_IDS,
 	formatDirectory,
+	gatesReading,
 	isGateId,
 	runGates,
 	summarizeGate,
@@ -1032,9 +1033,18 @@ export async function* runTurn(
 				changed.has(module.directory) ||
 				failing.some((gate) => gate.module === module.directory),
 		);
+		/* Module validation reads a module through its manifest, so a draft the
+		   scaffold has not created yet is left to the specification gate. */
+		const manifested: string[] = [];
+		for (const module of gated)
+			if (
+				await exists(join(modulePathOf(paths, module.directory), 'module.json'))
+			)
+				manifested.push(module.directory);
 		/* The install runs whenever a package.json changed and counts as the
 		   dependencies gate; the role's own gates follow, plus the declared
-		   dependency check the session cannot do without. */
+		   dependency check the session cannot do without and every gate that
+		   checks a file this turn wrote. */
 		const install = await installGate(context, session);
 		if (install) gates.push(install);
 		if (!install || install.status !== 'failed') {
@@ -1049,6 +1059,7 @@ export async function* runTurn(
 								: role.gates),
 							...(role.gates.includes('dependencies') ? [] : ['dependencies']),
 							...failing.map((gate) => gate.id),
+							...gatesReading(pathResult.written, manifested),
 						]),
 					],
 					reviewing ? [active] : gated,

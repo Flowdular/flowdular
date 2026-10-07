@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, matchesGlob } from 'node:path';
 import { inspectAutoReview } from './auto-review.ts';
 import { checkDeclaredDependencies } from './dependencies.ts';
 import { checkModuleRules } from './module-rules.ts';
@@ -91,6 +91,9 @@ interface GateDefinition {
 	/* The command prints the CLI envelope on standard output, so a failure
 	   is read as the errors it reports. */
 	readonly envelope?: true;
+	/* Module files the gate checks, relative to the module. A turn that wrote
+	   one runs the gate whatever its role lists. */
+	readonly reads?: readonly string[];
 }
 
 interface GateContext {
@@ -186,6 +189,15 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			cwd: context.workspaceRoot,
 		}),
 		envelope: true,
+		reads: [
+			'module.json',
+			'package.json',
+			'spec/**',
+			'translations/**',
+			'src/client/**',
+			'src/platform.ts',
+			'migrations/**',
+		],
 	},
 	{
 		id: 'dependencies',
@@ -327,6 +339,23 @@ export async function formatSession(context: {
 
 export function isGateId(value: string): value is GateId {
 	return (GATE_IDS as readonly string[]).includes(value);
+}
+
+/* The gates that check a file a turn wrote (workspace paths, as the path
+   guard reports them) in one of the named module directories. */
+export function gatesReading(
+	written: readonly string[],
+	modules: readonly string[],
+): GateId[] {
+	return GATE_DEFINITIONS.filter((gate) =>
+		gate.reads?.some((pattern) =>
+			modules.some((module) =>
+				written.some((path) =>
+					matchesGlob(path, `modules/${module}/${pattern}`),
+				),
+			),
+		),
+	).map((gate) => gate.id);
 }
 
 export function summarizeGate(gate: GateResult): GateSummary {

@@ -782,8 +782,11 @@ once per draft module, with the module's own binaries from the session install.
 After a turn the module gates run for the modules that hold changes, not for
 every module of the session, and every result names the module it ran in. The
 `dependencies` gate runs after every turn that changed files, whatever the role
-lists. A failing gate is written back into the conversation, with its
-command and output, so the next turn can fix it. The transcript shows each
+lists, and `module-schema` after every turn that wrote a file it checks (the
+manifests, specification, translations, client sources, `src/platform.ts` or
+migrations) in a module that has its `module.json`. A failing gate is written
+back into the conversation, with its command and output, so the next turn can
+fix it. The transcript shows each
 result as a gate card, and **Check modules** shows the same list: a failed
 validator lists the errors of its failing reports (code, file, path and
 message, the first 20 and a count of the rest), read from its JSON before the
