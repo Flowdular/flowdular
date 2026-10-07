@@ -216,16 +216,42 @@ const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
 	[/https:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@'],
 	/* Local paths name the operator's home and project layout. A session
 	   workspace path reads relative to the workspace, any other path under the
-	   sandbox directory from .flowdular on. */
-	[
-		/(?<=^|[\s'"`=(])(?:[A-Za-z]:)?[\\/][^\s'"`]*?[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"`]+[\\/]workspace(?=[\\/\s'"`)]|$)/gm,
-		'.',
-	],
-	[
-		/(?<=^|[\s'"`=(])(?:[A-Za-z]:)?[\\/][^\s'"`]*?[\\/](?=\.flowdular[\\/])/gm,
-		'',
-	],
+	   sandbox directory from .flowdular on. Outside quotes a path starts after
+	   a separator and runs to the next one, so no run crosses the start of
+	   another and a long line costs linear time; inside quotes it may hold
+	   spaces. */
+	...localPathRedactions(
+		String.raw`^|[\s'"\x60=(\[<>:;,]`,
+		String.raw`[^\s'"\x60=()\[\]<>:;,|]`,
+		String.raw`[\\/\s'"\x60)\]>,;:]|$`,
+	),
+	...localPathRedactions('"', '[^"\\n]', '[\\\\/"]'),
+	...localPathRedactions("'", "[^'\\n]", "[\\\\/']"),
 ];
+
+function localPathRedactions(
+	start: string,
+	char: string,
+	end: string,
+): [RegExp, string][] {
+	const root = String.raw`(?:file:\/\/\/?)?(?:[A-Za-z]:)?[\\/]${char}{0,1024}?`;
+	return [
+		[
+			new RegExp(
+				String.raw`(?<=${start})${root}[\\/]\.flowdular[\\/]sandbox[\\/]sessions[\\/][^\\/\s'"\x60]+[\\/]workspace(?=${end})`,
+				'gm',
+			),
+			'.',
+		],
+		[
+			new RegExp(
+				String.raw`(?<=${start})${root}[\\/](?=\.flowdular[\\/])`,
+				'gm',
+			),
+			'',
+		],
+	];
+}
 
 /* A single turn is bounded so one pathological gate output cannot fill the
    disk, and the file is rotated once it grows past the cap so a session that

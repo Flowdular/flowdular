@@ -753,13 +753,17 @@ function namedFileOwner(
 
 /* Consecutive repair turns in a chain after this handoff. A review turn is
    not a repair: it neither adds to the count nor resets it, so the review
-   after a fix always gets its turn and a fix that fails again still stops. */
+   after a fix always gets its turn and a fix that fails again still stops.
+   The fix a failed review asks for is a repair; the next turn's skill is the
+   first one its prompt names, so that is what tells the two apart. */
 export function countRepairs(repairs: number, handoff: HandoffPlan): number {
 	if (handoff.kind !== 'continue') return repairs;
 	const reviewing =
 		handoff.repair === true &&
 		(handoff.gates?.length ?? 0) > 0 &&
-		handoff.gates!.every((gate) => gate.id === 'auto-review');
+		handoff.gates!.every((gate) => gate.id === 'auto-review') &&
+		/\$(auto-review|module-update)\b/.exec(handoff.prompt)?.[1] !==
+			'module-update';
 	if (reviewing) return repairs;
 	return handoff.repair ? repairs + 1 : 0;
 }

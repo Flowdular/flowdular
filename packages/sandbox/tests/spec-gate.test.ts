@@ -1223,9 +1223,15 @@ describe('auto-review turn lifecycle', () => {
 			session.id,
 			{ message: '$auto-review', role: 'backend-engineer' },
 		);
-		expect(sink.instruction).toContain(
-			'Nobody in the sandbox can render the screen: the operator inspects it in the preview.',
+		const note =
+			'Nobody in the sandbox can render the screen: the operator inspects it in the preview. For the UI check, cite the component code, its states and the tests as evidence; a missing rendered inspection is not a finding.';
+		expect(sink.instruction).toContain(note);
+		/* The skill the review turn reads says the same. */
+		const skill = await readFile(
+			new URL('../../../.ai/skills/auto-review/SKILL.md', import.meta.url),
+			'utf8',
 		);
+		expect(skill.replace(/\s+/g, ' ')).toContain(note);
 	});
 
 	it('returns findings to an implementation phase without issuing a pass', async () => {
@@ -1290,14 +1296,30 @@ describe('auto-review turn lifecycle', () => {
 		[
 			'prose quoting a failing verdict and no report',
 			'The last review ended with "verdict": "fail"; nothing new to add.\n\nHANDOFF: none - reviewed',
-			'The reply has no auto-review block.',
+			'The reply has no auto-review block, with its opening and closing fences on lines of their own.',
+		],
+		[
+			'a passing verdict that lists a finding',
+			REVIEW_RESPONSE.replace(
+				'"findings":[]',
+				'"findings":["Low; src/client/List.tsrx:4; any list; the caption repeats the title; drop it"]',
+			),
+			'A passing report has an empty findings list, and this one lists 1: report them with "verdict": "fail", or leave out what is not a defect.',
+		],
+		[
+			'a passing verdict with a check left without evidence',
+			REVIEW_RESPONSE.replace(
+				'"ui":"Synthetic ui evidence for this orchestration fixture."',
+				'"ui":"n/a"',
+			),
+			'Every check needs 20 to 4000 characters of evidence, and ui has none.',
 		],
 	])(
-		'sends %s back to review with what made it unreadable',
+		'sends %s back to review with why it was not accepted',
 		async (_, closing, problem) => {
 			const { outcome, gate } = await review(closing);
 			expect(gate?.status).toBe('failed');
-			expect(gate?.output).toMatch(/^The review report could not be read: /);
+			expect(gate?.output).toMatch(/^The review report was not accepted: /);
 			expect(gate?.output).toContain(problem);
 			expect(gate?.output).toContain(
 				'Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.',

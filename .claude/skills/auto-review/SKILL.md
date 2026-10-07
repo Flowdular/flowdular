@@ -69,7 +69,10 @@ implementation turn after a passing review. Use the provided
 reference code and recorded gate output. The orchestrator runs schema, dependency,
 typecheck, tests and format gates; never claim you ran a command it ran later.
 Report verification still pending when needed. Deterministic checks are independent
-of your assessment and must all pass before eject.
+of your assessment and must all pass before eject. Nobody in the sandbox can render
+the screen: the operator inspects it in the preview. For the UI check, cite the
+component code, its states and the tests as evidence; a missing rendered inspection
+is not a finding.
 
 Return exactly one fenced `auto-review` JSON object in the closing response,
 followed by the normal handoff line. Each check is a string of 20 to 4000 characters
@@ -85,7 +88,7 @@ under 32000 characters. The structure is:
     "compatibility": "Public consumers and migration or manifest evidence.",
     "lifecycle": "Resource ownership and failure-path evidence.",
     "tests": "Test paths, assertions, actual gate results or pending checks.",
-    "ui": "Rendered inspection evidence or a specific reason not applicable."
+    "ui": "Component code, states and tests, or a specific reason not applicable."
   },
   "findings": ["Severity; file:line; input/state; wrong outcome; required fix."]
 }

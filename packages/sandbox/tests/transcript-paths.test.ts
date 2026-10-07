@@ -35,3 +35,39 @@ it('stores session paths relative to the workspace, never the local home', () =>
 		'modules/blog/src/api.ts and /tmp/other.ts',
 	);
 });
+
+it('finds a session path after any separator, in a file URL and in quotes with spaces', () => {
+	expect(
+		redactText(`at file://${workspace}/modules/blog/tests/a.test.ts:3:5`),
+	).toBe('at ./modules/blog/tests/a.test.ts:3:5');
+	expect(
+		redactText(`cwd:${workspace} [${workspace}/a.ts] <${workspace}>`),
+	).toBe('cwd:. [./a.ts] <.>');
+	expect(
+		redactText(
+			'cd "/Users/me/My Apps/blog/.flowdular/sandbox/sessions/x/workspace/modules/blog"',
+		),
+	).toBe('cd "./modules/blog"');
+	expect(
+		redactText(
+			"'C:\\Users\\me\\My Apps\\blog\\.flowdular\\sandbox\\sessions\\id\\workspace\\modules\\a.ts'",
+		),
+	).toBe("'.\\modules\\a.ts'");
+});
+
+it('keeps the paths around a session path', () => {
+	expect(
+		redactText('PATH=/usr/bin:/Users/me/apps/blog/.flowdular/sandbox/bin'),
+	).toBe('PATH=/usr/bin:.flowdular/sandbox/bin');
+	expect(redactText(`copy /Users/me/src.ts->${workspace}/modules/a.ts`)).toBe(
+		'copy /Users/me/src.ts->./modules/a.ts',
+	);
+});
+
+it('redacts a long line without spaces in linear time', () => {
+	for (const unit of ['(/', '=/', '[/', ',/', ':/']) {
+		const started = performance.now();
+		redactText(unit.repeat(60_000));
+		expect(performance.now() - started, unit).toBeLessThan(2_000);
+	}
+});

@@ -54,7 +54,7 @@ function inspectReviewReply(text: string): ReviewInspection {
 		return {
 			problem:
 				blocks.length === 0
-					? 'The reply has no auto-review block.'
+					? 'The reply has no auto-review block, with its opening and closing fences on lines of their own.'
 					: `The reply has ${blocks.length} auto-review blocks; write exactly one.`,
 		};
 	const block = blocks[0]!;
@@ -102,10 +102,14 @@ export function readReviewReport(text: string): ReviewReading | null {
 	return inspectReviewReply(text).reading ?? null;
 }
 
-/* Why a closing reply holds no readable report, for the review turn that has
-   to write it again; null when it does. */
+/* Why a closing reply records no review the gate accepts, for the review
+   turn that has to write it again: no readable report, or a pass that cannot
+   pass. Null for a passing report and for a readable fail. */
 export function reviewReportProblem(text: string): string | null {
-	return inspectReviewReply(text).problem ?? null;
+	const inspection = inspectReviewReply(text);
+	if (!inspection.reading) return inspection.problem;
+	const { report } = inspection.reading;
+	return report.verdict === 'pass' ? passProblem(report) : null;
 }
 
 export function checkHasEvidence(value: unknown): boolean {
@@ -116,13 +120,23 @@ export function checkHasEvidence(value: unknown): boolean {
 	);
 }
 
+function passProblem(report: ReviewReport): string | null {
+	if (report.findings.length > 0)
+		return `A passing report has an empty findings list, and this one lists ${report.findings.length}: report them with "verdict": "fail", or leave out what is not a defect.`;
+	const thin = REVIEW_CHECKS.filter(
+		(key) => !checkHasEvidence(report.checks[key]),
+	);
+	return thin.length > 0
+		? `Every check needs 20 to 4000 characters of evidence, and ${thin.join(', ')} ${thin.length === 1 ? 'has' : 'have'} none.`
+		: null;
+}
+
 export function passingReviewReport(text: string): boolean {
 	const reading = readReviewReport(text);
 	return (
 		reading !== null &&
 		reading.report.verdict === 'pass' &&
-		reading.report.findings.length === 0 &&
-		REVIEW_CHECKS.every((key) => checkHasEvidence(reading.report.checks[key]))
+		passProblem(reading.report) === null
 	);
 }
 

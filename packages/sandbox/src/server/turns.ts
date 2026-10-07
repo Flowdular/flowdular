@@ -1170,7 +1170,7 @@ export async function* runTurn(
 		} else if (index >= 0 && problem) {
 			gates[index] = {
 				...gates[index]!,
-				output: `The review report could not be read: ${problem} Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.`,
+				output: `The review report was not accepted: ${problem} Run $auto-review again and end the reply with exactly one auto-review block of valid JSON.`,
 			};
 		}
 	}
